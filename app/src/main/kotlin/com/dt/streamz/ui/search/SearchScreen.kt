@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -18,6 +19,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -26,11 +28,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.MaterialTheme
@@ -48,54 +54,147 @@ fun SearchScreen(
     val vm: SearchViewModel = viewModel(factory = SearchViewModel.Factory(registry))
     val query by vm.query.collectAsState()
     val state by vm.state.collectAsState()
-    val keyboard = LocalSoftwareKeyboardController.current
+    var editorOpen by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 24.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        OutlinedTextField(
-            value = query,
-            onValueChange = vm::onQueryChange,
-            modifier = Modifier.fillMaxWidth(0.6f),
-            singleLine = true,
-            label = { androidx.compose.material3.Text("Search anime or movies") },
-            placeholder = { androidx.compose.material3.Text("e.g. frieren, dune") },
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = {
-                vm.onSubmit()
-                keyboard?.hide()
-                // Do NOT moveFocus or clearFocus here — with results still
-                // loading, there's no focusable target below the text field.
-                // moveFocus(Down) walks up the hierarchy looking for a
-                // neighbor, finds the TabRow, and lands on Home which
-                // unmounts the whole Search screen. Leave focus on the text
-                // field; user D-pads down when posters appear.
-            }),
-            textStyle = MaterialTheme.typography.bodyLarge,
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = MaterialTheme.colorScheme.surface,
-                unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
-                focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                cursorColor = MaterialTheme.colorScheme.primary,
-                focusedLabelColor = MaterialTheme.colorScheme.primary,
-                unfocusedLabelColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                focusedPlaceholderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-            ),
-        )
+        SearchBarCard(query = query, onClick = { editorOpen = true })
 
         when (val s = state) {
-            SearchState.Idle -> Hint("Type at least 2 characters, then press the 🔍 key.")
+            SearchState.Idle -> Hint("Press OK on the search bar to type.")
             SearchState.Loading -> Hint("Searching…")
             is SearchState.Error -> Hint("Error: ${s.message}")
             is SearchState.Loaded -> ResultsGrid(
                 results = s.results,
                 onOpen = onOpenTitle,
             )
+        }
+    }
+
+    if (editorOpen) {
+        SearchEditorDialog(
+            initialQuery = query,
+            onDismiss = { editorOpen = false },
+            onSubmit = { text ->
+                vm.onQueryChange(text)
+                vm.onSubmit()
+                editorOpen = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun SearchBarCard(query: String, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    Surface(
+        onClick = onClick,
+        modifier = Modifier
+            .fillMaxWidth(0.6f)
+            .height(56.dp)
+            .onFocusChanged { focused = it.isFocused },
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = MaterialTheme.colorScheme.surface,
+            focusedContainerColor = MaterialTheme.colorScheme.surface,
+        ),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(RoundedCornerShape(10.dp))
+                .border(
+                    width = if (focused) 2.dp else 1.dp,
+                    color = if (focused) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                    shape = RoundedCornerShape(10.dp),
+                )
+                .padding(horizontal = 16.dp),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            Text(
+                text = query.ifBlank { "Search anime, movies, TV…" },
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (query.isBlank())
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                else MaterialTheme.colorScheme.onSurface,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SearchEditorDialog(
+    initialQuery: String,
+    onDismiss: () -> Unit,
+    onSubmit: (String) -> Unit,
+) {
+    var text by remember { mutableStateOf(initialQuery) }
+    val focusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+        keyboard?.show()
+    }
+
+    Dialog(
+        onDismissRequest = {
+            keyboard?.hide()
+            onDismiss()
+        },
+        properties = DialogProperties(
+            dismissOnBackPress = true,
+            dismissOnClickOutside = true,
+        ),
+    ) {
+        Surface(
+            onClick = {},
+            modifier = Modifier
+                .fillMaxWidth(0.8f)
+                .padding(24.dp),
+            colors = ClickableSurfaceDefaults.colors(
+                containerColor = MaterialTheme.colorScheme.surface,
+                focusedContainerColor = MaterialTheme.colorScheme.surface,
+            ),
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(
+                    text = "Search",
+                    style = MaterialTheme.typography.titleLarge,
+                )
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(focusRequester),
+                    singleLine = true,
+                    placeholder = {
+                        androidx.compose.material3.Text("e.g. frieren, dune, breaking bad")
+                    },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = {
+                        keyboard?.hide()
+                        onSubmit(text.trim())
+                    }),
+                    textStyle = MaterialTheme.typography.bodyLarge,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surface,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    ),
+                )
+                Text(
+                    text = "BACK to cancel · 🔍 to submit",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                )
+            }
         }
     }
 }
