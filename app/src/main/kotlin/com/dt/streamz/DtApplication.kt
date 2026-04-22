@@ -6,6 +6,7 @@ import com.dt.streamz.scraper.ProviderRegistry
 import com.dt.streamz.scraper.anicrush.AnicrushProvider
 import com.dt.streamz.scraper.anikai.AnikaiProvider
 import com.dt.streamz.scraper.fixtures.FixturesProvider
+import com.dt.streamz.scraper.gogoanimeby.GogoAnimeByProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -27,8 +28,9 @@ class DtApplication : Application() {
         providerRegistry = ProviderRegistry(
             providers = listOf(
                 FixturesProvider(),
-                AnicrushProvider(),
+                GogoAnimeByProvider(),
                 AnikaiProvider(),
+                AnicrushProvider(),
             ),
         )
     }
