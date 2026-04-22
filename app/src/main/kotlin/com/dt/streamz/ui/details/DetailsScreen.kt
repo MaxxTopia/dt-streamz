@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.tv.material3.ClickableSurfaceDefaults
@@ -33,9 +34,12 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
+import com.dt.streamz.DtApplication
 import com.dt.streamz.data.Episode
 import com.dt.streamz.data.TitleDetails
+import com.dt.streamz.data.WatchEntry
 import com.dt.streamz.scraper.ProviderRegistry
+import kotlinx.coroutines.flow.flowOf
 
 @Composable
 fun DetailsScreen(
@@ -55,6 +59,16 @@ fun DetailsScreen(
         factory = DetailsViewModel.Factory(registry, providerId, titleId),
     )
     val state by vm.state.collectAsState()
+    val ctx = LocalContext.current
+    val cwFlow = (ctx.applicationContext as? DtApplication)?.continueWatching?.entries
+        ?: flowOf(emptyList())
+    val cwEntries by cwFlow.collectAsState(initial = emptyList())
+    val watchedNumbers = remember(cwEntries, providerId, titleId) {
+        cwEntries
+            .filter { it.providerId == providerId && it.titleId == titleId }
+            .map(WatchEntry::episodeNumber)
+            .toSet()
+    }
 
     Box(modifier = Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 32.dp)) {
         when (val s = state) {
@@ -62,6 +76,7 @@ fun DetailsScreen(
             is DetailsState.Error -> CenterMessage("Error: ${s.message}")
             is DetailsState.Loaded -> Loaded(
                 details = s.details,
+                watchedNumbers = watchedNumbers,
                 onPlay = { ep ->
                     onPlayEpisode(titleId, ep, providerId, s.details.title, s.details.poster)
                 },
@@ -78,7 +93,11 @@ private fun CenterMessage(text: String) {
 }
 
 @Composable
-private fun Loaded(details: TitleDetails, onPlay: (Episode) -> Unit) {
+private fun Loaded(
+    details: TitleDetails,
+    watchedNumbers: Set<Int>,
+    onPlay: (Episode) -> Unit,
+) {
     Row(modifier = Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(32.dp)) {
         Box(
             modifier = Modifier
@@ -116,12 +135,7 @@ private fun Loaded(details: TitleDetails, onPlay: (Episode) -> Unit) {
                 )
             }
             if (!details.synopsis.isNullOrBlank()) {
-                Text(
-                    text = details.synopsis,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 4,
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
-                )
+                ExpandableSynopsis(details.synopsis)
             }
             Spacer(Modifier.height(4.dp))
             Text(
@@ -129,13 +143,49 @@ private fun Loaded(details: TitleDetails, onPlay: (Episode) -> Unit) {
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onBackground,
             )
-            EpisodeList(details.episodes, onPlay)
+            EpisodeList(details.episodes, watchedNumbers, onPlay)
         }
     }
 }
 
 @Composable
-private fun EpisodeList(episodes: List<Episode>, onPlay: (Episode) -> Unit) {
+private fun ExpandableSynopsis(text: String) {
+    var expanded by remember { mutableStateOf(false) }
+    var overflowed by remember { mutableStateOf(false) }
+    var focused by remember { mutableStateOf(false) }
+    val caret = if (expanded) " ▴" else " ▾"
+    Surface(
+        onClick = { if (overflowed || expanded) expanded = !expanded },
+        modifier = Modifier
+            .fillMaxWidth()
+            .onFocusChanged { focused = it.isFocused },
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color.Transparent,
+            focusedContainerColor = MaterialTheme.colorScheme.surface,
+        ),
+    ) {
+        Box(modifier = Modifier.padding(vertical = 4.dp, horizontal = 4.dp)) {
+            Text(
+                text = if (overflowed || expanded) text + caret else text,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = if (expanded) Int.MAX_VALUE else 4,
+                color = MaterialTheme.colorScheme.onBackground.copy(
+                    alpha = if (focused) 1f else 0.85f,
+                ),
+                onTextLayout = { result ->
+                    if (!expanded && result.hasVisualOverflow) overflowed = true
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun EpisodeList(
+    episodes: List<Episode>,
+    watchedNumbers: Set<Int>,
+    onPlay: (Episode) -> Unit,
+) {
     if (episodes.isEmpty()) {
         Text("No episodes found.", style = MaterialTheme.typography.bodyMedium)
         return
@@ -145,13 +195,13 @@ private fun EpisodeList(episodes: List<Episode>, onPlay: (Episode) -> Unit) {
         modifier = Modifier.fillMaxSize(),
     ) {
         items(episodes, key = { "${it.number}:${it.id}" }) { ep ->
-            EpisodeRow(ep, onPlay)
+            EpisodeRow(ep, watched = ep.number in watchedNumbers, onPlay = onPlay)
         }
     }
 }
 
 @Composable
-private fun EpisodeRow(ep: Episode, onPlay: (Episode) -> Unit) {
+private fun EpisodeRow(ep: Episode, watched: Boolean, onPlay: (Episode) -> Unit) {
     var focused by remember { mutableStateOf(false) }
     Surface(
         onClick = { onPlay(ep) },
@@ -163,11 +213,12 @@ private fun EpisodeRow(ep: Episode, onPlay: (Episode) -> Unit) {
             focusedContainerColor = MaterialTheme.colorScheme.primary,
         ),
     ) {
-        Box(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 12.dp)
                 .border(1.dp, if (focused) Color.White else Color.Transparent, RoundedCornerShape(6.dp)),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             val label = buildString {
                 append("Ep ")
@@ -182,7 +233,17 @@ private fun EpisodeRow(ep: Episode, onPlay: (Episode) -> Unit) {
                 style = MaterialTheme.typography.bodyLarge,
                 color = if (focused) MaterialTheme.colorScheme.onPrimary
                 else MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
             )
+            if (watched) {
+                Text(
+                    text = "▶ Watched",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (focused) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
+                    else MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(start = 12.dp),
+                )
+            }
         }
     }
 }
