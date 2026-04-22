@@ -1,11 +1,13 @@
 package com.dt.streamz.ui.webplayer
 
 import android.annotation.SuppressLint
+import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
@@ -17,6 +19,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
+import com.dt.streamz.DtApplication
+import com.dt.streamz.adblock.HostBlocker
+import java.io.ByteArrayInputStream
 
 /**
  * Renders an embed (iframe-style) URL inside a WebView so episodes from
@@ -31,6 +36,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 @Composable
 fun WebPlayerScreen(embedUrl: String, onExit: () -> Unit = {}) {
     val ctx = LocalContext.current
+    val blocker = (ctx.applicationContext as? DtApplication)?.hostBlocker
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
@@ -42,7 +48,7 @@ fun WebPlayerScreen(embedUrl: String, onExit: () -> Unit = {}) {
                         ViewGroup.LayoutParams.MATCH_PARENT,
                     )
                     configureForEmbedPlayback()
-                    webViewClient = EmbedWebViewClient()
+                    webViewClient = EmbedWebViewClient(blocker)
                     webChromeClient = FullscreenChromeClient()
                     CookieManager.getInstance().setAcceptCookie(true)
                     CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
@@ -81,7 +87,7 @@ private fun WebView.configureForEmbedPlayback() {
     }
 }
 
-private class EmbedWebViewClient : WebViewClient() {
+private class EmbedWebViewClient(private val blocker: HostBlocker?) : WebViewClient() {
     override fun shouldOverrideUrlLoading(
         view: WebView,
         request: WebResourceRequest,
@@ -91,8 +97,36 @@ private class EmbedWebViewClient : WebViewClient() {
         val url = request.url ?: return false
         val scheme = url.scheme ?: return false
         if (scheme != "http" && scheme != "https") return true
+        if (blocker?.isBlocked(url.host) == true) {
+            Log.d(TAG, "blocked navigation to ${url.host}")
+            return true
+        }
         view.loadUrl(url.toString())
         return true
+    }
+
+    override fun shouldInterceptRequest(
+        view: WebView,
+        request: WebResourceRequest,
+    ): WebResourceResponse? {
+        val host = request.url?.host
+        if (blocker?.isBlocked(host) == true) {
+            // Return a 403-style empty response so the fetch fails cleanly
+            // without tying up a socket or invoking the ad host at all.
+            return WebResourceResponse(
+                "text/plain",
+                "utf-8",
+                403,
+                "Blocked",
+                emptyMap(),
+                ByteArrayInputStream(ByteArray(0)),
+            )
+        }
+        return super.shouldInterceptRequest(view, request)
+    }
+
+    companion object {
+        private const val TAG = "WebPlayer"
     }
 }
 

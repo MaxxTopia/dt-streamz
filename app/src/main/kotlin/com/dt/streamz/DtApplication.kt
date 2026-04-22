@@ -1,6 +1,7 @@
 package com.dt.streamz
 
 import android.app.Application
+import com.dt.streamz.adblock.HostBlocker
 import com.dt.streamz.config.ScraperConfigLoader
 import com.dt.streamz.scraper.ProviderRegistry
 import com.dt.streamz.scraper.anicrush.AnicrushProvider
@@ -19,6 +20,8 @@ class DtApplication : Application() {
         private set
     lateinit var providerRegistry: ProviderRegistry
         private set
+    lateinit var hostBlocker: HostBlocker
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -33,5 +36,12 @@ class DtApplication : Application() {
                 AnicrushProvider(),
             ),
         )
+
+        hostBlocker = HostBlocker(this)
+        appScope.launch {
+            hostBlocker.loadSeedFromAssets()
+            // Best-effort refresh from upstream; failure keeps the seed list.
+            hostBlocker.refreshFromUrl(HostBlocker.UPSTREAM_HOSTS_URL)
+        }
     }
 }
