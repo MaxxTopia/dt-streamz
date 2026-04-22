@@ -27,6 +27,7 @@ import androidx.compose.ui.Alignment
 import com.dt.streamz.DtApplication
 import com.dt.streamz.data.StreamKind
 import com.dt.streamz.data.StreamSource
+import com.dt.streamz.data.WatchEntry
 import com.dt.streamz.networkmonitor.NetworkIndicator
 import com.dt.streamz.ui.details.DetailsScreen
 import com.dt.streamz.ui.home.HomeScreen
@@ -70,6 +71,31 @@ fun DtApp() {
                 onPlayTwitch = { url, title, channel ->
                     route = Route.Player(url, title, twitchChannel = channel)
                 },
+                onResume = { entry ->
+                    scope.launch {
+                        val ep = com.dt.streamz.data.Episode(
+                            id = entry.episodeId,
+                            number = entry.episodeNumber,
+                            title = null,
+                        )
+                        runCatching {
+                            registry.get(entry.providerId).streams(entry.titleId, ep)
+                        }.onSuccess { sources ->
+                            val label = "${entry.titleName} · Ep ${entry.episodeNumber}"
+                            when {
+                                sources.isEmpty() -> Toast.makeText(
+                                    ctx, "No source — title may be gone",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                                sources.size == 1 -> route = playRouteFor(sources.first(), label)
+                                else -> route = Route.SourcePicker(label, sources)
+                            }
+                        }.onFailure {
+                            Log.w(TAG, "resume failed", it)
+                            Toast.makeText(ctx, "Couldn't resume: ${it.message}", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                },
             )
             is Route.Details -> {
                 BackHandler { route = Route.Tabs }
@@ -77,8 +103,19 @@ fun DtApp() {
                     registry = registry,
                     providerId = r.providerId,
                     titleId = r.titleId,
-                    onPlayEpisode = { titleId, ep, providerId ->
+                    onPlayEpisode = { titleId, ep, providerId, titleName, poster ->
                         scope.launch {
+                            app.continueWatching.record(
+                                WatchEntry(
+                                    providerId = providerId,
+                                    titleId = titleId,
+                                    titleName = titleName,
+                                    poster = poster,
+                                    episodeId = ep.id,
+                                    episodeNumber = ep.number,
+                                    timestamp = System.currentTimeMillis(),
+                                ),
+                            )
                             runCatching { registry.get(providerId).streams(titleId, ep) }
                                 .onSuccess { sources ->
                                     val epLabel = "Ep ${ep.number}"
@@ -137,6 +174,7 @@ private fun TabsDestination(
     onOpenTitle: (providerId: String, titleId: String) -> Unit,
     onPlayTest: (String, String) -> Unit,
     onPlayTwitch: (String, String, String) -> Unit,
+    onResume: (com.dt.streamz.data.WatchEntry) -> Unit,
 ) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as DtApplication
@@ -161,7 +199,9 @@ private fun TabsDestination(
         when (selected) {
             Section.Home -> HomeScreen(
                 registry = app.providerRegistry,
+                continueWatching = app.continueWatching,
                 onOpenTitle = onOpenTitle,
+                onResume = onResume,
                 onPlayTestStream = {
                     onPlayTest(TEST_HLS_URL, "Test Stream (Mux BipBop)")
                 },
@@ -170,13 +210,17 @@ private fun TabsDestination(
                 title = "Anime",
                 registry = app.providerRegistry,
                 providerFilter = { it.supportsAnime },
+                continueWatching = app.continueWatching,
                 onOpenTitle = onOpenTitle,
+                onResume = onResume,
             )
             Section.Movies -> HomeScreen(
                 title = "Movies",
                 registry = app.providerRegistry,
                 providerFilter = { it.supportsMovies },
+                continueWatching = app.continueWatching,
                 onOpenTitle = onOpenTitle,
+                onResume = onResume,
             )
             Section.Twitch -> TwitchScreen(onPlayHlsWithChat = { url, label, channel ->
                 onPlayTwitch(url, label, channel)

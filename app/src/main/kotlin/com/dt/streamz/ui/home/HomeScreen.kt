@@ -31,18 +31,27 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
+import androidx.compose.runtime.collectAsState
+import com.dt.streamz.data.ContinueWatchingStore
 import com.dt.streamz.data.SearchResult
+import com.dt.streamz.data.WatchEntry
 import com.dt.streamz.scraper.Provider
 import com.dt.streamz.scraper.ProviderRegistry
+import kotlinx.coroutines.flow.flowOf
 
 @Composable
 fun HomeScreen(
     title: String = "Home",
     registry: ProviderRegistry? = null,
     providerFilter: (Provider) -> Boolean = { it.supportsAnime },
+    continueWatching: ContinueWatchingStore? = null,
     onOpenTitle: (providerId: String, titleId: String) -> Unit = { _, _ -> },
+    onResume: (WatchEntry) -> Unit = {},
     onPlayTestStream: () -> Unit = {},
 ) {
+    val continueEntries by (continueWatching?.entries ?: flowOf(emptyList()))
+        .collectAsState(initial = emptyList())
+
     Column(
         modifier = Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 24.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
@@ -52,10 +61,89 @@ fun HomeScreen(
             style = MaterialTheme.typography.displaySmall,
             color = MaterialTheme.colorScheme.onBackground,
         )
+        if (continueEntries.isNotEmpty()) {
+            ContinueRow(entries = continueEntries, onResume = onResume)
+        }
         registry?.all?.filter(providerFilter)?.forEach { provider ->
             BrowseRow(provider = provider, onOpenTitle = onOpenTitle)
         }
         PlayTestStreamCard(onClick = onPlayTestStream)
+    }
+}
+
+@Composable
+private fun ContinueRow(entries: List<WatchEntry>, onResume: (WatchEntry) -> Unit) {
+    Text(
+        text = "Continue watching",
+        style = MaterialTheme.typography.titleLarge,
+        color = MaterialTheme.colorScheme.onBackground,
+    )
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        items(entries, key = { "${it.providerId}:${it.titleId}" }) { entry ->
+            ContinueCard(entry = entry, onClick = { onResume(entry) })
+        }
+    }
+}
+
+@Composable
+private fun ContinueCard(entry: WatchEntry, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    val border = if (focused) Color.White else Color.Transparent
+    Column(
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = Modifier
+            .width(200.dp)
+            .onFocusChanged { focused = it.isFocused },
+    ) {
+        Surface(
+            onClick = onClick,
+            modifier = Modifier
+                .width(200.dp)
+                .height(120.dp),
+            colors = ClickableSurfaceDefaults.colors(
+                containerColor = MaterialTheme.colorScheme.surface,
+                focusedContainerColor = MaterialTheme.colorScheme.surface,
+            ),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .border(2.dp, border, RoundedCornerShape(10.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (entry.poster != null) {
+                    AsyncImage(
+                        model = entry.poster,
+                        contentDescription = entry.titleName,
+                        modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)),
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .background(Color.Black.copy(alpha = 0.7f))
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                ) {
+                    Text(
+                        text = "▶ Ep ${entry.episodeNumber}",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = Color.White,
+                    )
+                }
+            }
+        }
+        Text(
+            text = entry.titleName,
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = 1,
+            color = if (focused) MaterialTheme.colorScheme.onBackground
+            else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),
+        )
     }
 }
 

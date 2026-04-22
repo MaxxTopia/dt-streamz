@@ -42,7 +42,13 @@ fun DetailsScreen(
     registry: ProviderRegistry,
     providerId: String,
     titleId: String,
-    onPlayEpisode: (titleId: String, episode: Episode, providerId: String) -> Unit,
+    onPlayEpisode: (
+        titleId: String,
+        episode: Episode,
+        providerId: String,
+        titleName: String,
+        poster: String?,
+    ) -> Unit,
 ) {
     val vm: DetailsViewModel = viewModel(
         key = "$providerId:$titleId",
@@ -56,7 +62,9 @@ fun DetailsScreen(
             is DetailsState.Error -> CenterMessage("Error: ${s.message}")
             is DetailsState.Loaded -> Loaded(
                 details = s.details,
-                onPlay = { onPlayEpisode(titleId, it, providerId) },
+                onPlay = { ep ->
+                    onPlayEpisode(titleId, ep, providerId, s.details.title, s.details.poster)
+                },
             )
         }
     }
