@@ -29,6 +29,7 @@ import com.dt.streamz.ui.player.PlayerScreen
 import com.dt.streamz.ui.search.SearchScreen
 import com.dt.streamz.ui.settings.SettingsScreen
 import com.dt.streamz.ui.twitch.TwitchScreen
+import com.dt.streamz.ui.webplayer.WebPlayerScreen
 import kotlinx.coroutines.launch
 
 private enum class Section(val label: String) {
@@ -71,16 +72,15 @@ fun DtApp() {
                             runCatching { registry.get(providerId).streams(titleId, ep) }
                                 .onSuccess { sources ->
                                     val hls = sources.firstOrNull { it.kind == StreamKind.Hls }
-                                    if (hls != null) {
-                                        route = Route.Player(hls.url, "Ep ${ep.number}")
-                                    } else {
-                                        val first = sources.firstOrNull()
-                                        Log.i(TAG, "Phase 3b will resolve: ${first?.url} (kind=${first?.kind})")
-                                        Toast.makeText(
-                                            ctx,
-                                            "Stream extraction lands in Phase 3b",
-                                            Toast.LENGTH_SHORT,
-                                        ).show()
+                                    val embed = sources.firstOrNull { it.kind == StreamKind.DirectEmbed }
+                                    val epLabel = "Ep ${ep.number}"
+                                    when {
+                                        hls != null -> route = Route.Player(hls.url, epLabel)
+                                        embed != null -> route = Route.WebPlayer(embed.url, epLabel)
+                                        else -> {
+                                            Log.w(TAG, "no playable source for $providerId/$titleId ep=${ep.number}")
+                                            Toast.makeText(ctx, "No playable source found", Toast.LENGTH_SHORT).show()
+                                        }
                                     }
                                 }
                                 .onFailure {
@@ -94,6 +94,10 @@ fun DtApp() {
             is Route.Player -> {
                 BackHandler { route = Route.Tabs }
                 PlayerScreen(hlsUrl = r.hlsUrl, title = r.title, onExit = { route = Route.Tabs })
+            }
+            is Route.WebPlayer -> {
+                BackHandler { route = Route.Tabs }
+                WebPlayerScreen(embedUrl = r.embedUrl, onExit = { route = Route.Tabs })
             }
         }
     }
