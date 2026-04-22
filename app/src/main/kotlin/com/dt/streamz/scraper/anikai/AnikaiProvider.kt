@@ -4,6 +4,7 @@ import android.util.Log
 import com.dt.streamz.data.Episode
 import com.dt.streamz.data.MediaKind
 import com.dt.streamz.data.SearchResult
+import com.dt.streamz.data.StreamKind
 import com.dt.streamz.data.StreamSource
 import com.dt.streamz.data.TitleDetails
 import com.dt.streamz.scraper.Http
@@ -29,7 +30,9 @@ import okhttp3.Request
  * episode list, and streams() is a no-op. Search alone is still useful when
  * anicrush is down (listings visible, user can dig up the slug).
  */
-class AnikaiProvider : Provider {
+class AnikaiProvider(
+    private val resolver: AnikaiResolver? = null,
+) : Provider {
     override val id = "anikai"
     override val displayName = "anikai.to"
     override val supportsAnime = true
@@ -48,25 +51,65 @@ class AnikaiProvider : Provider {
         parseSearchHtml(html)
     }
 
-    override suspend fun details(titleId: String): TitleDetails = withContext(Dispatchers.IO) {
-        // Episode list lives behind obfuscated JS. Return the search-derived
-        // shell so the UI can at least show the title; tell the user that
-        // full details need browser rendering.
+    override suspend fun details(titleId: String): TitleDetails {
         val stub = searchCache[titleId]
-        TitleDetails(
+        val shell = TitleDetails(
             providerId = id,
             id = titleId,
             title = stub?.title ?: titleId,
             poster = stub?.poster,
             backdrop = stub?.poster,
-            synopsis = "anikai.to episode list requires in-app WebView rendering — not wired yet.",
+            synopsis = null,
             year = stub?.year,
             kind = MediaKind.Anime,
             episodes = emptyList(),
         )
+        val r = resolver ?: return shell.copy(
+            synopsis = "anikai.to resolver not wired — episodes unavailable.",
+        )
+        val watchUrl = "$SITE/watch/$titleId"
+        val html = r.renderHtml(watchUrl)
+            ?: return shell.copy(synopsis = "anikai.to render timed out — try again.")
+        val episodes = EP_LINK.findAll(html)
+            .mapNotNull { m ->
+                val number = m.groupValues[2].toIntOrNull() ?: return@mapNotNull null
+                Episode(
+                    id = m.groupValues[1],
+                    number = number,
+                    title = null,
+                )
+            }
+            .distinctBy { it.number }
+            .sortedBy { it.number }
+            .toList()
+        return shell.copy(
+            episodes = episodes,
+            synopsis = if (episodes.isEmpty())
+                "No episode list found in the rendered page — the site's JS may have changed."
+            else null,
+        )
     }
 
-    override suspend fun streams(titleId: String, episode: Episode): List<StreamSource> = emptyList()
+    override suspend fun streams(titleId: String, episode: Episode): List<StreamSource> {
+        val r = resolver ?: return emptyList()
+        // If the episode id is already a relative path like /watch/<slug>?ep=N,
+        // load it directly; otherwise build a URL from the titleId + episode number.
+        val watchUrl = when {
+            episode.id.startsWith("http") -> episode.id
+            episode.id.startsWith("/") -> "$SITE${episode.id}"
+            else -> "$SITE/watch/$titleId?ep=${episode.number}"
+        }
+        val streamUrl = r.captureStreamUrl(watchUrl) ?: return emptyList()
+        val kind = if (streamUrl.contains(".m3u8", ignoreCase = true)) StreamKind.Hls
+        else StreamKind.DirectEmbed
+        return listOf(
+            StreamSource(
+                url = streamUrl,
+                kind = kind,
+                serverLabel = "anikai",
+            ),
+        )
+    }
 
     private fun getJson(url: String) = runCatching {
         val req = Request.Builder()
@@ -134,6 +177,10 @@ class AnikaiProvider : Provider {
         )
         private val DUB_SPAN = Regex("""class="dub"""", RegexOption.IGNORE_CASE)
         private val YEAR = Regex("""(?<![0-9])(19|20)\d{2}(?![0-9])""")
+        private val EP_LINK = Regex(
+            """href=["'](/watch/[^"'?]+\?ep=(\d+))["']""",
+            RegexOption.IGNORE_CASE,
+        )
 
         private val searchCache = mutableMapOf<String, SearchResult>()
     }

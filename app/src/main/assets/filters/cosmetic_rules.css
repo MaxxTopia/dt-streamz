@@ -1,0 +1,33 @@
+/* Cosmetic ad-hiding rules injected into embed players via WebView
+   evaluateJavascript on page finish. Focus: overlay banners, popunders,
+   persistent stickies. In-stream pre-roll video ads that share the same
+   CDN as the real stream are out of scope — those require MITM. */
+
+iframe[src*="ads"],
+iframe[src*="popunder"],
+iframe[src*="popads"],
+iframe[src*="adsystem"],
+iframe[src*="doubleclick"],
+iframe[src*="googlesyndication"] { display: none !important; }
+
+.ad-overlay,
+.ad-container,
+.adsbygoogle,
+.sticky-ad,
+.video-ad-overlay,
+.player-ad-overlay,
+.afs_ads { display: none !important; }
+
+[id*="ad-banner"],
+[id*="adbox"],
+[id*="adzone"],
+[class*="ad-banner"],
+[class*="popunder"],
+[class*="adsby"] { display: none !important; }
+
+/* Big fixed-position overlays — common popup ad pattern */
+div[style*="z-index: 2147483"],
+div[style*="z-index:2147483"] { display: none !important; }
+
+/* Restore native controls if a fake skin overlays the real <video> */
+video::-webkit-media-controls-overlay-play-button { display: initial !important; }

@@ -9,6 +9,7 @@ import com.dt.streamz.networkmonitor.NetworkMonitor
 import com.dt.streamz.scraper.ProviderRegistry
 import com.dt.streamz.scraper.anicrush.AnicrushProvider
 import com.dt.streamz.scraper.anikai.AnikaiProvider
+import com.dt.streamz.scraper.anikai.AnikaiResolver
 import com.dt.streamz.scraper.fixtures.FixturesProvider
 import com.dt.streamz.scraper.gogoanimeby.GogoAnimeByProvider
 import com.dt.streamz.scraper.vidsrc.VidSrcProvider
@@ -39,12 +40,13 @@ class DtApplication : Application() {
         scraperConfig = ScraperConfigLoader(this)
         appScope.launch { scraperConfig.loadCachedThenRefresh() }
 
+        val anikaiResolver = AnikaiResolver(this)
         providerRegistry = ProviderRegistry(
             providers = listOf(
                 FixturesProvider(),
                 GogoAnimeByProvider(),
                 VidSrcProvider(),
-                AnikaiProvider(),
+                AnikaiProvider(resolver = anikaiResolver),
                 AnicrushProvider(),
             ),
         )

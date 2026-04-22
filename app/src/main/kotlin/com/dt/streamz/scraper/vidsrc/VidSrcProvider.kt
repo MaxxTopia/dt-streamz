@@ -82,7 +82,7 @@ class VidSrcProvider(
         }
     }
 
-    override suspend fun details(titleId: String): TitleDetails {
+    override suspend fun details(titleId: String): TitleDetails = withContext(Dispatchers.IO) {
         val cached = cache[titleId]?.result
         val title = cached?.title ?: titleId
         val poster = cached?.poster
@@ -93,25 +93,108 @@ class VidSrcProvider(
             MediaKind.Movie -> listOf(
                 Episode(id = "movie", number = 1, title = "Watch"),
             )
-            MediaKind.Series, MediaKind.Anime -> (1..SYNTHETIC_EPISODE_COUNT).map { n ->
-                Episode(id = "s1e$n", number = n, title = null)
-            }
+            MediaKind.Series, MediaKind.Anime -> fetchTvEpisodes(title, titleId)
+                ?: (1..SYNTHETIC_EPISODE_COUNT).map { n ->
+                    Episode(id = "s1e$n", number = n, title = null)
+                }
         }
 
-        return TitleDetails(
+        val syntheticFallback = kind != MediaKind.Movie &&
+            episodes.size == SYNTHETIC_EPISODE_COUNT &&
+            episodes.first().id == "s1e1" &&
+            episodes.first().title == null
+
+        TitleDetails(
             providerId = id,
             id = titleId,
             title = title,
             poster = poster,
             backdrop = poster,
-            synopsis = if (kind != MediaKind.Movie) {
-                "Season 1 episode grid is synthesized — pick any episode and VidSrc/2embed will try to resolve it."
-            } else null,
+            synopsis = when {
+                kind == MediaKind.Movie -> null
+                syntheticFallback ->
+                    "TVMaze had no episode data — picking any episode and VidSrc/2embed will try to resolve it."
+                else -> null
+            },
             year = year,
             kind = kind,
             episodes = episodes,
         )
     }
+
+    /**
+     * Look up real seasons + episode counts from TVMaze by title name,
+     * filtered to the show whose externals.imdb matches our IMDB titleId.
+     * Returns null on any miss so the caller falls back to the synthetic
+     * 50-episode grid (same behavior as before this method existed).
+     */
+    private suspend fun fetchTvEpisodes(title: String, imdbId: String): List<Episode>? {
+        val searchUrl = "$TVMAZE/search/shows?q=${title.urlEncoded()}"
+        val searchBody = fetch(searchUrl) ?: return null
+        val hits = runCatching { json.parseToJsonElement(searchBody) as JsonArray }.getOrNull()
+            ?: return null
+
+        val showId = hits
+            .asSequence()
+            .mapNotNull { it as? JsonObject }
+            .mapNotNull { it["show"] as? JsonObject }
+            .firstOrNull { show ->
+                val ext = show["externals"] as? JsonObject ?: return@firstOrNull false
+                ext["imdb"]?.jsonPrimitive?.contentOrNull == imdbId
+            }
+            ?.get("id")
+            ?.jsonPrimitive
+            ?.contentOrNull
+            ?: return null
+
+        val epsBody = fetch("$TVMAZE/shows/$showId/episodes") ?: return null
+        val epArr = runCatching { json.parseToJsonElement(epsBody) as JsonArray }.getOrNull()
+            ?: return null
+
+        return epArr
+            .mapNotNull { it as? JsonObject }
+            .mapNotNull { ep ->
+                val season = ep["season"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
+                    ?: return@mapNotNull null
+                val number = ep["number"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
+                    ?: return@mapNotNull null
+                val epTitle = ep["name"]?.jsonPrimitive?.contentOrNull
+                val runtime = ep["runtime"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
+                Episode(
+                    id = "s${season}e$number",
+                    number = absoluteEpisodeNumber(season, number, epArr),
+                    title = epTitle,
+                    runtimeSeconds = runtime?.times(60),
+                )
+            }
+            .sortedBy { it.number }
+            .takeIf { it.isNotEmpty() }
+    }
+
+    /**
+     * Episode.number on our side is a flat 1..N index — VidSrc's `streams()`
+     * reconstructs season/ep from the `s<S>e<N>` id string, so the number
+     * field just needs to sort stably. Use sequential position in the
+     * season-ordered list.
+     */
+    private fun absoluteEpisodeNumber(
+        season: Int,
+        number: Int,
+        all: JsonArray,
+    ): Int {
+        var idx = 0
+        for (el in all) {
+            val ep = el as? JsonObject ?: continue
+            val s = ep["season"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: continue
+            val n = ep["number"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: continue
+            idx++
+            if (s == season && n == number) return idx
+        }
+        return number
+    }
+
+    private fun String.urlEncoded(): String =
+        java.net.URLEncoder.encode(this, "UTF-8").replace("+", "%20")
 
     override suspend fun streams(titleId: String, episode: Episode): List<StreamSource> {
         val kind = cache[titleId]?.result?.kind ?: MediaKind.Movie
@@ -161,6 +244,7 @@ class VidSrcProvider(
     companion object {
         private const val TAG = "VidSrcProvider"
         private const val IMDB_SUGGEST = "https://v3.sg.media-imdb.com/suggestion/x"
+        private const val TVMAZE = "https://api.tvmaze.com"
         private const val SYNTHETIC_EPISODE_COUNT = 50
     }
 }

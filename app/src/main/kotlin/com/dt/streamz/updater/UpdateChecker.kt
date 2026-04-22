@@ -87,8 +87,11 @@ class UpdateChecker(
 
     companion object {
         private const val TAG = "UpdateChecker"
-        // TODO user: set these to the real private repo. Until then,
-        // the check no-ops cleanly on 404.
+        // TODO(Phase 9): set DEFAULT_OWNER/REPO to the real private
+        // GitHub repo once a release pipeline exists. Until then the
+        // check 404s silently and Settings toasts "No update available"
+        // — safe no-op for the user. Confirmed by user 2026-04-23:
+        // no repo exists yet, defer the constants work.
         private const val DEFAULT_OWNER = "dtman-gif"
         private const val DEFAULT_REPO = "dt-streamz"
     }

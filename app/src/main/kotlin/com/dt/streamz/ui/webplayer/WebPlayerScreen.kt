@@ -22,6 +22,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.dt.streamz.DtApplication
 import com.dt.streamz.adblock.HostBlocker
 import java.io.ByteArrayInputStream
+import org.json.JSONObject
 
 /**
  * Renders an embed (iframe-style) URL inside a WebView so episodes from
@@ -55,7 +56,12 @@ fun WebPlayerScreen(embedUrl: String, onExit: () -> Unit = {}) {
                         ViewGroup.LayoutParams.MATCH_PARENT,
                     )
                     configureForEmbedPlayback()
-                    webViewClient = EmbedWebViewClient(blocker)
+                    val cosmeticCss = runCatching {
+                        ctx.assets.open("filters/cosmetic_rules.css")
+                            .bufferedReader()
+                            .use { it.readText() }
+                    }.getOrNull() ?: ""
+                    webViewClient = EmbedWebViewClient(blocker, cosmeticCss)
                     webChromeClient = FullscreenChromeClient()
                     CookieManager.getInstance().setAcceptCookie(true)
                     CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
@@ -94,7 +100,29 @@ private fun WebView.configureForEmbedPlayback() {
     }
 }
 
-private class EmbedWebViewClient(private val blocker: HostBlocker?) : WebViewClient() {
+private class EmbedWebViewClient(
+    private val blocker: HostBlocker?,
+    private val cosmeticCss: String,
+) : WebViewClient() {
+
+    override fun onPageFinished(view: WebView, url: String?) {
+        super.onPageFinished(view, url)
+        if (cosmeticCss.isBlank()) return
+        // Use JSONObject.quote for a properly-escaped JS string literal so
+        // the CSS payload can contain any combination of quotes, slashes,
+        // or newlines without breaking the injected script.
+        val jsLiteral = JSONObject.quote(cosmeticCss)
+        val script = """
+            (function () {
+              var s = document.createElement('style');
+              s.setAttribute('data-dt-streamz','cosmetic');
+              s.textContent = $jsLiteral;
+              document.head.appendChild(s);
+            })();
+        """.trimIndent()
+        view.evaluateJavascript(script, null)
+    }
+
     override fun shouldOverrideUrlLoading(
         view: WebView,
         request: WebResourceRequest,
