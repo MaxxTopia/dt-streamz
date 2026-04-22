@@ -9,6 +9,7 @@ import com.dt.streamz.data.StreamSource
 import com.dt.streamz.data.TitleDetails
 import com.dt.streamz.scraper.Http
 import com.dt.streamz.scraper.Provider
+import com.dt.streamz.scraper.megacloud.MegaCloudExtractor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -21,6 +22,7 @@ import okhttp3.Request
 
 class AnicrushProvider(
     private val json: Json = Http.json,
+    private val megaCloud: MegaCloudExtractor = MegaCloudExtractor(json),
 ) : Provider {
 
     override val id = "anicrush"
@@ -88,9 +90,6 @@ class AnicrushProvider(
 
     override suspend fun streams(titleId: String, episode: Episode): List<StreamSource> =
         withContext(Dispatchers.IO) {
-            // Phase 3b will decrypt the MegaCloud embed that `link` points to
-            // and return a real HLS URL. For now surface the embed so the data
-            // flow is testable end-to-end.
             val url = "$API/shared/v2/episode/sources".toHttpUrl().newBuilder()
                 .addQueryParameter("_movieId", titleId)
                 .addQueryParameter("ep", episode.number.toString())
@@ -102,14 +101,24 @@ class AnicrushProvider(
             val element = body.envelopeResult() ?: return@withContext emptyList()
             val src = runCatching { json.decodeFromJsonElement(SourcesDto.serializer(), element) }
                 .getOrNull() ?: return@withContext emptyList()
-            val link = src.link ?: return@withContext emptyList()
-            listOf(
-                StreamSource(
-                    url = link,
-                    kind = StreamKind.DirectEmbed,
-                    serverLabel = "MegaCloud sub",
-                ),
-            )
+            val embed = src.link ?: return@withContext emptyList()
+
+            // Resolve MegaCloud embed → concrete HLS. If the extractor returns
+            // nothing (key stale, mirror down, format drift), fall back to
+            // surfacing the embed so the user at least sees that a source
+            // existed and the Phase 3b toast explains why it won't play yet.
+            val resolved = megaCloud.resolve(embed)
+            if (resolved.isNotEmpty()) {
+                resolved.map { it.copy(serverLabel = "MegaCloud sub") }
+            } else {
+                listOf(
+                    StreamSource(
+                        url = embed,
+                        kind = StreamKind.DirectEmbed,
+                        serverLabel = "MegaCloud sub (unresolved)",
+                    ),
+                )
+            }
         }
 
     private fun getJson(url: String): JsonElement? {
