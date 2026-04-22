@@ -20,6 +20,11 @@ Phase 6 Twitch reference: user's existing Twitch adblock on desktop is `pixeltri
 
 Phase 5 WebView filter lists to bundle (user picked 2026-04-22): uBO defaults (EasyList + EasyPrivacy + uBO filters + Peter Lowe's) + oisd + Fanboy's Annoyances + AdGuard Mobile Ads. Refresh weekly via WorkManager.
 
+Cross-cutting requirements added 2026-04-22:
+- TV remote first — every screen D-pad navigable, no focus traps, test on emulator + box every phase
+- "Instantaneous" feel — no splash, no spinners on cached data, ExoPlayer pre-buffered, all I/O off main thread, stable Compose data classes
+- Network monitor overlay (new Phase 7 module `networkmonitor`): ping stream CDN when playing else 1.1.1.1; green <80ms, yellow 80-250ms, red >250ms or >2% loss; top-right auto-hide icon; TCP :443 connect as latency proxy.
+
 **Important:** personal use only. Pulls streams from third-party sites — DO NOT publish to Play Store or put on the public maxxer suite site. Copyright/ToS issues make it a brand risk if associated with the public suite. Keep sideload-only.
 
 NOT part of the public maxxer suite — see `project_maxxer_suite_plan.md` in user memory.
