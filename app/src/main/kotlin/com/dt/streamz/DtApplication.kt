@@ -4,6 +4,7 @@ import android.app.Application
 import com.dt.streamz.config.ScraperConfigLoader
 import com.dt.streamz.scraper.ProviderRegistry
 import com.dt.streamz.scraper.anicrush.AnicrushProvider
+import com.dt.streamz.scraper.anikai.AnikaiProvider
 import com.dt.streamz.scraper.fixtures.FixturesProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -27,6 +28,7 @@ class DtApplication : Application() {
             providers = listOf(
                 FixturesProvider(),
                 AnicrushProvider(),
+                AnikaiProvider(),
             ),
         )
     }
