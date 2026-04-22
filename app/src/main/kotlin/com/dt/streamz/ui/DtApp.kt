@@ -23,11 +23,13 @@ import androidx.tv.material3.TabRow
 import androidx.tv.material3.Text
 import com.dt.streamz.DtApplication
 import com.dt.streamz.data.StreamKind
+import com.dt.streamz.data.StreamSource
 import com.dt.streamz.ui.details.DetailsScreen
 import com.dt.streamz.ui.home.HomeScreen
 import com.dt.streamz.ui.player.PlayerScreen
 import com.dt.streamz.ui.search.SearchScreen
 import com.dt.streamz.ui.settings.SettingsScreen
+import com.dt.streamz.ui.sourcepicker.SourcePickerScreen
 import com.dt.streamz.ui.twitch.TwitchScreen
 import com.dt.streamz.ui.webplayer.WebPlayerScreen
 import kotlinx.coroutines.launch
@@ -71,16 +73,14 @@ fun DtApp() {
                         scope.launch {
                             runCatching { registry.get(providerId).streams(titleId, ep) }
                                 .onSuccess { sources ->
-                                    val hls = sources.firstOrNull { it.kind == StreamKind.Hls }
-                                    val embed = sources.firstOrNull { it.kind == StreamKind.DirectEmbed }
                                     val epLabel = "Ep ${ep.number}"
                                     when {
-                                        hls != null -> route = Route.Player(hls.url, epLabel)
-                                        embed != null -> route = Route.WebPlayer(embed.url, epLabel)
-                                        else -> {
+                                        sources.isEmpty() -> {
                                             Log.w(TAG, "no playable source for $providerId/$titleId ep=${ep.number}")
                                             Toast.makeText(ctx, "No playable source found", Toast.LENGTH_SHORT).show()
                                         }
+                                        sources.size == 1 -> route = playRouteFor(sources.first(), epLabel)
+                                        else -> route = Route.SourcePicker(epLabel, sources)
                                     }
                                 }
                                 .onFailure {
@@ -89,6 +89,14 @@ fun DtApp() {
                                 }
                         }
                     },
+                )
+            }
+            is Route.SourcePicker -> {
+                BackHandler { route = Route.Tabs }
+                SourcePickerScreen(
+                    title = r.title,
+                    sources = r.sources,
+                    onPick = { picked -> route = playRouteFor(picked, r.title) },
                 )
             }
             is Route.Player -> {
@@ -139,6 +147,11 @@ private fun TabsDestination(
             Section.Settings -> SettingsScreen()
         }
     }
+}
+
+private fun playRouteFor(source: StreamSource, label: String): Route = when (source.kind) {
+    StreamKind.Hls, StreamKind.Mp4 -> Route.Player(source.url, label)
+    StreamKind.DirectEmbed -> Route.WebPlayer(source.url, label)
 }
 
 private const val TAG = "DtApp"

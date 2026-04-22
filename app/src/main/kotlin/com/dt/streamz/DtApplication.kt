@@ -8,6 +8,7 @@ import com.dt.streamz.scraper.anicrush.AnicrushProvider
 import com.dt.streamz.scraper.anikai.AnikaiProvider
 import com.dt.streamz.scraper.fixtures.FixturesProvider
 import com.dt.streamz.scraper.gogoanimeby.GogoAnimeByProvider
+import com.dt.streamz.scraper.vidsrc.VidSrcProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -32,6 +33,7 @@ class DtApplication : Application() {
             providers = listOf(
                 FixturesProvider(),
                 GogoAnimeByProvider(),
+                VidSrcProvider(),
                 AnikaiProvider(),
                 AnicrushProvider(),
             ),
