@@ -1,7 +1,9 @@
 package com.dt.streamz.ui.search
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,7 +12,6 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
@@ -35,8 +36,6 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.MaterialTheme
@@ -56,44 +55,72 @@ fun SearchScreen(
     val state by vm.state.collectAsState()
     var showEditor by remember { mutableStateOf(false) }
 
-    Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
-    ) {
-        SearchBarCard(
-            query = query,
-            onClick = { showEditor = true },
-        )
+    val barFocus = remember { FocusRequester() }
+    val firstResultFocus = remember { FocusRequester() }
 
-        when (val s = state) {
-            SearchState.Idle -> Hint("Press OK on the search bar above and type at least 2 characters.")
-            SearchState.Loading -> Hint("Searching…")
-            is SearchState.Error -> Hint("Error: ${s.message}")
-            is SearchState.Loaded -> ResultsGrid(
-                results = s.results,
-                onOpen = onOpenTitle,
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
+            SearchBarCard(
+                query = query,
+                onClick = { showEditor = true },
+                modifier = Modifier.focusRequester(barFocus),
+            )
+
+            when (val s = state) {
+                SearchState.Idle -> Hint("Press OK on the search bar above to start typing.")
+                SearchState.Loading -> Hint("Searching…")
+                is SearchState.Error -> Hint("Error: ${s.message}")
+                is SearchState.Loaded -> ResultsGrid(
+                    results = s.results,
+                    firstItemFocus = firstResultFocus,
+                    onOpen = onOpenTitle,
+                )
+            }
+        }
+
+        if (showEditor) {
+            SearchEditorOverlay(
+                initial = query,
+                onQueryChange = vm::onQueryChange,
+                onSubmit = {
+                    vm.onSubmit()
+                    showEditor = false
+                },
+                onDismiss = { showEditor = false },
             )
         }
     }
 
-    if (showEditor) {
-        SearchEditorDialog(
-            initial = query,
-            onQueryChange = vm::onQueryChange,
-            onSubmit = {
-                vm.onSubmit()
-                showEditor = false
-            },
-            onDismiss = { showEditor = false },
-        )
+    // Initial focus claim so Search tab doesn't defer to TabRow.
+    LaunchedEffect(Unit) {
+        runCatching { barFocus.requestFocus() }
+    }
+
+    // When the editor closes, explicitly place focus inside Search so it can't
+    // fall back to the TabRow (which would re-trigger Home's onFocus).
+    LaunchedEffect(showEditor, state) {
+        if (showEditor) return@LaunchedEffect
+        val s = state
+        if (s is SearchState.Loaded && s.results.isNotEmpty()) {
+            runCatching { firstResultFocus.requestFocus() }
+        } else {
+            runCatching { barFocus.requestFocus() }
+        }
     }
 }
 
 @Composable
-private fun SearchBarCard(query: String, onClick: () -> Unit) {
+private fun SearchBarCard(
+    query: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Surface(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth(0.6f),
+        modifier = modifier.fillMaxWidth(0.6f),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = MaterialTheme.colorScheme.surface,
             focusedContainerColor = MaterialTheme.colorScheme.primary,
@@ -106,10 +133,7 @@ private fun SearchBarCard(query: String, onClick: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = "🔍",
-                style = MaterialTheme.typography.titleLarge,
-            )
+            Text(text = "🔍", style = MaterialTheme.typography.titleLarge)
             Text(
                 text = query.ifBlank { "Search anime or movies" },
                 style = MaterialTheme.typography.titleMedium,
@@ -119,27 +143,29 @@ private fun SearchBarCard(query: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun SearchEditorDialog(
+private fun SearchEditorOverlay(
     initial: String,
     onQueryChange: (String) -> Unit,
     onSubmit: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val focusRequester = remember { FocusRequester() }
+    val tfFocus = remember { FocusRequester() }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            dismissOnBackPress = true,
-            dismissOnClickOutside = true,
-            usePlatformDefaultWidth = false,
-        ),
+    BackHandler(enabled = true) { onDismiss() }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.75f))
+            .clickable(onClick = onDismiss, indication = null, interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }),
+        contentAlignment = Alignment.Center,
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth(0.7f)
                 .clip(RoundedCornerShape(16.dp))
                 .background(MaterialTheme.colorScheme.surface)
+                .clickable(enabled = false) {}
                 .padding(24.dp),
         ) {
             OutlinedTextField(
@@ -147,7 +173,7 @@ private fun SearchEditorDialog(
                 onValueChange = onQueryChange,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .focusRequester(focusRequester),
+                    .focusRequester(tfFocus),
                 singleLine = true,
                 label = { androidx.compose.material3.Text("Search anime or movies") },
                 placeholder = { androidx.compose.material3.Text("e.g. frieren, dune") },
@@ -170,7 +196,7 @@ private fun SearchEditorDialog(
     }
 
     LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
+        runCatching { tfFocus.requestFocus() }
     }
 }
 
@@ -186,13 +212,13 @@ private fun Hint(text: String) {
 @Composable
 private fun ResultsGrid(
     results: List<SearchResult>,
+    firstItemFocus: FocusRequester,
     onOpen: (String, String) -> Unit,
 ) {
     if (results.isEmpty()) {
         Hint("No results.")
         return
     }
-    val firstFocus = remember { FocusRequester() }
     LazyVerticalGrid(
         columns = GridCells.Fixed(6),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -203,12 +229,9 @@ private fun ResultsGrid(
             PosterCard(
                 result = result,
                 onClick = { onOpen(result.providerId, result.id) },
-                modifier = if (index == 0) Modifier.focusRequester(firstFocus) else Modifier,
+                modifier = if (index == 0) Modifier.focusRequester(firstItemFocus) else Modifier,
             )
         }
-    }
-    LaunchedEffect(results.firstOrNull()?.let { "${it.providerId}:${it.id}" }) {
-        runCatching { firstFocus.requestFocus() }
     }
 }
 
