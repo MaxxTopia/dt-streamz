@@ -6,33 +6,60 @@ import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.tv.material3.Button
+import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.Text
 import com.dt.streamz.DtApplication
 import com.dt.streamz.adblock.HostBlocker
 import java.io.ByteArrayInputStream
+import kotlinx.coroutines.delay
 import org.json.JSONObject
+
+private sealed interface LoadState {
+    data object Loading : LoadState
+    data object Loaded : LoadState
+    data class Failed(val reason: String) : LoadState
+}
+
+private const val LOAD_TIMEOUT_MS = 20_000L
 
 /**
  * Renders an embed (iframe-style) URL inside a WebView so episodes from
  * providers that only surface an opaque embed link (gogoanime.by ->
- * megavid.buzz, any future DirectEmbed source) can actually play in the
- * app without a per-host Kotlin extractor.
+ * 9animetv.be/histream player, any future DirectEmbed source) can play in
+ * the app without a per-host Kotlin extractor.
  *
- * The site's own player JS handles ad-blocking is *not* wired yet —
- * Phase 5 proper adds AdblockAndroid's shouldInterceptRequest filter.
- * Until then expect pre-roll ads from the embed host.
+ * Shows a retry/back overlay if the page doesn't finish loading in
+ * [LOAD_TIMEOUT_MS] or if the main frame reports a network error — WebView
+ * otherwise just sits blank which looks indistinguishable from buffering.
  */
 @Composable
 fun WebPlayerScreen(embedUrl: String, onExit: () -> Unit = {}) {
@@ -41,9 +68,22 @@ fun WebPlayerScreen(embedUrl: String, onExit: () -> Unit = {}) {
     val blocker = app?.hostBlocker
     val monitor = app?.networkMonitor
 
+    var loadState by remember(embedUrl) { mutableStateOf<LoadState>(LoadState.Loading) }
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
+    var attempt by remember(embedUrl) { mutableStateOf(0) }
+
     DisposableEffect(embedUrl) {
         monitor?.setActiveHost(embedUrl)
         onDispose { monitor?.setActiveHost(null) }
+    }
+
+    LaunchedEffect(embedUrl, attempt) {
+        if (loadState !is LoadState.Loading) loadState = LoadState.Loading
+        delay(LOAD_TIMEOUT_MS)
+        if (loadState is LoadState.Loading) {
+            Log.w(TAG, "embed load exceeded ${LOAD_TIMEOUT_MS}ms: $embedUrl")
+            loadState = LoadState.Failed("Stream didn't load — embed may be blocked or offline.")
+        }
     }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
@@ -61,7 +101,14 @@ fun WebPlayerScreen(embedUrl: String, onExit: () -> Unit = {}) {
                             .bufferedReader()
                             .use { it.readText() }
                     }.getOrNull() ?: ""
-                    webViewClient = EmbedWebViewClient(blocker, cosmeticCss)
+                    webViewClient = EmbedWebViewClient(
+                        blocker = blocker,
+                        cosmeticCss = cosmeticCss,
+                        onMainFrameFinished = { loadState = LoadState.Loaded },
+                        onMainFrameError = { reason ->
+                            loadState = LoadState.Failed(reason)
+                        },
+                    )
                     webChromeClient = FullscreenChromeClient()
                     CookieManager.getInstance().setAcceptCookie(true)
                     CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
@@ -70,18 +117,64 @@ fun WebPlayerScreen(embedUrl: String, onExit: () -> Unit = {}) {
                     requestFocus()
                     loadUrl(embedUrl)
                 }
+                webViewRef = webView
                 webView
             },
             onRelease = { wv ->
+                webViewRef = null
                 wv.stopLoading()
                 wv.loadUrl("about:blank")
                 wv.removeAllViews()
                 wv.destroy()
             },
         )
-    }
 
-    DisposableEffect(Unit) { onDispose {} }
+        if (loadState is LoadState.Failed) {
+            ErrorOverlay(
+                message = (loadState as LoadState.Failed).reason,
+                onRetry = {
+                    webViewRef?.let { wv ->
+                        wv.stopLoading()
+                        wv.loadUrl(embedUrl)
+                        loadState = LoadState.Loading
+                        attempt += 1
+                    }
+                },
+                onBack = onExit,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ErrorOverlay(message: String, onRetry: () -> Unit, onBack: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.82f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.padding(40.dp),
+        ) {
+            Text(
+                text = message,
+                style = MaterialTheme.typography.titleMedium,
+                color = Color.White,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Button(onClick = onRetry) {
+                    Text("Retry", modifier = Modifier.padding(horizontal = 8.dp))
+                }
+                Spacer(Modifier.width(4.dp))
+                Button(onClick = onBack) {
+                    Text("Back", modifier = Modifier.padding(horizontal = 8.dp))
+                }
+            }
+        }
+    }
 }
 
 @SuppressLint("SetJavaScriptEnabled")
@@ -103,14 +196,17 @@ private fun WebView.configureForEmbedPlayback() {
 private class EmbedWebViewClient(
     private val blocker: HostBlocker?,
     private val cosmeticCss: String,
+    private val onMainFrameFinished: () -> Unit,
+    private val onMainFrameError: (String) -> Unit,
 ) : WebViewClient() {
 
     override fun onPageFinished(view: WebView, url: String?) {
         super.onPageFinished(view, url)
+        // Only the top document's onPageFinished fires with the WebView's own URL.
+        if (url != null && url != "about:blank" && url == view.url) {
+            onMainFrameFinished()
+        }
         if (cosmeticCss.isBlank()) return
-        // Use JSONObject.quote for a properly-escaped JS string literal so
-        // the CSS payload can contain any combination of quotes, slashes,
-        // or newlines without breaking the injected script.
         val jsLiteral = JSONObject.quote(cosmeticCss)
         val script = """
             (function () {
@@ -123,12 +219,21 @@ private class EmbedWebViewClient(
         view.evaluateJavascript(script, null)
     }
 
+    override fun onReceivedError(
+        view: WebView,
+        request: WebResourceRequest,
+        error: WebResourceError,
+    ) {
+        super.onReceivedError(view, request, error)
+        if (!request.isForMainFrame) return
+        Log.w(TAG, "main-frame error ${error.errorCode}: ${error.description}")
+        onMainFrameError("Embed failed to load: ${error.description}")
+    }
+
     override fun shouldOverrideUrlLoading(
         view: WebView,
         request: WebResourceRequest,
     ): Boolean {
-        // Keep navigation inside this WebView — cancel any new-tab pops that
-        // embed hosts often trigger on first interaction (ad redirects).
         val url = request.url ?: return false
         val scheme = url.scheme ?: return false
         if (scheme != "http" && scheme != "https") return true
@@ -146,8 +251,6 @@ private class EmbedWebViewClient(
     ): WebResourceResponse? {
         val host = request.url?.host
         if (blocker?.isBlocked(host) == true) {
-            // Return a 403-style empty response so the fetch fails cleanly
-            // without tying up a socket or invoking the ad host at all.
             return WebResourceResponse(
                 "text/plain",
                 "utf-8",
@@ -158,10 +261,6 @@ private class EmbedWebViewClient(
             )
         }
         return super.shouldInterceptRequest(view, request)
-    }
-
-    companion object {
-        private const val TAG = "WebPlayer"
     }
 }
 
@@ -175,10 +274,6 @@ private class FullscreenChromeClient : WebChromeClient() {
         }
         customView = view
         this.callback = callback
-        // The default behavior (show the custom video view) is sufficient
-        // because our host Box already fills the screen — the WebView and
-        // its custom view render full-bleed. If a host needs to project
-        // the view into a separate overlay, add that here.
     }
 
     override fun onHideCustomView() {
@@ -188,5 +283,6 @@ private class FullscreenChromeClient : WebChromeClient() {
     }
 }
 
+private const val TAG = "WebPlayer"
 private const val DESKTOP_UA =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
