@@ -74,15 +74,19 @@ class GogoAnimeByProvider : Provider {
             ?.trim()
             ?.takeIf { it.length > 20 }
 
-        val episodeRe = Regex(
-            """href=["'](https?://gogoanime\.by/${Regex.escape(titleId)}-episode-(\d+)-english-subbed/?)["']""",
-            RegexOption.IGNORE_CASE,
-        )
-        val episodes = episodeRe.findAll(body)
-            .map { it.groupValues[1] to it.groupValues[2].toInt() }
-            .distinctBy { it.second }
-            .sortedBy { it.second }
-            .map { (epUrl, number) ->
+        // Scope to the series-specific <div class="episodes-container"> so we
+        // don't pick up unrelated episodes from the "latest updates" sidebar
+        // that lives elsewhere on the same page.
+        val container = EPISODES_CONTAINER.find(body)?.groupValues?.get(1) ?: ""
+        val episodes = EPISODE_ITEM.findAll(container)
+            .mapNotNull { m ->
+                val number = m.groupValues[1].toIntOrNull() ?: return@mapNotNull null
+                val epUrl = m.groupValues[2]
+                number to epUrl
+            }
+            .distinctBy { it.first }
+            .sortedBy { it.first }
+            .map { (number, epUrl) ->
                 Episode(id = epUrl, number = number, title = null)
             }
             .toList()
@@ -195,6 +199,14 @@ class GogoAnimeByProvider : Provider {
         )
         private val DATA_PLAIN_URL = Regex(
             """data-plain-url=["']([^"']+)["']""",
+            RegexOption.IGNORE_CASE,
+        )
+        private val EPISODES_CONTAINER = Regex(
+            """<div class=["']episodes-container["']>([\s\S]*?)</div>\s*</div>\s*</div>""",
+            RegexOption.IGNORE_CASE,
+        )
+        private val EPISODE_ITEM = Regex(
+            """data-episode-number=["'](\d+)["'][\s\S]{0,400}?href=["']([^"']+)["']""",
             RegexOption.IGNORE_CASE,
         )
     }
