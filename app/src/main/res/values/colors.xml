@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="dt_background">#0E0E10</color>
+    <color name="dt_primary">#E53935</color>
+    <color name="dt_on_background">#EDEDED</color>
+</resources>
