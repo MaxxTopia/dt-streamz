@@ -11,6 +11,7 @@ import com.dt.streamz.scraper.anikai.AnikaiProvider
 import com.dt.streamz.scraper.fixtures.FixturesProvider
 import com.dt.streamz.scraper.gogoanimeby.GogoAnimeByProvider
 import com.dt.streamz.scraper.vidsrc.VidSrcProvider
+import com.dt.streamz.twitch.PinnedChannelsStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -26,6 +27,8 @@ class DtApplication : Application() {
     lateinit var hostBlocker: HostBlocker
         private set
     lateinit var networkMonitor: NetworkMonitor
+        private set
+    lateinit var pinnedChannels: PinnedChannelsStore
         private set
 
     override fun onCreate() {
@@ -54,5 +57,7 @@ class DtApplication : Application() {
 
         networkMonitor = NetworkMonitor(this)
         networkMonitor.start()
+
+        pinnedChannels = PinnedChannelsStore(this)
     }
 }
