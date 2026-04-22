@@ -1,5 +1,7 @@
 package com.dt.streamz.ui
 
+import android.util.Log
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -8,8 +10,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
@@ -17,11 +21,15 @@ import androidx.tv.material3.SurfaceDefaults
 import androidx.tv.material3.Tab
 import androidx.tv.material3.TabRow
 import androidx.tv.material3.Text
+import com.dt.streamz.DtApplication
+import com.dt.streamz.data.StreamKind
+import com.dt.streamz.ui.details.DetailsScreen
 import com.dt.streamz.ui.home.HomeScreen
 import com.dt.streamz.ui.player.PlayerScreen
 import com.dt.streamz.ui.search.SearchScreen
 import com.dt.streamz.ui.settings.SettingsScreen
 import com.dt.streamz.ui.twitch.TwitchScreen
+import kotlinx.coroutines.launch
 
 private enum class Section(val label: String) {
     Home("Home"),
@@ -34,6 +42,11 @@ private enum class Section(val label: String) {
 
 @Composable
 fun DtApp() {
+    val ctx = LocalContext.current
+    val app = ctx.applicationContext as DtApplication
+    val registry = app.providerRegistry
+    val scope = rememberCoroutineScope()
+
     var route: Route by remember { mutableStateOf(Route.Tabs) }
 
     Surface(
@@ -41,7 +54,43 @@ fun DtApp() {
         colors = SurfaceDefaults.colors(containerColor = MaterialTheme.colorScheme.background),
     ) {
         when (val r = route) {
-            Route.Tabs -> TabsDestination(onPlay = { url, title -> route = Route.Player(url, title) })
+            Route.Tabs -> TabsDestination(
+                onOpenTitle = { providerId, titleId ->
+                    route = Route.Details(providerId, titleId)
+                },
+                onPlayTest = { url, title -> route = Route.Player(url, title) },
+            )
+            is Route.Details -> {
+                BackHandler { route = Route.Tabs }
+                DetailsScreen(
+                    registry = registry,
+                    providerId = r.providerId,
+                    titleId = r.titleId,
+                    onPlayEpisode = { titleId, ep, providerId ->
+                        scope.launch {
+                            runCatching { registry.get(providerId).streams(titleId, ep) }
+                                .onSuccess { sources ->
+                                    val hls = sources.firstOrNull { it.kind == StreamKind.Hls }
+                                    if (hls != null) {
+                                        route = Route.Player(hls.url, "Ep ${ep.number}")
+                                    } else {
+                                        val first = sources.firstOrNull()
+                                        Log.i(TAG, "Phase 3b will resolve: ${first?.url} (kind=${first?.kind})")
+                                        Toast.makeText(
+                                            ctx,
+                                            "Stream extraction lands in Phase 3b",
+                                            Toast.LENGTH_SHORT,
+                                        ).show()
+                                    }
+                                }
+                                .onFailure {
+                                    Log.w(TAG, "streams() failed", it)
+                                    Toast.makeText(ctx, "Couldn't fetch stream: ${it.message}", Toast.LENGTH_SHORT).show()
+                                }
+                        }
+                    },
+                )
+            }
             is Route.Player -> {
                 BackHandler { route = Route.Tabs }
                 PlayerScreen(hlsUrl = r.hlsUrl, title = r.title, onExit = { route = Route.Tabs })
@@ -51,8 +100,14 @@ fun DtApp() {
 }
 
 @Composable
-private fun TabsDestination(onPlay: (String, String) -> Unit) {
+private fun TabsDestination(
+    onOpenTitle: (providerId: String, titleId: String) -> Unit,
+    onPlayTest: (String, String) -> Unit,
+) {
+    val ctx = LocalContext.current
+    val app = ctx.applicationContext as DtApplication
     var selected by remember { mutableStateOf(Section.Home) }
+
     Column {
         TabRow(selectedTabIndex = selected.ordinal) {
             Section.entries.forEach { section ->
@@ -71,15 +126,16 @@ private fun TabsDestination(onPlay: (String, String) -> Unit) {
         }
         when (selected) {
             Section.Home -> HomeScreen(onPlayTestStream = {
-                onPlay(TEST_HLS_URL, "Test Stream (Mux BipBop)")
+                onPlayTest(TEST_HLS_URL, "Test Stream (Mux BipBop)")
             })
             Section.Anime -> HomeScreen(title = "Anime", onPlayTestStream = {})
             Section.Movies -> HomeScreen(title = "Movies", onPlayTestStream = {})
             Section.Twitch -> TwitchScreen()
-            Section.Search -> SearchScreen()
+            Section.Search -> SearchScreen(registry = app.providerRegistry, onOpenTitle = onOpenTitle)
             Section.Settings -> SettingsScreen()
         }
     }
 }
 
+private const val TAG = "DtApp"
 private const val TEST_HLS_URL = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"

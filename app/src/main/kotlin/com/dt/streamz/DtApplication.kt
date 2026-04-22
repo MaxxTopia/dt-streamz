@@ -2,6 +2,8 @@ package com.dt.streamz
 
 import android.app.Application
 import com.dt.streamz.config.ScraperConfigLoader
+import com.dt.streamz.scraper.ProviderRegistry
+import com.dt.streamz.scraper.anicrush.AnicrushProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -12,10 +14,18 @@ class DtApplication : Application() {
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     lateinit var scraperConfig: ScraperConfigLoader
         private set
+    lateinit var providerRegistry: ProviderRegistry
+        private set
 
     override fun onCreate() {
         super.onCreate()
         scraperConfig = ScraperConfigLoader(this)
         appScope.launch { scraperConfig.loadCachedThenRefresh() }
+
+        providerRegistry = ProviderRegistry(
+            providers = listOf(
+                AnicrushProvider(),
+            ),
+        )
     }
 }
