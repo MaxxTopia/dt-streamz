@@ -65,7 +65,7 @@ class SearchViewModel(
         activeJob?.cancel()
         _state.value = SearchState.Loading
         activeJob = viewModelScope.launch {
-            val providers: List<Provider> = registry.anime.ifEmpty { registry.all }
+            val providers: List<Provider> = registry.all
             val merged = mutableListOf<SearchResult>()
             for (p in providers) {
                 runCatching { p.search(q) }
