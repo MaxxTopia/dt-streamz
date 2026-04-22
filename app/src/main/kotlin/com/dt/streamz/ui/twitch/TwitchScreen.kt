@@ -40,7 +40,6 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.dt.streamz.DtApplication
 import com.dt.streamz.twitch.TwitchStreamResolver
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -284,5 +283,3 @@ private fun AddChannelDialog(
     }
 }
 
-@Suppress("unused")
-private val unusedDefault = flowOf<List<String>>(emptyList())

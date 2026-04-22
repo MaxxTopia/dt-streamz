@@ -22,6 +22,7 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.ui.PlayerView
+import com.dt.streamz.DtApplication
 import com.dt.streamz.ui.twitchchat.TwitchChatOverlay
 
 @Composable
@@ -32,6 +33,14 @@ fun PlayerScreen(
     onExit: () -> Unit = {},
 ) {
     val context = LocalContext.current
+    val monitor = (context.applicationContext as? DtApplication)?.networkMonitor
+
+    // While the player is visible, retarget the net-monitor probe at the
+    // stream CDN so the indicator reflects the actual pipe we're watching.
+    DisposableEffect(hlsUrl) {
+        monitor?.setActiveHost(hlsUrl)
+        onDispose { monitor?.setActiveHost(null) }
+    }
 
     Row(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         Box(modifier = Modifier.weight(1f).fillMaxHeight()) {

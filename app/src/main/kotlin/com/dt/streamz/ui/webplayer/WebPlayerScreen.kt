@@ -36,7 +36,14 @@ import java.io.ByteArrayInputStream
 @Composable
 fun WebPlayerScreen(embedUrl: String, onExit: () -> Unit = {}) {
     val ctx = LocalContext.current
-    val blocker = (ctx.applicationContext as? DtApplication)?.hostBlocker
+    val app = ctx.applicationContext as? DtApplication
+    val blocker = app?.hostBlocker
+    val monitor = app?.networkMonitor
+
+    DisposableEffect(embedUrl) {
+        monitor?.setActiveHost(embedUrl)
+        onDispose { monitor?.setActiveHost(null) }
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
