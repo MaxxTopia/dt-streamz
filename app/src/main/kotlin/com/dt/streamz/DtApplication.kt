@@ -4,6 +4,7 @@ import android.app.Application
 import com.dt.streamz.config.ScraperConfigLoader
 import com.dt.streamz.scraper.ProviderRegistry
 import com.dt.streamz.scraper.anicrush.AnicrushProvider
+import com.dt.streamz.scraper.fixtures.FixturesProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -24,6 +25,7 @@ class DtApplication : Application() {
 
         providerRegistry = ProviderRegistry(
             providers = listOf(
+                FixturesProvider(),
                 AnicrushProvider(),
             ),
         )
