@@ -71,6 +71,9 @@ fun DtApp() {
                 onPlayTwitch = { url, title, channel ->
                     route = Route.Player(url, title, twitchChannel = channel)
                 },
+                onRemoveContinue = { entry ->
+                    scope.launch { app.continueWatching.remove(entry.providerId, entry.titleId) }
+                },
                 onResume = { entry ->
                     scope.launch {
                         val ep = com.dt.streamz.data.Episode(
@@ -175,6 +178,7 @@ private fun TabsDestination(
     onPlayTest: (String, String) -> Unit,
     onPlayTwitch: (String, String, String) -> Unit,
     onResume: (com.dt.streamz.data.WatchEntry) -> Unit,
+    onRemoveContinue: (com.dt.streamz.data.WatchEntry) -> Unit,
 ) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as DtApplication
@@ -202,6 +206,7 @@ private fun TabsDestination(
                 continueWatching = app.continueWatching,
                 onOpenTitle = onOpenTitle,
                 onResume = onResume,
+                onRemoveContinue = onRemoveContinue,
                 onPlayTestStream = {
                     onPlayTest(TEST_HLS_URL, "Test Stream (Mux BipBop)")
                 },
@@ -213,6 +218,7 @@ private fun TabsDestination(
                 continueWatching = app.continueWatching,
                 onOpenTitle = onOpenTitle,
                 onResume = onResume,
+                onRemoveContinue = onRemoveContinue,
             )
             Section.Movies -> HomeScreen(
                 title = "Movies",
@@ -221,6 +227,7 @@ private fun TabsDestination(
                 continueWatching = app.continueWatching,
                 onOpenTitle = onOpenTitle,
                 onResume = onResume,
+                onRemoveContinue = onRemoveContinue,
             )
             Section.Twitch -> TwitchScreen(onPlayHlsWithChat = { url, label, channel ->
                 onPlayTwitch(url, label, channel)

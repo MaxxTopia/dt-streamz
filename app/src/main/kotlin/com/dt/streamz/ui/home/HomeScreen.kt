@@ -25,7 +25,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.dp
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
@@ -47,10 +54,12 @@ fun HomeScreen(
     continueWatching: ContinueWatchingStore? = null,
     onOpenTitle: (providerId: String, titleId: String) -> Unit = { _, _ -> },
     onResume: (WatchEntry) -> Unit = {},
+    onRemoveContinue: (WatchEntry) -> Unit = {},
     onPlayTestStream: () -> Unit = {},
 ) {
     val continueEntries by (continueWatching?.entries ?: flowOf(emptyList()))
         .collectAsState(initial = emptyList())
+    var pendingRemoval by remember { mutableStateOf<WatchEntry?>(null) }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 24.dp),
@@ -62,19 +71,50 @@ fun HomeScreen(
             color = MaterialTheme.colorScheme.onBackground,
         )
         if (continueEntries.isNotEmpty()) {
-            ContinueRow(entries = continueEntries, onResume = onResume)
+            ContinueRow(
+                entries = continueEntries,
+                onResume = onResume,
+                onRequestRemove = { pendingRemoval = it },
+            )
         }
         registry?.all?.filter(providerFilter)?.forEach { provider ->
             BrowseRow(provider = provider, onOpenTitle = onOpenTitle)
         }
         PlayTestStreamCard(onClick = onPlayTestStream)
     }
+
+    pendingRemoval?.let { target ->
+        AlertDialog(
+            onDismissRequest = { pendingRemoval = null },
+            title = { androidx.compose.material3.Text("Remove from Continue Watching?") },
+            text = {
+                androidx.compose.material3.Text(
+                    "${target.titleName} · Ep ${target.episodeNumber}",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onRemoveContinue(target)
+                    pendingRemoval = null
+                }) { androidx.compose.material3.Text("Remove") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingRemoval = null }) {
+                    androidx.compose.material3.Text("Cancel")
+                }
+            },
+        )
+    }
 }
 
 @Composable
-private fun ContinueRow(entries: List<WatchEntry>, onResume: (WatchEntry) -> Unit) {
+private fun ContinueRow(
+    entries: List<WatchEntry>,
+    onResume: (WatchEntry) -> Unit,
+    onRequestRemove: (WatchEntry) -> Unit,
+) {
     Text(
-        text = "Continue watching",
+        text = "Continue watching  ·  Press MENU to remove",
         style = MaterialTheme.typography.titleLarge,
         color = MaterialTheme.colorScheme.onBackground,
     )
@@ -83,20 +123,35 @@ private fun ContinueRow(entries: List<WatchEntry>, onResume: (WatchEntry) -> Uni
         modifier = Modifier.fillMaxWidth(),
     ) {
         items(entries, key = { "${it.providerId}:${it.titleId}" }) { entry ->
-            ContinueCard(entry = entry, onClick = { onResume(entry) })
+            ContinueCard(
+                entry = entry,
+                onClick = { onResume(entry) },
+                onRequestRemove = { onRequestRemove(entry) },
+            )
         }
     }
 }
 
 @Composable
-private fun ContinueCard(entry: WatchEntry, onClick: () -> Unit) {
+private fun ContinueCard(
+    entry: WatchEntry,
+    onClick: () -> Unit,
+    onRequestRemove: () -> Unit,
+) {
     var focused by remember { mutableStateOf(false) }
     val border = if (focused) Color.White else Color.Transparent
     Column(
         verticalArrangement = Arrangement.spacedBy(4.dp),
         modifier = Modifier
             .width(200.dp)
-            .onFocusChanged { focused = it.isFocused },
+            .onFocusChanged { focused = it.isFocused }
+            .onKeyEvent { event ->
+                val menuKey = event.key == Key.Menu || event.key == Key.F10
+                if (focused && menuKey && event.type == KeyEventType.KeyUp) {
+                    onRequestRemove()
+                    true
+                } else false
+            },
     ) {
         Surface(
             onClick = onClick,

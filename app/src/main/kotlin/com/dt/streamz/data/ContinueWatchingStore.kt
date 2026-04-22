@@ -54,6 +54,19 @@ class ContinueWatchingStore(private val context: Context) {
         }
     }
 
+    suspend fun remove(providerId: String, titleId: String) {
+        context.continueWatchingStore.edit { prefs ->
+            val current = runCatching {
+                prefs[KEY]?.let { json.decodeFromString(listSerializer, it) }
+            }.getOrNull() ?: return@edit
+            val filtered = current.filterNot {
+                it.providerId == providerId && it.titleId == titleId
+            }
+            if (filtered.isEmpty()) prefs.remove(KEY)
+            else prefs[KEY] = json.encodeToString(listSerializer, filtered)
+        }
+    }
+
     suspend fun clear() {
         context.continueWatchingStore.edit { it.remove(KEY) }
     }
