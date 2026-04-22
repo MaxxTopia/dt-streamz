@@ -28,6 +28,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -47,6 +49,8 @@ fun SearchScreen(
     val vm: SearchViewModel = viewModel(factory = SearchViewModel.Factory(registry))
     val query by vm.query.collectAsState()
     val state by vm.state.collectAsState()
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
 
     Column(
         modifier = Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 24.dp),
@@ -60,7 +64,11 @@ fun SearchScreen(
             label = { androidx.compose.material3.Text("Search anime or movies") },
             placeholder = { androidx.compose.material3.Text("e.g. frieren, dune") },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = { vm.onSubmit() }),
+            keyboardActions = KeyboardActions(onSearch = {
+                vm.onSubmit()
+                keyboard?.hide()
+                focusManager.clearFocus()
+            }),
             textStyle = MaterialTheme.typography.bodyLarge,
             colors = OutlinedTextFieldDefaults.colors(
                 focusedContainerColor = MaterialTheme.colorScheme.surface,
