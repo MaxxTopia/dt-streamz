@@ -45,7 +45,9 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun TwitchScreen(onPlayHls: (hlsUrl: String, title: String) -> Unit = { _, _ -> }) {
+fun TwitchScreen(
+    onPlayHlsWithChat: (hlsUrl: String, title: String, channel: String) -> Unit = { _, _, _ -> },
+) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as DtApplication
     val scope = rememberCoroutineScope()
@@ -64,7 +66,7 @@ fun TwitchScreen(onPlayHls: (hlsUrl: String, title: String) -> Unit = { _, _ -> 
             if (url == null) {
                 Toast.makeText(ctx, "$channel is offline or Twitch refused the token", Toast.LENGTH_SHORT).show()
             } else {
-                onPlayHls(url, "twitch.tv/$channel")
+                onPlayHlsWithChat(url, "twitch.tv/$channel", channel)
             }
         }
     }

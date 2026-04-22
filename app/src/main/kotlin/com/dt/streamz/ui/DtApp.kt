@@ -67,6 +67,9 @@ fun DtApp() {
                     route = Route.Details(providerId, titleId)
                 },
                 onPlayTest = { url, title -> route = Route.Player(url, title) },
+                onPlayTwitch = { url, title, channel ->
+                    route = Route.Player(url, title, twitchChannel = channel)
+                },
             )
             is Route.Details -> {
                 BackHandler { route = Route.Tabs }
@@ -106,7 +109,12 @@ fun DtApp() {
             }
             is Route.Player -> {
                 BackHandler { route = Route.Tabs }
-                PlayerScreen(hlsUrl = r.hlsUrl, title = r.title, onExit = { route = Route.Tabs })
+                PlayerScreen(
+                    hlsUrl = r.hlsUrl,
+                    title = r.title,
+                    twitchChannel = r.twitchChannel,
+                    onExit = { route = Route.Tabs },
+                )
             }
             is Route.WebPlayer -> {
                 BackHandler { route = Route.Tabs }
@@ -128,6 +136,7 @@ fun DtApp() {
 private fun TabsDestination(
     onOpenTitle: (providerId: String, titleId: String) -> Unit,
     onPlayTest: (String, String) -> Unit,
+    onPlayTwitch: (String, String, String) -> Unit,
 ) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as DtApplication
@@ -155,7 +164,9 @@ private fun TabsDestination(
             })
             Section.Anime -> HomeScreen(title = "Anime", onPlayTestStream = {})
             Section.Movies -> HomeScreen(title = "Movies", onPlayTestStream = {})
-            Section.Twitch -> TwitchScreen(onPlayHls = { url, label -> onPlayTest(url, label) })
+            Section.Twitch -> TwitchScreen(onPlayHlsWithChat = { url, label, channel ->
+                onPlayTwitch(url, label, channel)
+            })
             Section.Search -> SearchScreen(registry = app.providerRegistry, onOpenTitle = onOpenTitle)
             Section.Settings -> SettingsScreen()
         }
