@@ -16,4 +16,7 @@ interface Provider {
     suspend fun details(titleId: String): TitleDetails
 
     suspend fun streams(titleId: String, episode: Episode): List<StreamSource>
+
+    /** Optional: latest / featured items for the Home browse rows. Default is empty. */
+    suspend fun browse(): List<SearchResult> = emptyList()
 }

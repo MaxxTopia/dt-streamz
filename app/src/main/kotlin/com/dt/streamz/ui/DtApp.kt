@@ -159,11 +159,25 @@ private fun TabsDestination(
             }
         }
         when (selected) {
-            Section.Home -> HomeScreen(onPlayTestStream = {
-                onPlayTest(TEST_HLS_URL, "Test Stream (Mux BipBop)")
-            })
-            Section.Anime -> HomeScreen(title = "Anime", onPlayTestStream = {})
-            Section.Movies -> HomeScreen(title = "Movies", onPlayTestStream = {})
+            Section.Home -> HomeScreen(
+                registry = app.providerRegistry,
+                onOpenTitle = onOpenTitle,
+                onPlayTestStream = {
+                    onPlayTest(TEST_HLS_URL, "Test Stream (Mux BipBop)")
+                },
+            )
+            Section.Anime -> HomeScreen(
+                title = "Anime",
+                registry = app.providerRegistry,
+                providerFilter = { it.supportsAnime },
+                onOpenTitle = onOpenTitle,
+            )
+            Section.Movies -> HomeScreen(
+                title = "Movies",
+                registry = app.providerRegistry,
+                providerFilter = { it.supportsMovies },
+                onOpenTitle = onOpenTitle,
+            )
             Section.Twitch -> TwitchScreen(onPlayHlsWithChat = { url, label, channel ->
                 onPlayTwitch(url, label, channel)
             })

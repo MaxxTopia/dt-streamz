@@ -2,15 +2,20 @@ package com.dt.streamz.ui.home
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -25,24 +30,118 @@ import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import coil3.compose.AsyncImage
+import com.dt.streamz.data.SearchResult
+import com.dt.streamz.scraper.Provider
+import com.dt.streamz.scraper.ProviderRegistry
 
 @Composable
-fun HomeScreen(title: String = "Home", onPlayTestStream: () -> Unit = {}) {
+fun HomeScreen(
+    title: String = "Home",
+    registry: ProviderRegistry? = null,
+    providerFilter: (Provider) -> Boolean = { it.supportsAnime },
+    onOpenTitle: (providerId: String, titleId: String) -> Unit = { _, _ -> },
+    onPlayTestStream: () -> Unit = {},
+) {
     Column(
-        modifier = Modifier.fillMaxSize().padding(48.dp),
-        verticalArrangement = Arrangement.spacedBy(24.dp),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         Text(
             text = title,
             style = MaterialTheme.typography.displaySmall,
             color = MaterialTheme.colorScheme.onBackground,
         )
-        Text(
-            text = "Scraper rows land in Phase 3. In the meantime:",
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-        )
+        registry?.all?.filter(providerFilter)?.forEach { provider ->
+            BrowseRow(provider = provider, onOpenTitle = onOpenTitle)
+        }
         PlayTestStreamCard(onClick = onPlayTestStream)
+    }
+}
+
+@Composable
+private fun BrowseRow(
+    provider: Provider,
+    onOpenTitle: (providerId: String, titleId: String) -> Unit,
+) {
+    var results by remember(provider.id) { mutableStateOf<List<SearchResult>?>(null) }
+    LaunchedEffect(provider.id) {
+        results = runCatching { provider.browse() }.getOrDefault(emptyList())
+    }
+    val list = results
+    if (list == null) {
+        Text(
+            text = "Loading ${provider.displayName}…",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+        )
+        return
+    }
+    if (list.isEmpty()) return
+    Text(
+        text = "Latest · ${provider.displayName}",
+        style = MaterialTheme.typography.titleLarge,
+        color = MaterialTheme.colorScheme.onBackground,
+    )
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        items(list, key = { "${it.providerId}:${it.id}" }) { item ->
+            PosterCard(result = item, onClick = { onOpenTitle(item.providerId, item.id) })
+        }
+    }
+}
+
+@Composable
+private fun PosterCard(result: SearchResult, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    val border = if (focused) Color.White else Color.Transparent
+    Column(
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = Modifier
+            .width(160.dp)
+            .onFocusChanged { focused = it.isFocused },
+    ) {
+        Surface(
+            onClick = onClick,
+            modifier = Modifier
+                .width(160.dp)
+                .height(240.dp),
+            colors = ClickableSurfaceDefaults.colors(
+                containerColor = MaterialTheme.colorScheme.surface,
+                focusedContainerColor = MaterialTheme.colorScheme.surface,
+            ),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .border(2.dp, border, RoundedCornerShape(10.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (result.poster != null) {
+                    AsyncImage(
+                        model = result.poster,
+                        contentDescription = result.title,
+                        modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)),
+                    )
+                } else {
+                    Text(
+                        text = result.title.take(2).uppercase(),
+                        style = MaterialTheme.typography.displaySmall,
+                    )
+                }
+            }
+        }
+        Text(
+            text = result.title,
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = 2,
+            color = if (focused) MaterialTheme.colorScheme.onBackground
+            else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),
+        )
     }
 }
 
@@ -52,41 +151,22 @@ private fun PlayTestStreamCard(onClick: () -> Unit) {
     Surface(
         onClick = onClick,
         modifier = Modifier
-            .width(360.dp)
-            .height(200.dp)
+            .width(320.dp)
+            .height(160.dp)
             .onFocusChanged { focused = it.isFocused },
-        shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(16.dp)),
+        shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(14.dp)),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = MaterialTheme.colorScheme.surface,
             focusedContainerColor = MaterialTheme.colorScheme.primary,
         ),
     ) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .width(72.dp)
-                        .height(72.dp)
-                        .clip(RoundedCornerShape(36.dp))
-                        .background(if (focused) Color.White else MaterialTheme.colorScheme.primary)
-                        .border(2.dp, Color.White.copy(alpha = 0.3f), RoundedCornerShape(36.dp)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = "▶",
-                        style = MaterialTheme.typography.displayMedium,
-                        color = if (focused) MaterialTheme.colorScheme.primary else Color.White,
-                    )
-                }
-                Text(
-                    text = "Play test stream",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = if (focused) Color.White else MaterialTheme.colorScheme.onSurface,
-                )
-            }
+            Text(
+                text = "▶  Play test stream",
+                style = MaterialTheme.typography.titleLarge,
+                color = if (focused) MaterialTheme.colorScheme.onPrimary
+                else MaterialTheme.colorScheme.onSurface,
+            )
         }
     }
 }

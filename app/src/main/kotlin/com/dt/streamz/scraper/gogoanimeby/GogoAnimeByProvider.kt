@@ -32,8 +32,20 @@ class GogoAnimeByProvider : Provider {
 
     private val cache = mutableMapOf<String, CachedSearchResult>()
 
+    override suspend fun browse(): List<SearchResult> = withContext(Dispatchers.IO) {
+        // /series/ is the A-Z browse page — each card links to /series/<slug>/
+        // so parseCards() catches them. The homepage proper only has episode
+        // cards linking to episode pages, which we filter out.
+        val body = fetch("$SITE/series/") ?: return@withContext emptyList()
+        parseCards(body).take(24)
+    }
+
     override suspend fun search(query: String): List<SearchResult> = withContext(Dispatchers.IO) {
         val body = fetch("$SITE/?s=${query.encode()}") ?: return@withContext emptyList()
+        parseCards(body)
+    }
+
+    private fun parseCards(body: String): List<SearchResult> =
         CARD.findAll(body).mapNotNull { m ->
             val href = m.groupValues[1]
             val title = m.groupValues[2].decodeEntities()
@@ -58,7 +70,6 @@ class GogoAnimeByProvider : Provider {
             cache[slug] = CachedSearchResult(result, baseSlug = slug)
             result
         }.toList()
-    }
 
     override suspend fun details(titleId: String): TitleDetails = withContext(Dispatchers.IO) {
         val url = "$SITE/series/$titleId/"
@@ -154,14 +165,25 @@ class GogoAnimeByProvider : Provider {
     private fun String.encode(): String =
         java.net.URLEncoder.encode(this, "UTF-8").replace("+", "%20")
 
-    private fun String.decodeEntities(): String = this
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#039;", "'")
-        .replace("&apos;", "'")
-        .replace("&nbsp;", " ")
+    private fun String.decodeEntities(): String {
+        // First numeric entities: &#8220; &#x2014; etc.
+        val numeric = Regex("""&#(x?[0-9a-fA-F]+);""").replace(this) { m ->
+            val raw = m.groupValues[1]
+            val codePoint = runCatching {
+                if (raw.startsWith("x", ignoreCase = true)) raw.substring(1).toInt(16)
+                else raw.toInt()
+            }.getOrNull() ?: return@replace m.value
+            if (codePoint in 0..0x10FFFF) String(Character.toChars(codePoint)) else m.value
+        }
+        // Then named entities.
+        return numeric
+            .replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&apos;", "'")
+            .replace("&nbsp;", " ")
+    }
 
     private fun stripTags(s: String): String = Regex("<[^>]+>").replace(s, " ")
 
