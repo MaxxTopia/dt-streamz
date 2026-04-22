@@ -1,6 +1,7 @@
 package com.dt.streamz
 
 import android.app.Application
+import com.dt.streamz.adblock.BlocklistRefreshWorker
 import com.dt.streamz.adblock.HostBlocker
 import com.dt.streamz.config.ScraperConfigLoader
 import com.dt.streamz.scraper.ProviderRegistry
@@ -41,9 +42,11 @@ class DtApplication : Application() {
 
         hostBlocker = HostBlocker(this)
         appScope.launch {
+            // Seed is bundled in assets — always available instantly on
+            // cold start even with no network. The upstream merge is now
+            // handled by BlocklistRefreshWorker on a weekly cadence.
             hostBlocker.loadSeedFromAssets()
-            // Best-effort refresh from upstream; failure keeps the seed list.
-            hostBlocker.refreshFromUrl(HostBlocker.UPSTREAM_HOSTS_URL)
         }
+        BlocklistRefreshWorker.schedule(this)
     }
 }
