@@ -3,9 +3,11 @@ package com.dt.streamz.ui
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -21,9 +23,11 @@ import androidx.tv.material3.SurfaceDefaults
 import androidx.tv.material3.Tab
 import androidx.tv.material3.TabRow
 import androidx.tv.material3.Text
+import androidx.compose.ui.Alignment
 import com.dt.streamz.DtApplication
 import com.dt.streamz.data.StreamKind
 import com.dt.streamz.data.StreamSource
+import com.dt.streamz.networkmonitor.NetworkIndicator
 import com.dt.streamz.ui.details.DetailsScreen
 import com.dt.streamz.ui.home.HomeScreen
 import com.dt.streamz.ui.player.PlayerScreen
@@ -52,6 +56,7 @@ fun DtApp() {
 
     var route: Route by remember { mutableStateOf(Route.Tabs) }
 
+    Box(modifier = Modifier.fillMaxSize()) {
     Surface(
         modifier = Modifier.fillMaxSize(),
         colors = SurfaceDefaults.colors(containerColor = MaterialTheme.colorScheme.background),
@@ -108,6 +113,14 @@ fun DtApp() {
                 WebPlayerScreen(embedUrl = r.embedUrl, onExit = { route = Route.Tabs })
             }
         }
+    }
+    NetworkIndicator(
+        monitor = app.networkMonitor,
+        modifier = Modifier
+            .align(Alignment.TopEnd)
+            .statusBarsPadding()
+            .padding(12.dp),
+    )
     }
 }
 

@@ -4,6 +4,7 @@ import android.app.Application
 import com.dt.streamz.adblock.BlocklistRefreshWorker
 import com.dt.streamz.adblock.HostBlocker
 import com.dt.streamz.config.ScraperConfigLoader
+import com.dt.streamz.networkmonitor.NetworkMonitor
 import com.dt.streamz.scraper.ProviderRegistry
 import com.dt.streamz.scraper.anicrush.AnicrushProvider
 import com.dt.streamz.scraper.anikai.AnikaiProvider
@@ -23,6 +24,8 @@ class DtApplication : Application() {
     lateinit var providerRegistry: ProviderRegistry
         private set
     lateinit var hostBlocker: HostBlocker
+        private set
+    lateinit var networkMonitor: NetworkMonitor
         private set
 
     override fun onCreate() {
@@ -48,5 +51,8 @@ class DtApplication : Application() {
             hostBlocker.loadSeedFromAssets()
         }
         BlocklistRefreshWorker.schedule(this)
+
+        networkMonitor = NetworkMonitor(this)
+        networkMonitor.start()
     }
 }
