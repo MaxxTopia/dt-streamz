@@ -26,10 +26,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -51,7 +49,6 @@ fun SearchScreen(
     val query by vm.query.collectAsState()
     val state by vm.state.collectAsState()
     val keyboard = LocalSoftwareKeyboardController.current
-    val focusManager = LocalFocusManager.current
 
     Column(
         modifier = Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 24.dp),
@@ -68,9 +65,12 @@ fun SearchScreen(
             keyboardActions = KeyboardActions(onSearch = {
                 vm.onSubmit()
                 keyboard?.hide()
-                // Step focus forward into the grid so the next D-pad press
-                // lands on a poster rather than falling out to the TabRow.
-                focusManager.moveFocus(FocusDirection.Down)
+                // Do NOT moveFocus or clearFocus here — with results still
+                // loading, there's no focusable target below the text field.
+                // moveFocus(Down) walks up the hierarchy looking for a
+                // neighbor, finds the TabRow, and lands on Home which
+                // unmounts the whole Search screen. Leave focus on the text
+                // field; user D-pads down when posters appear.
             }),
             textStyle = MaterialTheme.typography.bodyLarge,
             colors = OutlinedTextFieldDefaults.colors(
