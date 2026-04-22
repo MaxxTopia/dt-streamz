@@ -26,7 +26,7 @@ jobs:
       - name: Rename APK
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          mv app/build/outputs/apk/release/app-release-unsigned.apk "dt-streamz-${VERSION}.apk"
+          mv app/build/outputs/apk/release/app-release.apk "dt-streamz-${VERSION}.apk"
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2

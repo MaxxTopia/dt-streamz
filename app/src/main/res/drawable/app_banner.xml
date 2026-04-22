@@ -4,16 +4,44 @@
     android:height="180dp"
     android:viewportWidth="320"
     android:viewportHeight="180">
+
+    <!-- Background -->
     <path
         android:fillColor="#0E0E10"
         android:pathData="M0,0h320v180h-320z" />
+
+    <!-- Subtle top highlight -->
+    <path
+        android:fillColor="#1A1A1E"
+        android:pathData="M0,0h320v2h-320z" />
+
+    <!-- Red play-button circle -->
     <path
         android:fillColor="#E53935"
-        android:pathData="M40,60h40v60h-40z M90,60h25a15,15 0 0 1 15,15v30a15,15 0 0 1 -15,15h-25z" />
+        android:pathData="M 80,90 m -52,0 a 52,52 0 1,0 104,0 a 52,52 0 1,0 -104,0" />
+
+    <!-- White play triangle inside circle -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M 66,62 L 66,118 L 112,90 Z" />
+
+    <!-- Letter D (outer) -->
     <path
         android:fillColor="#EDEDED"
-        android:pathData="M150,90l18,0l0,-18l12,0l0,18l18,0l0,12l-18,0l0,18l-12,0l0,-18l-18,0z" />
+        android:pathData="M 170,45 L 195,45 A 45,45 0 0 1 195,135 L 170,135 Z" />
+    <!-- D inner cutout (dark) -->
+    <path
+        android:fillColor="#0E0E10"
+        android:pathData="M 185,60 L 195,60 A 30,30 0 0 1 195,120 L 185,120 Z" />
+
+    <!-- Letter T -->
     <path
         android:fillColor="#EDEDED"
-        android:pathData="M225,60h15v30l18,-30h18l-22,36l24,24h-20l-18,-22v22h-15z" />
+        android:pathData="M 235,45 L 300,45 L 300,63 L 276,63 L 276,135 L 259,135 L 259,63 L 235,63 Z" />
+
+    <!-- Red accent bar under DT -->
+    <path
+        android:fillColor="#E53935"
+        android:pathData="M 170,147 L 300,147 L 300,152 L 170,152 Z" />
+
 </vector>

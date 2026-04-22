@@ -4,7 +4,15 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+
+    <!-- Red circle (within safe zone radius of 33) -->
     <path
         android:fillColor="#E53935"
-        android:pathData="M32,36h16v36h-16z M52,36h12a14,14 0 0 1 14,14v8a14,14 0 0 1 -14,14h-12z" />
+        android:pathData="M 54,54 m -30,0 a 30,30 0 1,0 60,0 a 30,30 0 1,0 -60,0" />
+
+    <!-- White play triangle inside circle -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M 45,39 L 45,69 L 72,54 Z" />
+
 </vector>

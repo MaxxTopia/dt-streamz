@@ -1,0 +1,76 @@
+package com.dt.streamz.ui.player
+
+import android.view.ViewGroup
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.ui.PlayerView
+
+@Composable
+fun PlayerScreen(hlsUrl: String, title: String = "", onExit: () -> Unit = {}) {
+    val context = LocalContext.current
+
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { ctx ->
+                val loadControl = DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(
+                        /* minBufferMs = */ 5_000,
+                        /* maxBufferMs = */ 30_000,
+                        /* bufferForPlaybackMs = */ 1_500,
+                        /* bufferForPlaybackAfterRebufferMs = */ 3_000,
+                    )
+                    .build()
+
+                val player = ExoPlayer.Builder(ctx)
+                    .setLoadControl(loadControl)
+                    .build()
+                    .apply {
+                        val source = HlsMediaSource.Factory(DefaultHttpDataSource.Factory())
+                            .createMediaSource(
+                                MediaItem.Builder()
+                                    .setUri(hlsUrl)
+                                    .setMimeType(MimeTypes.APPLICATION_M3U8)
+                                    .build()
+                            )
+                        setMediaSource(source)
+                        prepare()
+                        playWhenReady = true
+                    }
+
+                PlayerView(ctx).apply {
+                    layoutParams = ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                    )
+                    this.player = player
+                    useController = true
+                    controllerAutoShow = true
+                    setShowNextButton(false)
+                    setShowPreviousButton(false)
+                }
+            },
+            onRelease = { view ->
+                view.player?.release()
+                view.player = null
+            },
+        )
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { /* AndroidView.onRelease handles player disposal */ }
+    }
+}
