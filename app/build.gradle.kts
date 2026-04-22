@@ -6,12 +6,12 @@ plugins {
 
 android {
     namespace = "com.dt.streamz"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.dt.streamz"
         minSdk = 30
-        targetSdk = 34
+        targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
     }
@@ -64,7 +64,6 @@ dependencies {
     implementation(libs.compose.ui.tooling.preview)
     debugImplementation(libs.compose.ui.tooling)
 
-    implementation(libs.tv.foundation)
     implementation(libs.tv.material)
 
     implementation(libs.media3.exoplayer)
