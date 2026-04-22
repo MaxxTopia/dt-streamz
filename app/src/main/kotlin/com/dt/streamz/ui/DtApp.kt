@@ -142,7 +142,7 @@ private fun TabsDestination(
             })
             Section.Anime -> HomeScreen(title = "Anime", onPlayTestStream = {})
             Section.Movies -> HomeScreen(title = "Movies", onPlayTestStream = {})
-            Section.Twitch -> TwitchScreen()
+            Section.Twitch -> TwitchScreen(onPlayHls = { url, label -> onPlayTest(url, label) })
             Section.Search -> SearchScreen(registry = app.providerRegistry, onOpenTitle = onOpenTitle)
             Section.Settings -> SettingsScreen()
         }
