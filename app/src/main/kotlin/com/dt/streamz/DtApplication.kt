@@ -12,7 +12,6 @@ import com.dt.streamz.scraper.anicrush.AnicrushProvider
 import com.dt.streamz.scraper.anikai.AnikaiProvider
 import com.dt.streamz.scraper.anikai.AnikaiResolver
 import com.dt.streamz.scraper.fixtures.FixturesProvider
-import com.dt.streamz.scraper.gogoanimeby.GogoAnimeByProvider
 import com.dt.streamz.scraper.vidsrc.VidSrcProvider
 import com.dt.streamz.twitch.PinnedChannelsStore
 import kotlinx.coroutines.CoroutineScope
@@ -44,12 +43,15 @@ class DtApplication : Application() {
         appScope.launch { scraperConfig.loadCachedThenRefresh() }
 
         val anikaiResolver = AnikaiResolver(this)
+        // 9animetv (gogoanime.by's decryption backend) was nuked in 2024;
+        // the provider's stream URLs now resolve to a dead player. Anikai
+        // takes over as primary anime source — its hidden-WebView resolver
+        // renders JS-heavy pages and captures direct m3u8 streams.
         providerRegistry = ProviderRegistry(
             providers = listOf(
                 FixturesProvider(),
-                GogoAnimeByProvider(),
-                VidSrcProvider(),
                 AnikaiProvider(resolver = anikaiResolver),
+                VidSrcProvider(),
                 AnicrushProvider(),
             ),
         )
