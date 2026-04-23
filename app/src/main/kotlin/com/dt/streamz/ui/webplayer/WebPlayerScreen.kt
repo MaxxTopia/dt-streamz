@@ -14,6 +14,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.dt.streamz.BuildConfig
 import androidx.compose.foundation.background
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -143,12 +144,57 @@ fun WebPlayerScreen(embedUrl: String, onExit: () -> Unit = {}) {
                 onRetry = {
                     webViewRef?.let { wv ->
                         wv.stopLoading()
-                        wv.loadUrl(embedUrl)
+                        wv.loadUrl(embedUrl, mapOf("Referer" to "https://gogoanime.by/"))
                         loadState = LoadState.Loading
                         attempt += 1
                     }
                 },
                 onBack = onExit,
+            )
+        } else if (loadState is LoadState.Loaded) {
+            SkipIntroButton(
+                modifier = Modifier.align(Alignment.BottomEnd).padding(24.dp),
+                onClick = { webViewRef?.let(::fireSkip90s) },
+            )
+        }
+    }
+}
+
+private fun fireSkip90s(webView: WebView) {
+    val js = """
+        (function(){
+          var v = document.querySelector('video');
+          if (v) { try { v.currentTime = Math.min((v.duration || 1e9), (v.currentTime || 0) + 90); return 'ok'; } catch(e) { return 'err:'+e.message; } }
+          var frames = document.querySelectorAll('iframe');
+          for (var i = 0; i < frames.length; i++) {
+            try {
+              var doc = frames[i].contentDocument;
+              var vv = doc && doc.querySelector('video');
+              if (vv) { vv.currentTime = (vv.currentTime || 0) + 90; return 'ok-iframe'; }
+            } catch (e) {}
+          }
+          return 'no-video';
+        })();
+    """.trimIndent()
+    webView.evaluateJavascript(js) { result ->
+        Log.i(TAG, "skip-intro result: $result")
+    }
+}
+
+@Composable
+private fun SkipIntroButton(modifier: Modifier, onClick: () -> Unit) {
+    Box(
+        modifier = modifier
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+            .background(Color.Black.copy(alpha = 0.65f)),
+    ) {
+        Button(
+            onClick = onClick,
+            modifier = Modifier.padding(4.dp),
+        ) {
+            Text(
+                text = "▶▶ +90s",
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
             )
         }
     }
