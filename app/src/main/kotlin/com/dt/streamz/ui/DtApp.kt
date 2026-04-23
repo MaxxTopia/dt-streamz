@@ -29,6 +29,7 @@ import com.dt.streamz.data.StreamKind
 import com.dt.streamz.data.StreamSource
 import com.dt.streamz.data.WatchEntry
 import com.dt.streamz.networkmonitor.NetworkIndicator
+import com.dt.streamz.ui.brand.DtLogo
 import com.dt.streamz.ui.details.DetailsScreen
 import com.dt.streamz.ui.home.HomeScreen
 import com.dt.streamz.ui.player.PlayerScreen
@@ -69,7 +70,6 @@ fun DtApp() {
                 onOpenTitle = { providerId, titleId ->
                     route = Route.Details(providerId, titleId)
                 },
-                onPlayTest = { url, title -> route = Route.Player(url, title) },
                 onOpenTwitchChannel = { channel ->
                     // Runs in DtApp's scope so it survives a Tab focus-
                     // snap unmounting TwitchScreen mid-flight.
@@ -187,20 +187,23 @@ fun DtApp() {
             }
         }
     }
-    NetworkIndicator(
-        monitor = app.networkMonitor,
+    androidx.compose.foundation.layout.Row(
         modifier = Modifier
             .align(Alignment.TopEnd)
             .statusBarsPadding()
             .padding(12.dp),
-    )
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+    ) {
+        NetworkIndicator(monitor = app.networkMonitor)
+        DtLogo()
+    }
     }
 }
 
 @Composable
 private fun TabsDestination(
     onOpenTitle: (providerId: String, titleId: String) -> Unit,
-    onPlayTest: (String, String) -> Unit,
     onOpenTwitchChannel: (String) -> Unit,
     onResume: (com.dt.streamz.data.WatchEntry) -> Unit,
     onRemoveContinue: (com.dt.streamz.data.WatchEntry) -> Unit,
@@ -228,13 +231,11 @@ private fun TabsDestination(
         when (selected) {
             Section.Home -> HomeScreen(
                 registry = app.providerRegistry,
+                providerFilter = { true },
                 continueWatching = app.continueWatching,
                 onOpenTitle = onOpenTitle,
                 onResume = onResume,
                 onRemoveContinue = onRemoveContinue,
-                onPlayTestStream = {
-                    onPlayTest(TEST_HLS_URL, "Test Stream (Mux BipBop)")
-                },
             )
             Section.Anime -> HomeScreen(
                 title = "Anime",
@@ -267,4 +268,3 @@ private fun playRouteFor(source: StreamSource, label: String): Route = when (sou
 }
 
 private const val TAG = "DtApp"
-private const val TEST_HLS_URL = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"

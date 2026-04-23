@@ -19,6 +19,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,11 +41,15 @@ import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import androidx.compose.runtime.collectAsState
 import com.dt.streamz.data.ContinueWatchingStore
+import com.dt.streamz.data.MediaKind
 import com.dt.streamz.data.SearchResult
 import com.dt.streamz.data.WatchEntry
 import com.dt.streamz.scraper.Provider
 import com.dt.streamz.scraper.ProviderRegistry
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 
 @Composable
 fun HomeScreen(
@@ -55,11 +60,11 @@ fun HomeScreen(
     onOpenTitle: (providerId: String, titleId: String) -> Unit = { _, _ -> },
     onResume: (WatchEntry) -> Unit = {},
     onRemoveContinue: (WatchEntry) -> Unit = {},
-    onPlayTestStream: () -> Unit = {},
 ) {
     val continueEntries by (continueWatching?.entries ?: flowOf(emptyList()))
         .collectAsState(initial = emptyList())
     var pendingRemoval by remember { mutableStateOf<WatchEntry?>(null) }
+    val visibleProviders = registry?.all?.filter(providerFilter).orEmpty()
 
     Column(
         modifier = Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 24.dp),
@@ -77,17 +82,36 @@ fun HomeScreen(
                 onRequestRemove = { pendingRemoval = it },
             )
         }
+        RandomPickCard(
+            providers = visibleProviders,
+            onOpenTitle = onOpenTitle,
+        )
         val watchedKeys = remember(continueEntries) {
             continueEntries.map { "${it.providerId}:${it.titleId}" }.toSet()
         }
-        registry?.all?.filter(providerFilter)?.forEach { provider ->
+        val recentProviders = remember(continueEntries, visibleProviders) {
+            continueEntries
+                .map { it.providerId }
+                .distinct()
+                .mapNotNull { pid -> visibleProviders.firstOrNull { it.id == pid } }
+                .take(3)
+        }
+        recentProviders.forEach { provider ->
+            BrowseRow(
+                provider = provider,
+                watchedKeys = watchedKeys,
+                titleOverride = "Because you watched · ${provider.displayName}",
+                onOpenTitle = onOpenTitle,
+            )
+        }
+        val otherProviders = visibleProviders.filter { p -> recentProviders.none { it.id == p.id } }
+        otherProviders.forEach { provider ->
             BrowseRow(
                 provider = provider,
                 watchedKeys = watchedKeys,
                 onOpenTitle = onOpenTitle,
             )
         }
-        PlayTestStreamCard(onClick = onPlayTestStream)
     }
 
     pendingRemoval?.let { target ->
@@ -213,6 +237,7 @@ private fun ContinueCard(
 private fun BrowseRow(
     provider: Provider,
     watchedKeys: Set<String>,
+    titleOverride: String? = null,
     onOpenTitle: (providerId: String, titleId: String) -> Unit,
 ) {
     var results by remember(provider.id) { mutableStateOf<List<SearchResult>?>(null) }
@@ -228,9 +253,12 @@ private fun BrowseRow(
         )
         return
     }
-    if (list.isEmpty()) return
+    val filtered = if (titleOverride != null) {
+        list.filterNot { "${it.providerId}:${it.id}" in watchedKeys }
+    } else list
+    if (filtered.isEmpty()) return
     Text(
-        text = "Latest · ${provider.displayName}",
+        text = titleOverride ?: "Latest · ${provider.displayName}",
         style = MaterialTheme.typography.titleLarge,
         color = MaterialTheme.colorScheme.onBackground,
     )
@@ -238,12 +266,83 @@ private fun BrowseRow(
         horizontalArrangement = Arrangement.spacedBy(14.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        items(list, key = { "${it.providerId}:${it.id}" }) { item ->
+        items(filtered, key = { "${it.providerId}:${it.id}" }) { item ->
             PosterCard(
                 result = item,
                 watched = "${item.providerId}:${item.id}" in watchedKeys,
                 onClick = { onOpenTitle(item.providerId, item.id) },
             )
+        }
+    }
+}
+
+private enum class RandomKind(val label: String, val matches: (MediaKind) -> Boolean) {
+    Any("Any", { true }),
+    Movie("Movie", { it == MediaKind.Movie }),
+    TV("TV", { it == MediaKind.Series }),
+    Anime("Anime", { it == MediaKind.Anime });
+
+    fun next(): RandomKind = entries[(ordinal + 1) % entries.size]
+}
+
+@Composable
+private fun RandomPickCard(
+    providers: List<Provider>,
+    onOpenTitle: (String, String) -> Unit,
+) {
+    var kind by remember { mutableStateOf(RandomKind.Any) }
+    var loading by remember { mutableStateOf(false) }
+    var focused by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    fun pickRandom() {
+        if (loading || providers.isEmpty()) return
+        loading = true
+        scope.launch {
+            val all = providers.map { p ->
+                async { runCatching { p.browse() }.getOrDefault(emptyList()) }
+            }.awaitAll().flatten()
+            val pool = all.filter { kind.matches(it.kind) }
+            loading = false
+            val pick = pool.randomOrNull() ?: return@launch
+            onOpenTitle(pick.providerId, pick.id)
+        }
+    }
+
+    Surface(
+        onClick = ::pickRandom,
+        modifier = Modifier
+            .width(320.dp)
+            .height(160.dp)
+            .onFocusChanged { focused = it.isFocused }
+            .onKeyEvent { event ->
+                val menuKey = event.key == Key.Menu || event.key == Key.F10
+                if (focused && menuKey && event.type == KeyEventType.KeyUp) {
+                    kind = kind.next()
+                    true
+                } else false
+            },
+        shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(14.dp)),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = MaterialTheme.colorScheme.surface,
+            focusedContainerColor = MaterialTheme.colorScheme.primary,
+        ),
+    ) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = if (loading) "🎲 picking…" else "🎲 Random · ${kind.label}",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = if (focused) MaterialTheme.colorScheme.onPrimary
+                    else MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = "OK to pick · MENU to cycle kind",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = (if (focused) MaterialTheme.colorScheme.onPrimary
+                    else MaterialTheme.colorScheme.onSurface).copy(alpha = 0.7f),
+                )
+            }
         }
     }
 }
@@ -321,28 +420,3 @@ private fun PosterCard(result: SearchResult, watched: Boolean, onClick: () -> Un
     }
 }
 
-@Composable
-private fun PlayTestStreamCard(onClick: () -> Unit) {
-    var focused by remember { mutableStateOf(false) }
-    Surface(
-        onClick = onClick,
-        modifier = Modifier
-            .width(320.dp)
-            .height(160.dp)
-            .onFocusChanged { focused = it.isFocused },
-        shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(14.dp)),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = MaterialTheme.colorScheme.surface,
-            focusedContainerColor = MaterialTheme.colorScheme.primary,
-        ),
-    ) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(
-                text = "▶  Play test stream",
-                style = MaterialTheme.typography.titleLarge,
-                color = if (focused) MaterialTheme.colorScheme.onPrimary
-                else MaterialTheme.colorScheme.onSurface,
-            )
-        }
-    }
-}
