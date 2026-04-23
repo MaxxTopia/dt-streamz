@@ -184,15 +184,15 @@ private fun SearchEditorDialog(
             dismissOnClickOutside = true,
         ),
     ) {
-        Surface(
-            onClick = {},
+        // Plain Box wrapper — wrapping in a clickable tv-material Surface
+        // steals focus from the inner TextField so D-pad/IME keystrokes
+        // never reach the input.
+        Box(
             modifier = Modifier
                 .fillMaxWidth(0.8f)
-                .padding(24.dp),
-            colors = ClickableSurfaceDefaults.colors(
-                containerColor = MaterialTheme.colorScheme.surface,
-                focusedContainerColor = MaterialTheme.colorScheme.surface,
-            ),
+                .padding(24.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surface),
         ) {
             Column(
                 modifier = Modifier.padding(24.dp),

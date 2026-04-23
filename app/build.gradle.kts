@@ -13,17 +13,29 @@ android {
         applicationId = "com.dt.streamz"
         minSdk = 30
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 3
+        versionName = "0.2.1"
+    }
+
+    signingConfigs {
+        create("release") {
+            // Stable keystore committed to the repo so every CI build signs
+            // with the same key. Personal sideload app — the "anyone can
+            // build a same-signed APK" risk is acceptable and beats the
+            // prior behavior where every CI build used a fresh debug key
+            // and every update failed with INSTALL_FAILED_UPDATE_INCOMPATIBLE.
+            storeFile = rootProject.file("keystore/dt-streamz.jks")
+            storePassword = "dtstreamz"
+            keyAlias = "dt-streamz"
+            keyPassword = "dtstreamz"
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Sideload-only personal app — reuse debug keystore so release APK installs
-            // without a separate keystore secret in CI.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
         debug {
             applicationIdSuffix = ".debug"

@@ -24,13 +24,11 @@ jobs:
         run: ./gradlew :app:assembleRelease
 
       - name: Rename APK
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          mv app/build/outputs/apk/release/app-release.apk "dt-streamz-${VERSION}.apk"
+        run: mv app/build/outputs/apk/release/app-release.apk dt-streamz.apk
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dt-streamz-*.apk
+          files: dt-streamz.apk
           fail_on_unmatched_files: true
           prerelease: false

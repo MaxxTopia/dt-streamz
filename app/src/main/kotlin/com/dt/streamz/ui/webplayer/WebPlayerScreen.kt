@@ -297,14 +297,16 @@ private class EmbedWebViewClient(
         request: WebResourceRequest,
     ): Boolean {
         val url = request.url ?: return false
-        val scheme = url.scheme ?: return false
+        val scheme = url.scheme
         if (scheme != "http" && scheme != "https") return true
         if (blocker?.isBlocked(url.host) == true) {
             Log.d(TAG, "blocked navigation to ${url.host}")
             return true
         }
-        view.loadUrl(url.toString())
-        return true
+        // Let WebView handle navigations natively. Intercepting and calling
+        // view.loadUrl() hoists iframe targets into the main frame, which
+        // breaks nested embeds like vidsrc.to -> vsembed.ru -> cloudnestra.
+        return false
     }
 
     override fun shouldInterceptRequest(
