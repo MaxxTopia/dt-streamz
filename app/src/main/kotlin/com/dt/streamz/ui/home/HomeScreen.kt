@@ -77,8 +77,15 @@ fun HomeScreen(
                 onRequestRemove = { pendingRemoval = it },
             )
         }
+        val watchedKeys = remember(continueEntries) {
+            continueEntries.map { "${it.providerId}:${it.titleId}" }.toSet()
+        }
         registry?.all?.filter(providerFilter)?.forEach { provider ->
-            BrowseRow(provider = provider, onOpenTitle = onOpenTitle)
+            BrowseRow(
+                provider = provider,
+                watchedKeys = watchedKeys,
+                onOpenTitle = onOpenTitle,
+            )
         }
         PlayTestStreamCard(onClick = onPlayTestStream)
     }
@@ -205,6 +212,7 @@ private fun ContinueCard(
 @Composable
 private fun BrowseRow(
     provider: Provider,
+    watchedKeys: Set<String>,
     onOpenTitle: (providerId: String, titleId: String) -> Unit,
 ) {
     var results by remember(provider.id) { mutableStateOf<List<SearchResult>?>(null) }
@@ -231,13 +239,17 @@ private fun BrowseRow(
         modifier = Modifier.fillMaxWidth(),
     ) {
         items(list, key = { "${it.providerId}:${it.id}" }) { item ->
-            PosterCard(result = item, onClick = { onOpenTitle(item.providerId, item.id) })
+            PosterCard(
+                result = item,
+                watched = "${item.providerId}:${item.id}" in watchedKeys,
+                onClick = { onOpenTitle(item.providerId, item.id) },
+            )
         }
     }
 }
 
 @Composable
-private fun PosterCard(result: SearchResult, onClick: () -> Unit) {
+private fun PosterCard(result: SearchResult, watched: Boolean, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     val border = if (focused) Color.White else Color.Transparent
     Column(
@@ -275,6 +287,27 @@ private fun PosterCard(result: SearchResult, onClick: () -> Unit) {
                         text = result.title.take(2).uppercase(),
                         style = MaterialTheme.typography.displaySmall,
                     )
+                }
+                if (watched) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.35f)),
+                    )
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(6.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color.Black.copy(alpha = 0.75f))
+                            .padding(horizontal = 6.dp, vertical = 3.dp),
+                    ) {
+                        Text(
+                            text = "✓ WATCHED",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White,
+                        )
+                    }
                 }
             }
         }
