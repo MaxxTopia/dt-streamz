@@ -127,6 +127,8 @@ class VidSrcProvider(
             episodes.first().id == "s1e1" &&
             episodes.first().title == null
 
+        val qualityNote = if (kind == MediaKind.Movie) camWarningFor(titleId, year) else null
+
         TitleDetails(
             providerId = id,
             id = titleId,
@@ -142,7 +144,23 @@ class VidSrcProvider(
             year = year,
             kind = kind,
             episodes = episodes,
+            qualityNote = qualityNote,
         )
+    }
+
+    /**
+     * Best-effort CAM/TS warning. Ideally we'd fetch IMDB's title page
+     * and parse JSON-LD `datePublished` for 15-day precision, but IMDB
+     * fronts AWS WAF that blocks OkHttp requests. Fall back to a coarse
+     * year-based heuristic: movies released in the current calendar year
+     * are likely to have CAM rips only until HD/digital releases later.
+     * Wire TMDb later for real 15-day precision.
+     */
+    private fun camWarningFor(imdbId: String, year: Int?): String? {
+        if (year == null) return null
+        val currentYear = java.time.LocalDate.now().year
+        if (year < currentYear) return null
+        return "⚠ recent release (${year}) — embed may be CAM/TS quality"
     }
 
     /**

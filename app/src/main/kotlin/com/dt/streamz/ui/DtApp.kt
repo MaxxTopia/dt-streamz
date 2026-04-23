@@ -53,10 +53,10 @@ private enum class Section(val label: String) {
     Movies("Movies"),
     TV("TV"),
     Latest("Latest"),
-    Library("Library"),
+    Search("Search"),
     Genres("Genres"),
     Twitch("Twitch"),
-    Search("Search"),
+    Library("Library"),
     Settings("Settings"),
 }
 

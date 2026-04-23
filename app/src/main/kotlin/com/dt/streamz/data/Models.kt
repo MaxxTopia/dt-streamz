@@ -21,6 +21,7 @@ data class TitleDetails(
     val year: Int?,
     val kind: MediaKind,
     val episodes: List<Episode>,
+    val qualityNote: String? = null,
 )
 
 data class Episode(

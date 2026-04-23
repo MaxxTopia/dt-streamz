@@ -104,6 +104,36 @@ class TwitchStreamResolver(
         usher
     }
 
+    /**
+     * Direct live-status probe — the PlaybackAccessToken endpoint happily
+     * issues tokens for offline channels, so "token != null" is NOT a
+     * liveness signal. Ask the GQL `user.stream` field directly: non-null
+     * means live, null means offline, user == null means wrong channel name.
+     */
+    suspend fun isLive(channel: String): Boolean? = withContext(Dispatchers.IO) {
+        val login = channel.trim().lowercase().ifEmpty { return@withContext null }
+        val body = """
+            {"query":"{ user(login: \"$login\") { stream { id } } }"}
+        """.trimIndent()
+        val req = Request.Builder()
+            .url(TwitchConfig.GQL_URL)
+            .header("Client-ID", TwitchConfig.CLIENT_ID)
+            .header("Content-Type", "application/json")
+            .post(body.toRequestBody(JSON_MEDIA))
+            .build()
+        runCatching {
+            Http.client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@use null
+                val raw = resp.body?.string() ?: return@use null
+                val user = json.parseToJsonElement(raw).jsonObject["data"]
+                    ?.jsonObject?.get("user") ?: return@use null
+                if (user is kotlinx.serialization.json.JsonNull) return@use null
+                val stream = (user as? JsonObject)?.get("stream")
+                stream != null && stream !is kotlinx.serialization.json.JsonNull
+            }
+        }.onFailure { Log.w(TAG, "isLive($login) threw", it) }.getOrNull()
+    }
+
     @Suppress("unused")
     private fun encode(s: String) = URLEncoder.encode(s, "UTF-8")
 

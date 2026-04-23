@@ -137,6 +137,13 @@ private fun Loaded(
                     color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
                 )
             }
+            if (!details.qualityNote.isNullOrBlank()) {
+                Text(
+                    text = details.qualityNote,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = Color(0xFFFFB74D),
+                )
+            }
             if (!details.synopsis.isNullOrBlank()) {
                 ExpandableSynopsis(details.synopsis)
             }

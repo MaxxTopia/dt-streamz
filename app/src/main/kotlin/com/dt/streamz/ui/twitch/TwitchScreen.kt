@@ -63,11 +63,12 @@ fun TwitchScreen(
     val resolver = remember { TwitchStreamResolver() }
 
     // Probe each pinned channel for live status when the tab opens or the
-    // list changes. Cheap GQL call; result drives the LIVE/OFFLINE badge.
+    // list changes. Uses GQL user.stream (null = offline); the PAT endpoint
+    // issues tokens for offline channels too so it can't serve as a probe.
     LaunchedEffect(channels) {
         if (channels.isEmpty()) return@LaunchedEffect
         val results = channels.map { ch ->
-            async { ch to (runCatching { resolver.resolveHls(ch) }.getOrNull() != null) }
+            async { ch to (resolver.isLive(ch) == true) }
         }.awaitAll()
         liveStatus = results.toMap()
     }
