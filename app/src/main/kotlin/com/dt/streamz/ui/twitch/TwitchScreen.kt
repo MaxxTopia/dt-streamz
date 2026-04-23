@@ -1,10 +1,10 @@
 package com.dt.streamz.ui.twitch
 
+import android.util.Log
 import android.widget.Toast
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,6 +32,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
@@ -42,7 +47,8 @@ import com.dt.streamz.DtApplication
 import com.dt.streamz.twitch.TwitchStreamResolver
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalFoundationApi::class)
+private const val TAG = "TwitchScreen"
+
 @Composable
 fun TwitchScreen(
     onPlayHlsWithChat: (hlsUrl: String, title: String, channel: String) -> Unit = { _, _, _ -> },
@@ -57,14 +63,22 @@ fun TwitchScreen(
     var newChannel by remember { mutableStateOf("") }
 
     fun openChannel(channel: String) {
-        if (resolving != null) return
+        if (resolving != null) {
+            Log.i(TAG, "openChannel($channel) ignored — already resolving $resolving")
+            return
+        }
         resolving = channel
+        Log.i(TAG, "openChannel($channel) start")
         scope.launch {
-            val url = resolver.resolveHls(channel)
+            val url = runCatching { resolver.resolveHls(channel) }
+                .onFailure { Log.w(TAG, "resolveHls($channel) threw", it) }
+                .getOrNull()
             resolving = null
             if (url == null) {
+                Log.w(TAG, "openChannel($channel) -> null URL")
                 Toast.makeText(ctx, "$channel is offline or Twitch refused the token", Toast.LENGTH_SHORT).show()
             } else {
+                Log.i(TAG, "openChannel($channel) success, invoking onPlayHlsWithChat")
                 onPlayHlsWithChat(url, "twitch.tv/$channel", channel)
             }
         }
@@ -83,7 +97,7 @@ fun TwitchScreen(
             text = when {
                 resolving != null -> "Resolving $resolving…"
                 channels.isEmpty() -> "No pinned channels — add one with the + card."
-                else -> "Click a channel to watch (ad-free HLS). Long-press OK to remove."
+                else -> "Click a channel to watch (ad-free HLS). Press MENU to remove."
             },
             style = androidx.tv.material3.MaterialTheme.typography.titleMedium,
             color = androidx.tv.material3.MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
@@ -98,7 +112,7 @@ fun TwitchScreen(
                     channel = channel,
                     enabled = resolving == null,
                     onClick = { openChannel(channel) },
-                    onLongClick = {
+                    onRequestRemove = {
                         scope.launch {
                             app.pinnedChannels.remove(channel)
                             Toast.makeText(ctx, "Removed $channel", Toast.LENGTH_SHORT).show()
@@ -137,13 +151,12 @@ private fun Text(text: String, style: androidx.compose.ui.text.TextStyle, color:
     androidx.tv.material3.Text(text = text, style = style, color = color)
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChannelCard(
     channel: String,
     enabled: Boolean,
     onClick: () -> Unit,
-    onLongClick: () -> Unit,
+    onRequestRemove: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
     val mt = androidx.tv.material3.MaterialTheme
@@ -151,15 +164,18 @@ private fun ChannelCard(
         modifier = Modifier
             .width(260.dp)
             .onFocusChanged { focused = it.isFocused }
+            .onKeyEvent { event ->
+                val menuKey = event.key == Key.Menu || event.key == Key.F10
+                if (focused && menuKey && event.type == KeyEventType.KeyUp) {
+                    onRequestRemove()
+                    true
+                } else false
+            }
             .clip(RoundedCornerShape(10.dp))
             .background(
                 if (focused) mt.colorScheme.primary else mt.colorScheme.surface,
             )
-            .combinedClickable(
-                enabled = enabled,
-                onClick = onClick,
-                onLongClick = onLongClick,
-            )
+            .clickable(enabled = enabled, onClick = onClick)
             .border(
                 2.dp,
                 if (focused) Color.White else Color.Transparent,
@@ -188,7 +204,6 @@ private fun ChannelCard(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun AddChannelCard(onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
@@ -202,7 +217,7 @@ private fun AddChannelCard(onClick: () -> Unit) {
                 if (focused) mt.colorScheme.primary
                 else mt.colorScheme.surface.copy(alpha = 0.5f),
             )
-            .combinedClickable(onClick = onClick)
+            .clickable(onClick = onClick)
             .border(
                 2.dp,
                 if (focused) Color.White else Color.Transparent,

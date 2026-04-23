@@ -69,6 +69,7 @@ fun DtApp() {
                 },
                 onPlayTest = { url, title -> route = Route.Player(url, title) },
                 onPlayTwitch = { url, title, channel ->
+                    Log.i(TAG, "route -> Player(twitch=$channel, urlLen=${url.length})")
                     route = Route.Player(url, title, twitchChannel = channel)
                 },
                 onRemoveContinue = { entry ->
@@ -148,12 +149,18 @@ fun DtApp() {
                 )
             }
             is Route.Player -> {
-                BackHandler { route = Route.Tabs }
+                BackHandler {
+                    Log.i(TAG, "BackHandler fired from PlayerScreen -> Tabs")
+                    route = Route.Tabs
+                }
                 PlayerScreen(
                     hlsUrl = r.hlsUrl,
                     title = r.title,
                     twitchChannel = r.twitchChannel,
-                    onExit = { route = Route.Tabs },
+                    onExit = {
+                        Log.i(TAG, "PlayerScreen.onExit() called -> Tabs")
+                        route = Route.Tabs
+                    },
                 )
             }
             is Route.WebPlayer -> {

@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
+import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -11,6 +12,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import com.dt.streamz.BuildConfig
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -115,7 +117,13 @@ fun WebPlayerScreen(embedUrl: String, onExit: () -> Unit = {}) {
                     isFocusable = true
                     isFocusableInTouchMode = true
                     requestFocus()
-                    loadUrl(embedUrl)
+                    if (BuildConfig.DEBUG) {
+                        WebView.setWebContentsDebuggingEnabled(true)
+                    }
+                    // Many embed hosts refuse to render without a referer
+                    // pointing at the parent gogoanime.by site — mimic the
+                    // natural click-through.
+                    loadUrl(embedUrl, mapOf("Referer" to "https://gogoanime.by/"))
                 }
                 webViewRef = webView
                 webView
@@ -280,6 +288,17 @@ private class FullscreenChromeClient : WebChromeClient() {
         customView = null
         callback?.onCustomViewHidden()
         callback = null
+    }
+
+    override fun onConsoleMessage(msg: ConsoleMessage): Boolean {
+        val tag = "WebPlayer/js"
+        val body = "${msg.message()} @${msg.sourceId()?.substringAfterLast('/')}:${msg.lineNumber()}"
+        when (msg.messageLevel()) {
+            ConsoleMessage.MessageLevel.ERROR -> Log.w(tag, body)
+            ConsoleMessage.MessageLevel.WARNING -> Log.w(tag, body)
+            else -> Log.i(tag, body)
+        }
+        return true
     }
 }
 
