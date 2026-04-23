@@ -37,24 +37,57 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
+import com.dt.streamz.data.FavoriteEntry
+import com.dt.streamz.data.FavoritesStore
 import com.dt.streamz.data.SearchResult
 import com.dt.streamz.scraper.ProviderRegistry
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 
 @Composable
 fun SearchScreen(
     registry: ProviderRegistry,
+    favorites: FavoritesStore? = null,
     onOpenTitle: (providerId: String, titleId: String) -> Unit,
 ) {
     val vm: SearchViewModel = viewModel(factory = SearchViewModel.Factory(registry))
     val query by vm.query.collectAsState()
     val state by vm.state.collectAsState()
     var editorOpen by remember { mutableStateOf(false) }
+    val favoriteEntries by (favorites?.entries ?: flowOf(emptyList()))
+        .collectAsState(initial = emptyList())
+    val favoriteKeys = remember(favoriteEntries) {
+        favoriteEntries.map { "${it.providerId}:${it.titleId}" }.toSet()
+    }
+    val scope = rememberCoroutineScope()
+    val toggleFav: (SearchResult) -> Unit = { r ->
+        favorites?.let {
+            scope.launch {
+                it.toggle(
+                    FavoriteEntry(
+                        providerId = r.providerId,
+                        titleId = r.id,
+                        title = r.title,
+                        poster = r.poster,
+                        kind = r.kind.name,
+                        timestamp = System.currentTimeMillis(),
+                    ),
+                )
+            }
+        }
+    }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 24.dp),
@@ -68,7 +101,9 @@ fun SearchScreen(
             is SearchState.Error -> Hint("Error: ${s.message}")
             is SearchState.Loaded -> ResultsGrid(
                 results = s.results,
+                favoriteKeys = favoriteKeys,
                 onOpen = onOpenTitle,
+                onToggleFavorite = toggleFav,
             )
         }
     }
@@ -211,7 +246,9 @@ private fun Hint(text: String) {
 @Composable
 private fun ResultsGrid(
     results: List<SearchResult>,
+    favoriteKeys: Set<String>,
     onOpen: (String, String) -> Unit,
+    onToggleFavorite: (SearchResult) -> Unit,
 ) {
     if (results.isEmpty()) {
         Hint("No results.")
@@ -224,18 +261,36 @@ private fun ResultsGrid(
         modifier = Modifier.fillMaxSize(),
     ) {
         items(results, key = { "${it.providerId}:${it.id}" }) { result ->
-            PosterCard(result = result, onClick = { onOpen(result.providerId, result.id) })
+            PosterCard(
+                result = result,
+                favorited = "${result.providerId}:${result.id}" in favoriteKeys,
+                onClick = { onOpen(result.providerId, result.id) },
+                onToggleFavorite = { onToggleFavorite(result) },
+            )
         }
     }
 }
 
 @Composable
-private fun PosterCard(result: SearchResult, onClick: () -> Unit) {
+private fun PosterCard(
+    result: SearchResult,
+    favorited: Boolean = false,
+    onClick: () -> Unit,
+    onToggleFavorite: () -> Unit = {},
+) {
     var focused by remember { mutableStateOf(false) }
     val border = if (focused) Color.White else Color.Transparent
     Column(
         verticalArrangement = Arrangement.spacedBy(6.dp),
-        modifier = Modifier.onFocusChanged { focused = it.isFocused },
+        modifier = Modifier
+            .onFocusChanged { focused = it.isFocused }
+            .onKeyEvent { event ->
+                val menuKey = event.key == Key.Menu || event.key == Key.F10
+                if (focused && menuKey && event.type == KeyEventType.KeyUp) {
+                    onToggleFavorite()
+                    true
+                } else false
+            },
     ) {
         Surface(
             onClick = onClick,
@@ -266,6 +321,22 @@ private fun PosterCard(result: SearchResult, onClick: () -> Unit) {
                         text = result.title.take(2).uppercase(),
                         style = MaterialTheme.typography.displaySmall,
                     )
+                }
+                if (favorited) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(6.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color.Black.copy(alpha = 0.75f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                    ) {
+                        Text(
+                            text = "★",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color(0xFFFFD54F),
+                        )
+                    }
                 }
             }
         }

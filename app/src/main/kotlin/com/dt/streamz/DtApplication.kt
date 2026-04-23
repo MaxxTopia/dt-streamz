@@ -5,6 +5,7 @@ import com.dt.streamz.adblock.BlocklistRefreshWorker
 import com.dt.streamz.adblock.HostBlocker
 import com.dt.streamz.config.ScraperConfigLoader
 import com.dt.streamz.data.ContinueWatchingStore
+import com.dt.streamz.data.FavoritesStore
 import com.dt.streamz.networkmonitor.NetworkMonitor
 import com.dt.streamz.scraper.ProviderRegistry
 import com.dt.streamz.scraper.anicrush.AnicrushProvider
@@ -33,6 +34,8 @@ class DtApplication : Application() {
     lateinit var pinnedChannels: PinnedChannelsStore
         private set
     lateinit var continueWatching: ContinueWatchingStore
+        private set
+    lateinit var favorites: FavoritesStore
         private set
 
     override fun onCreate() {
@@ -65,5 +68,6 @@ class DtApplication : Application() {
 
         pinnedChannels = PinnedChannelsStore(this)
         continueWatching = ContinueWatchingStore(this)
+        favorites = FavoritesStore(this)
     }
 }

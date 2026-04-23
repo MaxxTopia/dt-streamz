@@ -3,11 +3,13 @@ package com.dt.streamz.ui
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -25,13 +27,17 @@ import androidx.tv.material3.TabRow
 import androidx.tv.material3.Text
 import androidx.compose.ui.Alignment
 import com.dt.streamz.DtApplication
+import com.dt.streamz.data.MediaKind
 import com.dt.streamz.data.StreamKind
 import com.dt.streamz.data.StreamSource
 import com.dt.streamz.data.WatchEntry
 import com.dt.streamz.networkmonitor.NetworkIndicator
 import com.dt.streamz.ui.brand.DtLogo
 import com.dt.streamz.ui.details.DetailsScreen
+import com.dt.streamz.ui.genres.GenresScreen
 import com.dt.streamz.ui.home.HomeScreen
+import com.dt.streamz.ui.home.LatestScreen
+import com.dt.streamz.ui.library.LibraryScreen
 import com.dt.streamz.ui.player.PlayerScreen
 import com.dt.streamz.ui.search.SearchScreen
 import com.dt.streamz.ui.settings.SettingsScreen
@@ -45,6 +51,10 @@ private enum class Section(val label: String) {
     Home("Home"),
     Anime("Anime"),
     Movies("Movies"),
+    TV("TV"),
+    Latest("Latest"),
+    Library("Library"),
+    Genres("Genres"),
     Twitch("Twitch"),
     Search("Search"),
     Settings("Settings"),
@@ -212,19 +222,26 @@ private fun TabsDestination(
     val app = ctx.applicationContext as DtApplication
     var selected by remember { mutableStateOf(Section.Home) }
 
-    Column {
+    val tabTint = tabTintFor(selected)
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                androidx.compose.ui.graphics.Brush.verticalGradient(
+                    0f to tabTint.copy(alpha = 0.28f),
+                    0.45f to MaterialTheme.colorScheme.background,
+                    1f to MaterialTheme.colorScheme.background,
+                ),
+            ),
+    ) {
         TabRow(selectedTabIndex = selected.ordinal) {
             Section.entries.forEach { section ->
                 Tab(
                     selected = selected == section,
                     onFocus = { selected = section },
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                 ) {
-                    Text(
-                        text = section.label,
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                    )
+                    TabLabel(section = section, selected = selected == section)
                 }
             }
         }
@@ -233,6 +250,7 @@ private fun TabsDestination(
                 registry = app.providerRegistry,
                 providerFilter = { true },
                 continueWatching = app.continueWatching,
+                favorites = app.favorites,
                 onOpenTitle = onOpenTitle,
                 onResume = onResume,
                 onRemoveContinue = onRemoveContinue,
@@ -242,6 +260,7 @@ private fun TabsDestination(
                 registry = app.providerRegistry,
                 providerFilter = { it.supportsAnime },
                 continueWatching = app.continueWatching,
+                favorites = app.favorites,
                 onOpenTitle = onOpenTitle,
                 onResume = onResume,
                 onRemoveContinue = onRemoveContinue,
@@ -250,16 +269,98 @@ private fun TabsDestination(
                 title = "Movies",
                 registry = app.providerRegistry,
                 providerFilter = { it.supportsMovies },
+                kindFilter = { it == MediaKind.Movie },
                 continueWatching = app.continueWatching,
+                favorites = app.favorites,
                 onOpenTitle = onOpenTitle,
                 onResume = onResume,
                 onRemoveContinue = onRemoveContinue,
             )
+            Section.TV -> HomeScreen(
+                title = "TV Shows",
+                registry = app.providerRegistry,
+                providerFilter = { it.supportsMovies },
+                kindFilter = { it == MediaKind.Series },
+                continueWatching = app.continueWatching,
+                favorites = app.favorites,
+                onOpenTitle = onOpenTitle,
+                onResume = onResume,
+                onRemoveContinue = onRemoveContinue,
+            )
+            Section.Latest -> LatestScreen(
+                registry = app.providerRegistry,
+                favorites = app.favorites,
+                continueWatching = app.continueWatching,
+                onOpenTitle = onOpenTitle,
+            )
+            Section.Library -> LibraryScreen(
+                continueWatching = app.continueWatching,
+                favorites = app.favorites,
+                onOpenTitle = onOpenTitle,
+                onResume = onResume,
+                onRemoveContinue = onRemoveContinue,
+            )
+            Section.Genres -> GenresScreen(
+                registry = app.providerRegistry,
+                favorites = app.favorites,
+                continueWatching = app.continueWatching,
+                onOpenTitle = onOpenTitle,
+            )
             Section.Twitch -> TwitchScreen(onOpenChannel = onOpenTwitchChannel)
-            Section.Search -> SearchScreen(registry = app.providerRegistry, onOpenTitle = onOpenTitle)
+            Section.Search -> SearchScreen(
+                registry = app.providerRegistry,
+                favorites = app.favorites,
+                onOpenTitle = onOpenTitle,
+            )
             Section.Settings -> SettingsScreen()
         }
     }
+}
+
+private val AnimeRed = androidx.compose.ui.graphics.Color(0xFFE51C23)
+private val MoviesGold = androidx.compose.ui.graphics.Color(0xFFFFC107)
+private val TwitchPurple = androidx.compose.ui.graphics.Color(0xFF9146FF)
+private val TvBlue = androidx.compose.ui.graphics.Color(0xFF1E88E5)
+private val LibraryTeal = androidx.compose.ui.graphics.Color(0xFF26A69A)
+private val GenresPink = androidx.compose.ui.graphics.Color(0xFFE91E63)
+private val LatestGreen = androidx.compose.ui.graphics.Color(0xFF43A047)
+
+private fun tabTintFor(section: Section): androidx.compose.ui.graphics.Color = when (section) {
+    Section.Home -> androidx.compose.ui.graphics.Color(0xFF3F51B5)
+    Section.Anime -> AnimeRed
+    Section.Movies -> MoviesGold
+    Section.TV -> TvBlue
+    Section.Latest -> LatestGreen
+    Section.Library -> LibraryTeal
+    Section.Genres -> GenresPink
+    Section.Twitch -> TwitchPurple
+    Section.Search -> androidx.compose.ui.graphics.Color(0xFF37474F)
+    Section.Settings -> androidx.compose.ui.graphics.Color(0xFF37474F)
+}
+
+@Composable
+private fun TabLabel(section: Section, selected: Boolean) {
+    val color = when (section) {
+        Section.Anime -> if (selected) AnimeRed else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
+        Section.Movies -> if (selected) MoviesGold else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
+        Section.Twitch -> if (selected) TwitchPurple else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
+        Section.TV -> if (selected) TvBlue else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
+        Section.Library -> if (selected) LibraryTeal else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
+        Section.Genres -> if (selected) GenresPink else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
+        Section.Latest -> if (selected) LatestGreen else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
+        else -> androidx.compose.ui.graphics.Color.White
+    }
+    val weight = if (section == Section.Anime && selected)
+        androidx.compose.ui.text.font.FontWeight.ExtraBold else androidx.compose.ui.text.font.FontWeight.SemiBold
+    Text(
+        text = section.label.uppercase(),
+        style = MaterialTheme.typography.titleMedium.copy(
+            color = color,
+            fontWeight = weight,
+            letterSpacing = if (section == Section.Anime) 3.sp else 1.sp,
+        ),
+        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+    )
 }
 
 private fun playRouteFor(source: StreamSource, label: String): Route = when (source.kind) {

@@ -42,7 +42,11 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.runtime.LaunchedEffect
 import com.dt.streamz.DtApplication
+import com.dt.streamz.twitch.TwitchStreamResolver
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
 
 @Composable
@@ -55,6 +59,18 @@ fun TwitchScreen(
     val channels by (app.pinnedChannels.channels).collectAsState(initial = emptyList())
     var showAddDialog by remember { mutableStateOf(false) }
     var newChannel by remember { mutableStateOf("") }
+    var liveStatus by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
+    val resolver = remember { TwitchStreamResolver() }
+
+    // Probe each pinned channel for live status when the tab opens or the
+    // list changes. Cheap GQL call; result drives the LIVE/OFFLINE badge.
+    LaunchedEffect(channels) {
+        if (channels.isEmpty()) return@LaunchedEffect
+        val results = channels.map { ch ->
+            async { ch to (runCatching { resolver.resolveHls(ch) }.getOrNull() != null) }
+        }.awaitAll()
+        liveStatus = results.toMap()
+    }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 32.dp),
@@ -82,6 +98,7 @@ fun TwitchScreen(
                 ChannelCard(
                     channel = channel,
                     enabled = true,
+                    live = liveStatus[channel],
                     onClick = { onOpenChannel(channel) },
                     onRequestRemove = {
                         scope.launch {
@@ -126,6 +143,7 @@ private fun Text(text: String, style: androidx.compose.ui.text.TextStyle, color:
 private fun ChannelCard(
     channel: String,
     enabled: Boolean,
+    live: Boolean?,
     onClick: () -> Unit,
     onRequestRemove: () -> Unit,
 ) {
@@ -155,10 +173,15 @@ private fun ChannelCard(
             .padding(20.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            val (badgeText, badgeColor) = when (live) {
+                true -> "● LIVE" to Color(0xFFE91916)
+                false -> "○ OFFLINE" to Color(0xFF9E9E9E)
+                null -> "… checking" to Color(0xFFBDBDBD)
+            }
             androidx.tv.material3.Text(
-                text = "● LIVE",
+                text = badgeText,
                 style = mt.typography.labelLarge,
-                color = if (focused) Color.White else Color(0xFFE91916),
+                color = if (focused) Color.White else badgeColor,
             )
             androidx.tv.material3.Text(
                 text = channel,

@@ -52,19 +52,23 @@ class VidSrcProvider(
         // IMDB poster URLs are built from the ID so the tab can paint
         // instantly. search()/details() will cache-populate when the user
         // opens one, so nothing breaks if these IDs later change kind.
-        CURATED.map { (imdbId, title, year, kind, posterUrl) ->
+        CURATED.map { entry ->
             val result = SearchResult(
                 providerId = id,
-                id = imdbId,
-                title = title,
-                poster = posterUrl,
-                year = year,
-                kind = kind,
+                id = entry.imdbId,
+                title = entry.title,
+                poster = entry.poster,
+                year = entry.year,
+                kind = entry.kind,
             )
-            cache[imdbId] = CachedResult(result)
+            cache[entry.imdbId] = CachedResult(result)
             result
         }
     }
+
+    /** Genre tags for the Genres tab — keyed by IMDB id. */
+    fun genresFor(imdbId: String): List<String> =
+        CURATED.firstOrNull { it.imdbId == imdbId }?.genres.orEmpty()
 
     override suspend fun search(query: String): List<SearchResult> = withContext(Dispatchers.IO) {
         val q = query.trim().replace(Regex("[^A-Za-z0-9 ]"), "").replace(' ', '_')
@@ -272,45 +276,65 @@ class VidSrcProvider(
         // popular picks change.
         private val CURATED: List<CuratedEntry> = listOf(
             CuratedEntry("tt15398776", "Oppenheimer", 2023, MediaKind.Movie,
-                "https://m.media-amazon.com/images/M/MV5BMDBmYTZjNjUtN2M1MS00MTQ2LTk2ODgtNzc2M2QyZGE5NTVjXkEyXkFqcGc@._V1_.jpg"),
+                "https://m.media-amazon.com/images/M/MV5BMDBmYTZjNjUtN2M1MS00MTQ2LTk2ODgtNzc2M2QyZGE5NTVjXkEyXkFqcGc@._V1_.jpg",
+                listOf("Drama", "Thriller")),
             CuratedEntry("tt6710474", "Everything Everywhere All at Once", 2022, MediaKind.Movie,
-                "https://m.media-amazon.com/images/M/MV5BYTdiOTIyZTQtNmQ1OS00NjZlLWIyMTgtYzk5Y2M3ZDVmMDk1XkEyXkFqcGc@._V1_.jpg"),
+                "https://m.media-amazon.com/images/M/MV5BYTdiOTIyZTQtNmQ1OS00NjZlLWIyMTgtYzk5Y2M3ZDVmMDk1XkEyXkFqcGc@._V1_.jpg",
+                listOf("Action", "Comedy", "Sci-Fi")),
             CuratedEntry("tt1517268", "Barbie", 2023, MediaKind.Movie,
-                "https://m.media-amazon.com/images/M/MV5BNjU3N2QxNzYtMjk1NC00MTc4LTk1NTQtMmUxNTljM2I0NDA5XkEyXkFqcGc@._V1_.jpg"),
+                "https://m.media-amazon.com/images/M/MV5BNjU3N2QxNzYtMjk1NC00MTc4LTk1NTQtMmUxNTljM2I0NDA5XkEyXkFqcGc@._V1_.jpg",
+                listOf("Comedy", "Drama")),
             CuratedEntry("tt9114286", "Black Panther: Wakanda Forever", 2022, MediaKind.Movie,
-                "https://m.media-amazon.com/images/M/MV5BNTM4NjIxNmEtYWE5NS00NDczLTkyNWQtYThhNmQyZGQzMjM0XkEyXkFqcGc@._V1_.jpg"),
+                "https://m.media-amazon.com/images/M/MV5BNTM4NjIxNmEtYWE5NS00NDczLTkyNWQtYThhNmQyZGQzMjM0XkEyXkFqcGc@._V1_.jpg",
+                listOf("Action", "Sci-Fi")),
             CuratedEntry("tt10366206", "John Wick: Chapter 4", 2023, MediaKind.Movie,
-                "https://m.media-amazon.com/images/M/MV5BMDExZGMyOTMtMDgyYi00NGIwLWJhMTEtOTdkZGFjNmZiMTEwXkEyXkFqcGc@._V1_.jpg"),
+                "https://m.media-amazon.com/images/M/MV5BMDExZGMyOTMtMDgyYi00NGIwLWJhMTEtOTdkZGFjNmZiMTEwXkEyXkFqcGc@._V1_.jpg",
+                listOf("Action", "Thriller")),
             CuratedEntry("tt15239678", "Dune: Part Two", 2024, MediaKind.Movie,
-                "https://m.media-amazon.com/images/M/MV5BNjkyMjAyY2QtMzY0Ny00ZWUzLWI3YmQtNmIyMmU2OTc3NjYyXkEyXkFqcGc@._V1_.jpg"),
+                "https://m.media-amazon.com/images/M/MV5BNjkyMjAyY2QtMzY0Ny00ZWUzLWI3YmQtNmIyMmU2OTc3NjYyXkEyXkFqcGc@._V1_.jpg",
+                listOf("Action", "Sci-Fi")),
             CuratedEntry("tt9362722", "Spider-Man: Across the Spider-Verse", 2023, MediaKind.Movie,
-                "https://m.media-amazon.com/images/M/MV5BMzI0NmVkMjEtYmY4MS00ZDMxLTlkZmEtMzU4MDQxYTMzMjU2XkEyXkFqcGc@._V1_.jpg"),
+                "https://m.media-amazon.com/images/M/MV5BMzI0NmVkMjEtYmY4MS00ZDMxLTlkZmEtMzU4MDQxYTMzMjU2XkEyXkFqcGc@._V1_.jpg",
+                listOf("Action", "Sci-Fi")),
             CuratedEntry("tt1160419", "Dune", 2021, MediaKind.Movie,
-                "https://m.media-amazon.com/images/M/MV5BN2FjNmEyNWMtYzM0ZS00NjIyLTg5YzYtYThlMGVjNzE1OGViXkEyXkFqcGc@._V1_.jpg"),
+                "https://m.media-amazon.com/images/M/MV5BN2FjNmEyNWMtYzM0ZS00NjIyLTg5YzYtYThlMGVjNzE1OGViXkEyXkFqcGc@._V1_.jpg",
+                listOf("Action", "Sci-Fi")),
             CuratedEntry("tt0468569", "The Dark Knight", 2008, MediaKind.Movie,
-                "https://m.media-amazon.com/images/M/MV5BMTMxNTMwODM0NF5BMl5BanBnXkFtZTcwODAyMTk2Mw@@._V1_.jpg"),
+                "https://m.media-amazon.com/images/M/MV5BMTMxNTMwODM0NF5BMl5BanBnXkFtZTcwODAyMTk2Mw@@._V1_.jpg",
+                listOf("Action", "Thriller", "Drama")),
             CuratedEntry("tt0111161", "The Shawshank Redemption", 1994, MediaKind.Movie,
-                "https://m.media-amazon.com/images/M/MV5BMDAyY2FhYjctNDc5OS00MDNlLThiMGUtY2UxYWVkNGY2ZjljXkEyXkFqcGc@._V1_.jpg"),
+                "https://m.media-amazon.com/images/M/MV5BMDAyY2FhYjctNDc5OS00MDNlLThiMGUtY2UxYWVkNGY2ZjljXkEyXkFqcGc@._V1_.jpg",
+                listOf("Drama")),
             CuratedEntry("tt0109830", "Forrest Gump", 1994, MediaKind.Movie,
-                "https://m.media-amazon.com/images/M/MV5BNDYwNzVjMTItZmU5YS00YjQ5LTljYjgtMjY2NDVmYWMyNWFmXkEyXkFqcGc@._V1_.jpg"),
+                "https://m.media-amazon.com/images/M/MV5BNDYwNzVjMTItZmU5YS00YjQ5LTljYjgtMjY2NDVmYWMyNWFmXkEyXkFqcGc@._V1_.jpg",
+                listOf("Drama", "Comedy")),
             CuratedEntry("tt0816692", "Interstellar", 2014, MediaKind.Movie,
-                "https://m.media-amazon.com/images/M/MV5BYzdjMDAxZGItMjI2My00ODA1LTlkNzItOWFjMDU5ZDJlYWY3XkEyXkFqcGc@._V1_.jpg"),
+                "https://m.media-amazon.com/images/M/MV5BYzdjMDAxZGItMjI2My00ODA1LTlkNzItOWFjMDU5ZDJlYWY3XkEyXkFqcGc@._V1_.jpg",
+                listOf("Sci-Fi", "Drama")),
             CuratedEntry("tt0903747", "Breaking Bad", 2008, MediaKind.Series,
-                "https://m.media-amazon.com/images/M/MV5BMzU5ZGYzNmQtMTdhYy00OGRiLTg0NmQtYjVjNzliZTg1ZGE4XkEyXkFqcGc@._V1_.jpg"),
+                "https://m.media-amazon.com/images/M/MV5BMzU5ZGYzNmQtMTdhYy00OGRiLTg0NmQtYjVjNzliZTg1ZGE4XkEyXkFqcGc@._V1_.jpg",
+                listOf("Drama", "Thriller")),
             CuratedEntry("tt6439752", "Snowfall", 2017, MediaKind.Series,
-                "https://m.media-amazon.com/images/M/MV5BNmM2YTgzOWUtNjZmNy00NjA3LThkZjMtMWMxMmUyMTVkNjFkXkEyXkFqcGc@._V1_.jpg"),
+                "https://m.media-amazon.com/images/M/MV5BNmM2YTgzOWUtNjZmNy00NjA3LThkZjMtMWMxMmUyMTVkNjFkXkEyXkFqcGc@._V1_.jpg",
+                listOf("Drama", "Thriller")),
             CuratedEntry("tt4574334", "Stranger Things", 2016, MediaKind.Series,
-                "https://m.media-amazon.com/images/M/MV5BMjg2NmM0MTEtYWY2Yy00NmFlLTllNTMtMjVkZjEwMGVlNzdjXkEyXkFqcGc@._V1_.jpg"),
+                "https://m.media-amazon.com/images/M/MV5BMjg2NmM0MTEtYWY2Yy00NmFlLTllNTMtMjVkZjEwMGVlNzdjXkEyXkFqcGc@._V1_.jpg",
+                listOf("Sci-Fi", "Horror", "Drama")),
             CuratedEntry("tt0944947", "Game of Thrones", 2011, MediaKind.Series,
-                "https://m.media-amazon.com/images/M/MV5BMTNhMDJmNmYtNDQ5OS00ODdlLWE0ZDAtZTgyYTIwNDY3OTU3XkEyXkFqcGc@._V1_.jpg"),
+                "https://m.media-amazon.com/images/M/MV5BMTNhMDJmNmYtNDQ5OS00ODdlLWE0ZDAtZTgyYTIwNDY3OTU3XkEyXkFqcGc@._V1_.jpg",
+                listOf("Drama", "Action", "Sci-Fi")),
             CuratedEntry("tt5180504", "The Witcher", 2019, MediaKind.Series,
-                "https://m.media-amazon.com/images/M/MV5BN2FiOWU4YzYtMzZiOS00MzcyLTlkOGEtOTgwZmEwMzAxMzA3XkEyXkFqcGc@._V1_.jpg"),
+                "https://m.media-amazon.com/images/M/MV5BN2FiOWU4YzYtMzZiOS00MzcyLTlkOGEtOTgwZmEwMzAxMzA3XkEyXkFqcGc@._V1_.jpg",
+                listOf("Action", "Sci-Fi")),
             CuratedEntry("tt7366338", "Chernobyl", 2019, MediaKind.Series,
-                "https://m.media-amazon.com/images/M/MV5BZGQ2YmMxZmEtYjI5OS00NzlkLTlkNTEtYWMyMzkyMzc1ZmRlXkEyXkFqcGc@._V1_.jpg"),
+                "https://m.media-amazon.com/images/M/MV5BZGQ2YmMxZmEtYjI5OS00NzlkLTlkNTEtYWMyMzkyMzc1ZmRlXkEyXkFqcGc@._V1_.jpg",
+                listOf("Drama", "Thriller")),
             CuratedEntry("tt11198330", "House of the Dragon", 2022, MediaKind.Series,
-                "https://m.media-amazon.com/images/M/MV5BOTc5ZWFjMTYtMGQyYS00NzFiLWE4NTctYzY5NjdjNjVmMzZkXkEyXkFqcGc@._V1_.jpg"),
+                "https://m.media-amazon.com/images/M/MV5BOTc5ZWFjMTYtMGQyYS00NzFiLWE4NTctYzY5NjdjNjVmMzZkXkEyXkFqcGc@._V1_.jpg",
+                listOf("Drama", "Action")),
             CuratedEntry("tt14452776", "The Last of Us", 2023, MediaKind.Series,
-                "https://m.media-amazon.com/images/M/MV5BZGQ2YzY3YzctZWY1Ni00ZTgwLTk3MjMtMWI2MWQyYTM5YmZhXkEyXkFqcGc@._V1_.jpg"),
+                "https://m.media-amazon.com/images/M/MV5BZGQ2YzY3YzctZWY1Ni00ZTgwLTk3MjMtMWI2MWQyYTM5YmZhXkEyXkFqcGc@._V1_.jpg",
+                listOf("Drama", "Horror", "Sci-Fi")),
         )
     }
 
@@ -320,5 +344,6 @@ class VidSrcProvider(
         val year: Int,
         val kind: MediaKind,
         val poster: String,
+        val genres: List<String>,
     )
 }

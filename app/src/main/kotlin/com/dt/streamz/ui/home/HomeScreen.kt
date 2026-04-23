@@ -41,6 +41,8 @@ import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import androidx.compose.runtime.collectAsState
 import com.dt.streamz.data.ContinueWatchingStore
+import com.dt.streamz.data.FavoriteEntry
+import com.dt.streamz.data.FavoritesStore
 import com.dt.streamz.data.MediaKind
 import com.dt.streamz.data.SearchResult
 import com.dt.streamz.data.WatchEntry
@@ -56,13 +58,37 @@ fun HomeScreen(
     title: String = "Home",
     registry: ProviderRegistry? = null,
     providerFilter: (Provider) -> Boolean = { it.supportsAnime },
+    kindFilter: (MediaKind) -> Boolean = { true },
     continueWatching: ContinueWatchingStore? = null,
+    favorites: FavoritesStore? = null,
     onOpenTitle: (providerId: String, titleId: String) -> Unit = { _, _ -> },
     onResume: (WatchEntry) -> Unit = {},
     onRemoveContinue: (WatchEntry) -> Unit = {},
 ) {
     val continueEntries by (continueWatching?.entries ?: flowOf(emptyList()))
         .collectAsState(initial = emptyList())
+    val favoriteEntries by (favorites?.entries ?: flowOf(emptyList()))
+        .collectAsState(initial = emptyList())
+    val favoriteKeys = remember(favoriteEntries) {
+        favoriteEntries.map { "${it.providerId}:${it.titleId}" }.toSet()
+    }
+    val scope = rememberCoroutineScope()
+    val toggleFavorite: (SearchResult) -> Unit = { r ->
+        favorites?.let {
+            scope.launch {
+                it.toggle(
+                    FavoriteEntry(
+                        providerId = r.providerId,
+                        titleId = r.id,
+                        title = r.title,
+                        poster = r.poster,
+                        kind = r.kind.name,
+                        timestamp = System.currentTimeMillis(),
+                    ),
+                )
+            }
+        }
+    }
     var pendingRemoval by remember { mutableStateOf<WatchEntry?>(null) }
     val visibleProviders = registry?.all?.filter(providerFilter).orEmpty()
 
@@ -100,8 +126,11 @@ fun HomeScreen(
             BrowseRow(
                 provider = provider,
                 watchedKeys = watchedKeys,
+                favoriteKeys = favoriteKeys,
+                kindFilter = kindFilter,
                 titleOverride = "Because you watched · ${provider.displayName}",
                 onOpenTitle = onOpenTitle,
+                onToggleFavorite = toggleFavorite,
             )
         }
         val otherProviders = visibleProviders.filter { p -> recentProviders.none { it.id == p.id } }
@@ -109,7 +138,10 @@ fun HomeScreen(
             BrowseRow(
                 provider = provider,
                 watchedKeys = watchedKeys,
+                favoriteKeys = favoriteKeys,
+                kindFilter = kindFilter,
                 onOpenTitle = onOpenTitle,
+                onToggleFavorite = toggleFavorite,
             )
         }
     }
@@ -234,11 +266,14 @@ private fun ContinueCard(
 }
 
 @Composable
-private fun BrowseRow(
+internal fun BrowseRow(
     provider: Provider,
     watchedKeys: Set<String>,
+    favoriteKeys: Set<String> = emptySet(),
+    kindFilter: (MediaKind) -> Boolean = { true },
     titleOverride: String? = null,
     onOpenTitle: (providerId: String, titleId: String) -> Unit,
+    onToggleFavorite: (SearchResult) -> Unit = {},
 ) {
     var results by remember(provider.id) { mutableStateOf<List<SearchResult>?>(null) }
     LaunchedEffect(provider.id) {
@@ -253,9 +288,10 @@ private fun BrowseRow(
         )
         return
     }
+    val kinded = list.filter { kindFilter(it.kind) }
     val filtered = if (titleOverride != null) {
-        list.filterNot { "${it.providerId}:${it.id}" in watchedKeys }
-    } else list
+        kinded.filterNot { "${it.providerId}:${it.id}" in watchedKeys }
+    } else kinded
     if (filtered.isEmpty()) return
     Text(
         text = titleOverride ?: "Latest · ${provider.displayName}",
@@ -270,7 +306,9 @@ private fun BrowseRow(
             PosterCard(
                 result = item,
                 watched = "${item.providerId}:${item.id}" in watchedKeys,
+                favorited = "${item.providerId}:${item.id}" in favoriteKeys,
                 onClick = { onOpenTitle(item.providerId, item.id) },
+                onToggleFavorite = { onToggleFavorite(item) },
             )
         }
     }
@@ -348,14 +386,27 @@ private fun RandomPickCard(
 }
 
 @Composable
-private fun PosterCard(result: SearchResult, watched: Boolean, onClick: () -> Unit) {
+internal fun PosterCard(
+    result: SearchResult,
+    watched: Boolean,
+    favorited: Boolean = false,
+    onClick: () -> Unit,
+    onToggleFavorite: () -> Unit = {},
+) {
     var focused by remember { mutableStateOf(false) }
     val border = if (focused) Color.White else Color.Transparent
     Column(
         verticalArrangement = Arrangement.spacedBy(4.dp),
         modifier = Modifier
             .width(160.dp)
-            .onFocusChanged { focused = it.isFocused },
+            .onFocusChanged { focused = it.isFocused }
+            .onKeyEvent { event ->
+                val menuKey = event.key == Key.Menu || event.key == Key.F10
+                if (focused && menuKey && event.type == KeyEventType.KeyUp) {
+                    onToggleFavorite()
+                    true
+                } else false
+            },
     ) {
         Surface(
             onClick = onClick,
@@ -405,6 +456,22 @@ private fun PosterCard(result: SearchResult, watched: Boolean, onClick: () -> Un
                             text = "✓ WATCHED",
                             style = MaterialTheme.typography.labelSmall,
                             color = Color.White,
+                        )
+                    }
+                }
+                if (favorited) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(6.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color.Black.copy(alpha = 0.75f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                    ) {
+                        Text(
+                            text = "★",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color(0xFFFFD54F),
                         )
                     }
                 }
