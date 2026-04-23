@@ -33,6 +33,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -152,49 +153,56 @@ fun WebPlayerScreen(embedUrl: String, onExit: () -> Unit = {}) {
                 onBack = onExit,
             )
         } else if (loadState is LoadState.Loaded) {
-            SkipIntroButton(
-                modifier = Modifier.align(Alignment.BottomEnd).padding(24.dp),
-                onClick = { webViewRef?.let(::fireSkip90s) },
+            SkipForwardChip(
+                modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+                onClick = { webViewRef?.let(::fireSkip10s) },
             )
         }
     }
 }
 
-private fun fireSkip90s(webView: WebView) {
+private fun fireSkip10s(webView: WebView) {
     val js = """
         (function(){
           var v = document.querySelector('video');
-          if (v) { try { v.currentTime = Math.min((v.duration || 1e9), (v.currentTime || 0) + 90); return 'ok'; } catch(e) { return 'err:'+e.message; } }
+          if (v) { try { v.currentTime = Math.min((v.duration || 1e9), (v.currentTime || 0) + 10); return 'ok'; } catch(e) { return 'err:'+e.message; } }
           var frames = document.querySelectorAll('iframe');
           for (var i = 0; i < frames.length; i++) {
             try {
               var doc = frames[i].contentDocument;
               var vv = doc && doc.querySelector('video');
-              if (vv) { vv.currentTime = (vv.currentTime || 0) + 90; return 'ok-iframe'; }
+              if (vv) { vv.currentTime = (vv.currentTime || 0) + 10; return 'ok-iframe'; }
             } catch (e) {}
           }
           return 'no-video';
         })();
     """.trimIndent()
     webView.evaluateJavascript(js) { result ->
-        Log.i(TAG, "skip-intro result: $result")
+        Log.i(TAG, "skip +10s result: $result")
     }
 }
 
 @Composable
-private fun SkipIntroButton(modifier: Modifier, onClick: () -> Unit) {
+private fun SkipForwardChip(modifier: Modifier, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
     Box(
         modifier = modifier
-            .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
-            .background(Color.Black.copy(alpha = 0.65f)),
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp)),
     ) {
-        Button(
+        androidx.tv.material3.Surface(
             onClick = onClick,
-            modifier = Modifier.padding(4.dp),
+            modifier = Modifier
+                .onFocusChanged { focused = it.isFocused },
+            colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(
+                containerColor = Color.Transparent,
+                focusedContainerColor = Color.Black.copy(alpha = 0.55f),
+            ),
         ) {
             Text(
-                text = "▶▶ +90s",
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                text = "+10s",
+                color = if (focused) Color.White else Color.White.copy(alpha = 0.45f),
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
             )
         }
     }

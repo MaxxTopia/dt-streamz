@@ -35,6 +35,7 @@ import com.dt.streamz.ui.player.PlayerScreen
 import com.dt.streamz.ui.search.SearchScreen
 import com.dt.streamz.ui.settings.SettingsScreen
 import com.dt.streamz.ui.sourcepicker.SourcePickerScreen
+import com.dt.streamz.twitch.TwitchStreamResolver
 import com.dt.streamz.ui.twitch.TwitchScreen
 import com.dt.streamz.ui.webplayer.WebPlayerScreen
 import kotlinx.coroutines.launch
@@ -54,6 +55,7 @@ fun DtApp() {
     val app = ctx.applicationContext as DtApplication
     val registry = app.providerRegistry
     val scope = rememberCoroutineScope()
+    val twitchResolver = remember { TwitchStreamResolver() }
 
     var route: Route by remember { mutableStateOf(Route.Tabs) }
 
@@ -68,9 +70,25 @@ fun DtApp() {
                     route = Route.Details(providerId, titleId)
                 },
                 onPlayTest = { url, title -> route = Route.Player(url, title) },
-                onPlayTwitch = { url, title, channel ->
-                    Log.i(TAG, "route -> Player(twitch=$channel, urlLen=${url.length})")
-                    route = Route.Player(url, title, twitchChannel = channel)
+                onOpenTwitchChannel = { channel ->
+                    // Runs in DtApp's scope so it survives a Tab focus-
+                    // snap unmounting TwitchScreen mid-flight.
+                    Log.i(TAG, "onOpenTwitchChannel($channel)")
+                    scope.launch {
+                        val url = runCatching { twitchResolver.resolveHls(channel) }
+                            .onFailure { Log.w(TAG, "resolveHls($channel) threw", it) }
+                            .getOrNull()
+                        if (url == null) {
+                            Toast.makeText(
+                                ctx,
+                                "$channel is offline or Twitch refused the token",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        } else {
+                            Log.i(TAG, "route -> Player(twitch=$channel, urlLen=${url.length})")
+                            route = Route.Player(url, "twitch.tv/$channel", twitchChannel = channel)
+                        }
+                    }
                 },
                 onRemoveContinue = { entry ->
                     scope.launch { app.continueWatching.remove(entry.providerId, entry.titleId) }
@@ -183,7 +201,7 @@ fun DtApp() {
 private fun TabsDestination(
     onOpenTitle: (providerId: String, titleId: String) -> Unit,
     onPlayTest: (String, String) -> Unit,
-    onPlayTwitch: (String, String, String) -> Unit,
+    onOpenTwitchChannel: (String) -> Unit,
     onResume: (com.dt.streamz.data.WatchEntry) -> Unit,
     onRemoveContinue: (com.dt.streamz.data.WatchEntry) -> Unit,
 ) {
@@ -236,9 +254,7 @@ private fun TabsDestination(
                 onResume = onResume,
                 onRemoveContinue = onRemoveContinue,
             )
-            Section.Twitch -> TwitchScreen(onPlayHlsWithChat = { url, label, channel ->
-                onPlayTwitch(url, label, channel)
-            })
+            Section.Twitch -> TwitchScreen(onOpenChannel = onOpenTwitchChannel)
             Section.Search -> SearchScreen(registry = app.providerRegistry, onOpenTitle = onOpenTitle)
             Section.Settings -> SettingsScreen()
         }

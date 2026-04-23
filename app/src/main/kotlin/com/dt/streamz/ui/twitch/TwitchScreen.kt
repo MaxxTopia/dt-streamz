@@ -1,6 +1,5 @@
 package com.dt.streamz.ui.twitch
 
-import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -44,45 +43,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.dt.streamz.DtApplication
-import com.dt.streamz.twitch.TwitchStreamResolver
 import kotlinx.coroutines.launch
-
-private const val TAG = "TwitchScreen"
 
 @Composable
 fun TwitchScreen(
-    onPlayHlsWithChat: (hlsUrl: String, title: String, channel: String) -> Unit = { _, _, _ -> },
+    onOpenChannel: (channel: String) -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as DtApplication
     val scope = rememberCoroutineScope()
-    val resolver = remember { TwitchStreamResolver() }
     val channels by (app.pinnedChannels.channels).collectAsState(initial = emptyList())
-    var resolving by remember { mutableStateOf<String?>(null) }
     var showAddDialog by remember { mutableStateOf(false) }
     var newChannel by remember { mutableStateOf("") }
-
-    fun openChannel(channel: String) {
-        if (resolving != null) {
-            Log.i(TAG, "openChannel($channel) ignored — already resolving $resolving")
-            return
-        }
-        resolving = channel
-        Log.i(TAG, "openChannel($channel) start")
-        scope.launch {
-            val url = runCatching { resolver.resolveHls(channel) }
-                .onFailure { Log.w(TAG, "resolveHls($channel) threw", it) }
-                .getOrNull()
-            resolving = null
-            if (url == null) {
-                Log.w(TAG, "openChannel($channel) -> null URL")
-                Toast.makeText(ctx, "$channel is offline or Twitch refused the token", Toast.LENGTH_SHORT).show()
-            } else {
-                Log.i(TAG, "openChannel($channel) success, invoking onPlayHlsWithChat")
-                onPlayHlsWithChat(url, "twitch.tv/$channel", channel)
-            }
-        }
-    }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 32.dp),
@@ -95,7 +67,6 @@ fun TwitchScreen(
         )
         Text(
             text = when {
-                resolving != null -> "Resolving $resolving…"
                 channels.isEmpty() -> "No pinned channels — add one with the + card."
                 else -> "Click a channel to watch (ad-free HLS). Press MENU to remove."
             },
@@ -110,8 +81,8 @@ fun TwitchScreen(
             items(channels, key = { it }) { channel ->
                 ChannelCard(
                     channel = channel,
-                    enabled = resolving == null,
-                    onClick = { openChannel(channel) },
+                    enabled = true,
+                    onClick = { onOpenChannel(channel) },
                     onRequestRemove = {
                         scope.launch {
                             app.pinnedChannels.remove(channel)
