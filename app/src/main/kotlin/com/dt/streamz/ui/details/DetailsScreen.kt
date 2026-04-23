@@ -13,6 +13,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -190,12 +193,83 @@ private fun EpisodeList(
         Text("No episodes found.", style = MaterialTheme.typography.bodyMedium)
         return
     }
+    // Long catalogs (Shippuuden: 499 eps) are unreadable as bars — switch
+    // to a dense numbered grid above a threshold. Bars still win below it
+    // because they show the episode title inline.
+    if (episodes.size <= 50) {
+        EpisodeBars(episodes, watchedNumbers, onPlay)
+    } else {
+        EpisodeGrid(episodes, watchedNumbers, onPlay)
+    }
+}
+
+@Composable
+private fun EpisodeBars(
+    episodes: List<Episode>,
+    watchedNumbers: Set<Int>,
+    onPlay: (Episode) -> Unit,
+) {
     LazyColumn(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
         items(episodes, key = { "${it.number}:${it.id}" }) { ep ->
             EpisodeRow(ep, watched = ep.number in watchedNumbers, onPlay = onPlay)
+        }
+    }
+}
+
+@Composable
+private fun EpisodeGrid(
+    episodes: List<Episode>,
+    watchedNumbers: Set<Int>,
+    onPlay: (Episode) -> Unit,
+) {
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(minSize = 68.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        gridItems(episodes, key = { "${it.number}:${it.id}" }) { ep ->
+            EpisodeSquare(ep, watched = ep.number in watchedNumbers, onPlay = onPlay)
+        }
+    }
+}
+
+@Composable
+private fun EpisodeSquare(ep: Episode, watched: Boolean, onPlay: (Episode) -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    val baseColor = if (watched) Color(0xFF2E7D32) else MaterialTheme.colorScheme.surface
+    val focusColor = if (watched) Color(0xFF43A047) else MaterialTheme.colorScheme.primary
+    Surface(
+        onClick = { onPlay(ep) },
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(56.dp)
+            .onFocusChanged { focused = it.isFocused },
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = baseColor,
+            focusedContainerColor = focusColor,
+        ),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .border(
+                    width = if (focused) 2.dp else 1.dp,
+                    color = if (focused) Color.White
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f),
+                    shape = RoundedCornerShape(6.dp),
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = ep.number.toString(),
+                style = MaterialTheme.typography.titleMedium,
+                color = if (watched || focused) Color.White
+                else MaterialTheme.colorScheme.onSurface,
+            )
         }
     }
 }
