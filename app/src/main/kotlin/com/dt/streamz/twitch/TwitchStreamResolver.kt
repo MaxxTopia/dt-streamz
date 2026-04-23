@@ -41,7 +41,7 @@ class TwitchStreamResolver(
                 "login": "$normalized",
                 "isVod": false,
                 "vodID": "",
-                "playerType": "site"
+                "playerType": "embed"
               },
               "extensions": {
                 "persistedQuery": {

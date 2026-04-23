@@ -10,6 +10,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -34,6 +38,7 @@ fun PlayerScreen(
 ) {
     val context = LocalContext.current
     val monitor = (context.applicationContext as? DtApplication)?.networkMonitor
+    var chatOpen by remember(twitchChannel) { mutableStateOf(twitchChannel != null) }
 
     // While the player is visible, retarget the net-monitor probe at the
     // stream CDN so the indicator reflects the actual pipe we're watching.
@@ -90,9 +95,10 @@ fun PlayerScreen(
                 },
             )
         }
-        if (twitchChannel != null) {
+        if (twitchChannel != null && chatOpen) {
             TwitchChatOverlay(
                 channel = twitchChannel,
+                onClose = { chatOpen = false },
                 modifier = Modifier
                     .width(380.dp)
                     .fillMaxHeight(),
