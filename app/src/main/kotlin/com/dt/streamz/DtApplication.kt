@@ -13,10 +13,15 @@ import com.dt.streamz.scraper.anikai.AnikaiProvider
 import com.dt.streamz.scraper.anikai.AnikaiResolver
 import com.dt.streamz.scraper.fixtures.FixturesProvider
 import com.dt.streamz.scraper.vidsrc.VidSrcProvider
+import com.dt.streamz.scraper.youtube.YouTubeProvider
 import com.dt.streamz.twitch.PinnedChannelsStore
+import com.dt.streamz.updater.UpdateChecker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 class DtApplication : Application() {
@@ -37,12 +42,20 @@ class DtApplication : Application() {
     lateinit var favorites: FavoritesStore
         private set
 
+    private val _availableUpdate = MutableStateFlow<UpdateChecker.Update?>(null)
+
+    /** Latest update found by the launch-time check, or null if none/not yet checked. */
+    val availableUpdate: StateFlow<UpdateChecker.Update?> = _availableUpdate.asStateFlow()
+
     override fun onCreate() {
         super.onCreate()
         scraperConfig = ScraperConfigLoader(this)
         appScope.launch { scraperConfig.loadCachedThenRefresh() }
 
         val anikaiResolver = AnikaiResolver(this)
+        // YouTube provider boots NewPipeExtractor lazily on first call,
+        // but doing it here avoids the cold-start tax on first browse.
+        YouTubeProvider.initOnce()
         // 9animetv (gogoanime.by's decryption backend) was nuked in 2024;
         // the provider's stream URLs now resolve to a dead player. Anikai
         // takes over as primary anime source — its hidden-WebView resolver
@@ -53,6 +66,7 @@ class DtApplication : Application() {
                 AnikaiProvider(resolver = anikaiResolver),
                 VidSrcProvider(),
                 AnicrushProvider(),
+                YouTubeProvider(),
             ),
         )
 
@@ -71,5 +85,17 @@ class DtApplication : Application() {
         pinnedChannels = PinnedChannelsStore(this)
         continueWatching = ContinueWatchingStore(this)
         favorites = FavoritesStore(this)
+
+        appScope.launch {
+            // Throttle: only re-poll GitHub if the last successful check was
+            // > 6 hours ago. Survives across launches via SharedPreferences.
+            val prefs = getSharedPreferences("updater", MODE_PRIVATE)
+            val last = prefs.getLong("last_check_ms", 0L)
+            val now = System.currentTimeMillis()
+            if (now - last < 6 * 60 * 60 * 1000L) return@launch
+            val update = runCatching { UpdateChecker().checkForUpdate() }.getOrNull()
+            prefs.edit().putLong("last_check_ms", now).apply()
+            _availableUpdate.value = update
+        }
     }
 }

@@ -113,6 +113,7 @@ private fun SourceRow(
                         when (source.kind) {
                             StreamKind.Hls -> "HLS"
                             StreamKind.Mp4 -> "MP4"
+                            StreamKind.Dash -> "DASH"
                             StreamKind.DirectEmbed -> "Web player"
                         },
                     )

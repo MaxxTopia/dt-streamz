@@ -41,7 +41,7 @@ data class StreamSource(
     val serverLabel: String? = null,
 )
 
-enum class StreamKind { Hls, Mp4, DirectEmbed }
+enum class StreamKind { Hls, Mp4, Dash, DirectEmbed }
 
 data class SubtitleTrack(
     val url: String,

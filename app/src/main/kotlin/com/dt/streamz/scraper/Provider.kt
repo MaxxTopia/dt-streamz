@@ -10,6 +10,7 @@ interface Provider {
     val displayName: String
     val supportsAnime: Boolean get() = false
     val supportsMovies: Boolean get() = false
+    val supportsYouTube: Boolean get() = false
 
     suspend fun search(query: String): List<SearchResult>
 

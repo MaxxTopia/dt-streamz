@@ -21,6 +21,22 @@ import java.util.concurrent.atomic.AtomicReference
 class HostBlocker(private val context: Context) {
 
     private val hostsRef = AtomicReference<Set<String>>(emptySet())
+    private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    init {
+        // Mirror persisted toggle into the global flag at startup so the
+        // first WebView opened post-launch sees the right value without
+        // needing a Settings round-trip.
+        enabledFlag = prefs.getBoolean(KEY_ENABLED, true)
+    }
+
+    /** Persist + reflect the toggle. False bypasses every block check. */
+    fun setEnabled(enabled: Boolean) {
+        enabledFlag = enabled
+        prefs.edit().putBoolean(KEY_ENABLED, enabled).apply()
+    }
+
+    fun enabled(): Boolean = enabledFlag
 
     fun isBlocked(host: String?): Boolean {
         if (host.isNullOrBlank()) return false
@@ -102,6 +118,20 @@ class HostBlocker(private val context: Context) {
 
     companion object {
         private const val TAG = "HostBlocker"
+        private const val PREFS = "adblock"
+        private const val KEY_ENABLED = "enabled"
+
+        // Volatile so WebView threads see toggle changes without a fence.
+        @Volatile
+        private var enabledFlag: Boolean = true
+
+        /**
+         * Static accessor for [WebPlayerScreen]'s WebViewClient — it runs
+         * on a thread without a HostBlocker reference and we want the
+         * cheapest possible early-out for shouldInterceptRequest.
+         */
+        fun isEnabled(): Boolean = enabledFlag
+
         private val WHITESPACE = Regex("\\s+")
         private val IP_PREFIXES = setOf("0.0.0.0", "127.0.0.1", "255.255.255.255", "::1")
 

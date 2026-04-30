@@ -44,12 +44,34 @@ fun SettingsScreen() {
     val continueEntries by app.continueWatching.entries.collectAsState(initial = emptyList())
     val pinnedChannels by app.pinnedChannels.channels.collectAsState(initial = emptyList())
 
+    var blockerEnabled by remember { mutableStateOf(app.hostBlocker.enabled()) }
+
     val items = buildList<SettingItem> {
         add(
             SettingItem(
                 title = "App version",
                 subtitle = "${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})",
                 action = null,
+            ),
+        )
+        add(
+            SettingItem(
+                title = "Block ads in player",
+                subtitle = if (blockerEnabled)
+                    "ON · ${app.hostBlocker.size()} hosts blocked. Turn OFF if streams white-screen."
+                else
+                    "OFF · letting all requests through. Turn ON for ad-blocking.",
+                action = {
+                    val next = !blockerEnabled
+                    app.hostBlocker.setEnabled(next)
+                    blockerEnabled = next
+                    Toast.makeText(
+                        ctx,
+                        if (next) "Adblock ON" else "Adblock OFF — all requests pass through",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                },
+                actionLabel = "Toggle",
             ),
         )
         add(

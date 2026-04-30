@@ -1,6 +1,6 @@
-# VSeebox APK (personal use)
+# viewmaxxing (personal use, formerly "DT Streamz")
 
-Scope: Android APK for VSeebox V3 (Android 11 TV, 64-bit ARM). Aggregates movie/anime streams + Twitch live (Twire-style, ad-free) in one sideloaded app. Branded "DT Streamz".
+Scope: Android APK for VSeebox V3 (Android 11 TV, 64-bit ARM). Aggregates movie/anime streams + Twitch live (Twire-style, ad-free) + YouTube ad-free in one sideloaded app. Display name "viewmaxxing"; internal package + keystore + GitHub-update repo still keyed on `dt-streamz` / `com.dt.streamz` (don't rename — would break sign-in-place updates).
 
 ## Current state (2026-04-23) — Phases 1-9 complete, Phase 10 = user soak test
 

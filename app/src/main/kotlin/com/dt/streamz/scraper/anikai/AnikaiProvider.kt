@@ -128,6 +128,11 @@ class AnikaiProvider(
                 url = streamUrl,
                 kind = kind,
                 serverLabel = "anikai",
+                // megacloud / megaup embeds reject empty or wrong referers.
+                // For HLS we don't strictly need this (ExoPlayer DataSource
+                // builds its own request), but for DirectEmbed the WebView
+                // will pass it through.
+                headers = mapOf("Referer" to "$SITE/"),
             ),
         )
     }

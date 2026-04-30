@@ -251,15 +251,32 @@ class VidSrcProvider(
         }
         return paths.flatMap { path ->
             listOf(
+                // vidsrc rotates: .to is the canonical alias, .net/.cc/.xyz
+                // are mirror DNS that flip in and out as cdns get banned.
+                // Listing all four lets the user step through if one's dead.
                 StreamSource(
                     url = "https://vidsrc.to/embed/$path",
                     kind = StreamKind.DirectEmbed,
-                    serverLabel = "VidSrc",
+                    serverLabel = "VidSrc · .to",
+                    headers = mapOf("Referer" to "https://vidsrc.to/"),
+                ),
+                StreamSource(
+                    url = "https://vidsrc.net/embed/$path",
+                    kind = StreamKind.DirectEmbed,
+                    serverLabel = "VidSrc · .net",
+                    headers = mapOf("Referer" to "https://vidsrc.net/"),
+                ),
+                StreamSource(
+                    url = "https://vidsrc.xyz/embed/$path",
+                    kind = StreamKind.DirectEmbed,
+                    serverLabel = "VidSrc · .xyz",
+                    headers = mapOf("Referer" to "https://vidsrc.xyz/"),
                 ),
                 StreamSource(
                     url = "https://www.2embed.cc/embed/$path",
                     kind = StreamKind.DirectEmbed,
                     serverLabel = "2embed",
+                    headers = mapOf("Referer" to "https://www.2embed.cc/"),
                 ),
             )
         }

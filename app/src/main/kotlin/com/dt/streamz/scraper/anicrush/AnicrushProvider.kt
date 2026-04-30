@@ -109,13 +109,19 @@ class AnicrushProvider(
             // existed and the Phase 3b toast explains why it won't play yet.
             val resolved = megaCloud.resolve(embed)
             if (resolved.isNotEmpty()) {
-                resolved.map { it.copy(serverLabel = "MegaCloud sub") }
+                resolved.map {
+                    it.copy(
+                        serverLabel = "MegaCloud sub",
+                        headers = mapOf("Referer" to SITE),
+                    )
+                }
             } else {
                 listOf(
                     StreamSource(
                         url = embed,
                         kind = StreamKind.DirectEmbed,
                         serverLabel = "MegaCloud sub (unresolved)",
+                        headers = mapOf("Referer" to SITE),
                     ),
                 )
             }

@@ -1,6 +1,7 @@
 package com.dt.streamz.ui.webplayer
 
 import android.annotation.SuppressLint
+import android.net.Uri
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
@@ -28,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -57,24 +59,38 @@ private const val LOAD_TIMEOUT_MS = 20_000L
 
 /**
  * Renders an embed (iframe-style) URL inside a WebView so episodes from
- * providers that only surface an opaque embed link (gogoanime.by ->
- * 9animetv.be/histream player, any future DirectEmbed source) can play in
- * the app without a per-host Kotlin extractor.
+ * providers that surface an opaque embed link (vidsrc, 2embed, megacloud
+ * etc.) can play without a per-host Kotlin extractor.
+ *
+ * Headers are per-source: each `StreamSource.headers` flows in via
+ * [Route.WebPlayer] -> here. If no `Referer` is supplied, we default to
+ * the embed's own origin, which is the safe baseline most embeds expect.
  *
  * Shows a retry/back overlay if the page doesn't finish loading in
  * [LOAD_TIMEOUT_MS] or if the main frame reports a network error — WebView
- * otherwise just sits blank which looks indistinguishable from buffering.
+ * otherwise just sits blank, indistinguishable from buffering.
  */
 @Composable
-fun WebPlayerScreen(embedUrl: String, onExit: () -> Unit = {}) {
+fun WebPlayerScreen(
+    embedUrl: String,
+    headers: Map<String, String> = emptyMap(),
+    onExit: () -> Unit = {},
+) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as? DtApplication
     val blocker = app?.hostBlocker
     val monitor = app?.networkMonitor
 
+    val effectiveHeaders = remember(embedUrl, headers) {
+        if (headers.keys.any { it.equals("Referer", ignoreCase = true) }) headers
+        else headers + ("Referer" to defaultReferer(embedUrl))
+    }
+
     var loadState by remember(embedUrl) { mutableStateOf<LoadState>(LoadState.Loading) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var attempt by remember(embedUrl) { mutableStateOf(0) }
+    val blockedHosts = remember(embedUrl) { mutableStateListOf<String>() }
+    var mainFrameHost by remember(embedUrl) { mutableStateOf(hostOf(embedUrl)) }
 
     DisposableEffect(embedUrl) {
         monitor?.setActiveHost(embedUrl)
@@ -108,9 +124,19 @@ fun WebPlayerScreen(embedUrl: String, onExit: () -> Unit = {}) {
                     webViewClient = EmbedWebViewClient(
                         blocker = blocker,
                         cosmeticCss = cosmeticCss,
+                        mainFrameHost = { mainFrameHost },
+                        onMainFrameStarted = { url ->
+                            hostOf(url)?.let { mainFrameHost = it }
+                        },
                         onMainFrameFinished = { loadState = LoadState.Loaded },
                         onMainFrameError = { reason ->
                             loadState = LoadState.Failed(reason)
+                        },
+                        onResourceBlocked = { host ->
+                            // Bounded — we only need a hint for the error overlay.
+                            if (blockedHosts.size < 16 && host !in blockedHosts) {
+                                blockedHosts.add(host)
+                            }
                         },
                     )
                     webChromeClient = FullscreenChromeClient()
@@ -122,10 +148,7 @@ fun WebPlayerScreen(embedUrl: String, onExit: () -> Unit = {}) {
                     if (BuildConfig.DEBUG) {
                         WebView.setWebContentsDebuggingEnabled(true)
                     }
-                    // Many embed hosts refuse to render without a referer
-                    // pointing at the parent gogoanime.by site — mimic the
-                    // natural click-through.
-                    loadUrl(embedUrl, mapOf("Referer" to "https://gogoanime.by/"))
+                    loadUrl(embedUrl, effectiveHeaders)
                 }
                 webViewRef = webView
                 webView
@@ -140,12 +163,18 @@ fun WebPlayerScreen(embedUrl: String, onExit: () -> Unit = {}) {
         )
 
         if (loadState is LoadState.Failed) {
+            val baseReason = (loadState as LoadState.Failed).reason
+            val reason = if (blockedHosts.isEmpty()) baseReason
+            else baseReason + "\n\nAdblock blocked ${blockedHosts.size} request" +
+                (if (blockedHosts.size == 1) "" else "s") +
+                " (e.g. ${blockedHosts.last()}). Try Settings → 'Block ads in player' → off."
             ErrorOverlay(
-                message = (loadState as LoadState.Failed).reason,
+                message = reason,
                 onRetry = {
                     webViewRef?.let { wv ->
                         wv.stopLoading()
-                        wv.loadUrl(embedUrl, mapOf("Referer" to "https://gogoanime.by/"))
+                        blockedHosts.clear()
+                        wv.loadUrl(embedUrl, effectiveHeaders)
                         loadState = LoadState.Loading
                         attempt += 1
                     }
@@ -258,9 +287,19 @@ private fun WebView.configureForEmbedPlayback() {
 private class EmbedWebViewClient(
     private val blocker: HostBlocker?,
     private val cosmeticCss: String,
+    private val mainFrameHost: () -> String?,
+    private val onMainFrameStarted: (String) -> Unit,
     private val onMainFrameFinished: () -> Unit,
     private val onMainFrameError: (String) -> Unit,
+    private val onResourceBlocked: (String) -> Unit,
 ) : WebViewClient() {
+
+    override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+        super.onPageStarted(view, url, favicon)
+        if (url != null && url != "about:blank") {
+            onMainFrameStarted(url)
+        }
+    }
 
     override fun onPageFinished(view: WebView, url: String?) {
         super.onPageFinished(view, url)
@@ -299,10 +338,6 @@ private class EmbedWebViewClient(
         val url = request.url ?: return false
         val scheme = url.scheme
         if (scheme != "http" && scheme != "https") return true
-        if (blocker?.isBlocked(url.host) == true) {
-            Log.d(TAG, "blocked navigation to ${url.host}")
-            return true
-        }
         // Let WebView handle navigations natively. Intercepting and calling
         // view.loadUrl() hoists iframe targets into the main frame, which
         // breaks nested embeds like vidsrc.to -> vsembed.ru -> cloudnestra.
@@ -313,8 +348,25 @@ private class EmbedWebViewClient(
         view: WebView,
         request: WebResourceRequest,
     ): WebResourceResponse? {
-        val host = request.url?.host
+        if (!HostBlocker.isEnabled()) return null
+        val url = request.url ?: return null
+        val host = url.host?.lowercase() ?: return null
+        // 1. Never block the main frame — that just bricks the screen.
+        if (request.isForMainFrame) return null
+        // 2. Never block 1st-party requests of whatever the embed loaded.
+        val main = mainFrameHost()
+        if (main != null && shareEffectiveDomain(main, host)) return null
+        // 3. Never block media-y file types — even if the host is on the
+        //    list, killing chunks/manifests/keys turns the embed into a
+        //    blank page with no actual ad value gained.
+        val path = url.path.orEmpty()
+        if (MEDIA_PATH.containsMatchIn(path)) return null
+        // 4. Allow well-known stream CDNs by suffix.
+        if (CDN_ALLOWLIST_SUFFIXES.any { host == it || host.endsWith(".$it") }) return null
+
         if (blocker?.isBlocked(host) == true) {
+            Log.d(TAG, "blocked $host (path=$path) — main=$main")
+            onResourceBlocked(host)
             return WebResourceResponse(
                 "text/plain",
                 "utf-8",
@@ -357,6 +409,70 @@ private class FullscreenChromeClient : WebChromeClient() {
         return true
     }
 }
+
+/**
+ * Approximate eTLD+1 comparison without the full Public Suffix List.
+ * Takes the last two labels — works for typical streaming hosts (.com,
+ * .net, .to, .ru, .xyz). Misses .co.uk-style TLDs but those are rare in
+ * this corner of the web; false-positive direction is "let it through",
+ * which is the safer bias for a player.
+ */
+private fun shareEffectiveDomain(a: String, b: String): Boolean {
+    val ad = a.split('.').takeLast(2).joinToString(".")
+    val bd = b.split('.').takeLast(2).joinToString(".")
+    return ad.isNotBlank() && ad == bd
+}
+
+private fun hostOf(url: String): String? = runCatching { Uri.parse(url).host?.lowercase() }.getOrNull()
+
+private fun defaultReferer(embedUrl: String): String {
+    val uri = runCatching { Uri.parse(embedUrl) }.getOrNull()
+    val scheme = uri?.scheme ?: "https"
+    val host = uri?.host ?: return "https://www.google.com/"
+    return "$scheme://$host/"
+}
+
+private val MEDIA_PATH = Regex(
+    """\.(m3u8|m3u|mpd|ts|mp4|m4s|m4a|aac|flac|webm|ogg|opus|vtt|srt|ass|key)(?:$|\?)""",
+    RegexOption.IGNORE_CASE,
+)
+
+/**
+ * Streaming CDN suffixes seen in vidsrc/megacloud/2embed playback paths.
+ * Matched by exact host or as a parent-domain suffix. Keep tight — the
+ * adblock list is the long tail; this is just the must-allow shortlist.
+ */
+private val CDN_ALLOWLIST_SUFFIXES = setOf(
+    "akamaized.net",
+    "akamaihd.net",
+    "cloudfront.net",
+    "edgesuite.net",
+    "fastly.net",
+    "googlevideo.com",
+    "ytimg.com",
+    "cloudnestra.com",
+    "vsembed.ru",
+    "tmstr.shop",
+    "tmstr2.shop",
+    "megacloud.tv",
+    "megacloud.club",
+    "megacloud.blog",
+    "megacloud.store",
+    "megaup.cc",
+    "megaup.site",
+    "rabbitstream.net",
+    "streamtape.com",
+    "streamtape.net",
+    "doodstream.com",
+    "dood.la",
+    "filemoon.sx",
+    "filemoon.to",
+    "vidplay.online",
+    "vidplay.site",
+    "mycloud.to",
+    "mixdrop.co",
+    "upcloud.to",
+)
 
 private const val TAG = "WebPlayer"
 private const val DESKTOP_UA =

@@ -33,6 +33,8 @@ import com.dt.streamz.data.StreamSource
 import com.dt.streamz.data.WatchEntry
 import com.dt.streamz.networkmonitor.NetworkIndicator
 import com.dt.streamz.ui.brand.DtLogo
+import com.dt.streamz.ui.brand.UpdateChip
+import androidx.compose.runtime.collectAsState
 import com.dt.streamz.ui.details.DetailsScreen
 import com.dt.streamz.ui.genres.GenresScreen
 import com.dt.streamz.ui.home.HomeScreen
@@ -52,6 +54,7 @@ private enum class Section(val label: String) {
     Anime("Anime"),
     Movies("Movies"),
     TV("TV"),
+    YouTube("YouTube"),
     Latest("Latest"),
     Search("Search"),
     Genres("Genres"),
@@ -96,7 +99,12 @@ fun DtApp() {
                             ).show()
                         } else {
                             Log.i(TAG, "route -> Player(twitch=$channel, urlLen=${url.length})")
-                            route = Route.Player(url, "twitch.tv/$channel", twitchChannel = channel)
+                            route = Route.Player(
+                                url = url,
+                                title = "twitch.tv/$channel",
+                                twitchChannel = channel,
+                                kind = StreamKind.Hls,
+                            )
                         }
                     }
                 },
@@ -182,7 +190,8 @@ fun DtApp() {
                     route = Route.Tabs
                 }
                 PlayerScreen(
-                    hlsUrl = r.hlsUrl,
+                    url = r.url,
+                    streamKind = r.kind,
                     title = r.title,
                     twitchChannel = r.twitchChannel,
                     onExit = {
@@ -193,7 +202,11 @@ fun DtApp() {
             }
             is Route.WebPlayer -> {
                 BackHandler { route = Route.Tabs }
-                WebPlayerScreen(embedUrl = r.embedUrl, onExit = { route = Route.Tabs })
+                WebPlayerScreen(
+                    embedUrl = r.embedUrl,
+                    headers = r.headers,
+                    onExit = { route = Route.Tabs },
+                )
             }
         }
     }
@@ -205,6 +218,8 @@ fun DtApp() {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
     ) {
+        val update by app.availableUpdate.collectAsState()
+        UpdateChip(update = update)
         NetworkIndicator(monitor = app.networkMonitor)
         DtLogo()
     }
@@ -287,6 +302,16 @@ private fun TabsDestination(
                 onResume = onResume,
                 onRemoveContinue = onRemoveContinue,
             )
+            Section.YouTube -> HomeScreen(
+                title = "YouTube",
+                registry = app.providerRegistry,
+                providerFilter = { it.supportsYouTube },
+                continueWatching = app.continueWatching,
+                favorites = app.favorites,
+                onOpenTitle = onOpenTitle,
+                onResume = onResume,
+                onRemoveContinue = onRemoveContinue,
+            )
             Section.Latest -> LatestScreen(
                 registry = app.providerRegistry,
                 favorites = app.favorites,
@@ -324,12 +349,14 @@ private val TvBlue = androidx.compose.ui.graphics.Color(0xFF1E88E5)
 private val LibraryTeal = androidx.compose.ui.graphics.Color(0xFF26A69A)
 private val GenresPink = androidx.compose.ui.graphics.Color(0xFFE91E63)
 private val LatestGreen = androidx.compose.ui.graphics.Color(0xFF43A047)
+private val YouTubeRed = androidx.compose.ui.graphics.Color(0xFFFF0000)
 
 private fun tabTintFor(section: Section): androidx.compose.ui.graphics.Color = when (section) {
     Section.Home -> androidx.compose.ui.graphics.Color(0xFF3F51B5)
     Section.Anime -> AnimeRed
     Section.Movies -> MoviesGold
     Section.TV -> TvBlue
+    Section.YouTube -> YouTubeRed
     Section.Latest -> LatestGreen
     Section.Library -> LibraryTeal
     Section.Genres -> GenresPink
@@ -345,6 +372,7 @@ private fun TabLabel(section: Section, selected: Boolean) {
         Section.Movies -> if (selected) MoviesGold else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
         Section.Twitch -> if (selected) TwitchPurple else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
         Section.TV -> if (selected) TvBlue else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
+        Section.YouTube -> if (selected) YouTubeRed else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
         Section.Library -> if (selected) LibraryTeal else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
         Section.Genres -> if (selected) GenresPink else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
         Section.Latest -> if (selected) LatestGreen else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
@@ -364,8 +392,10 @@ private fun TabLabel(section: Section, selected: Boolean) {
 }
 
 private fun playRouteFor(source: StreamSource, label: String): Route = when (source.kind) {
-    StreamKind.Hls, StreamKind.Mp4 -> Route.Player(source.url, label)
-    StreamKind.DirectEmbed -> Route.WebPlayer(source.url, label)
+    StreamKind.Hls,
+    StreamKind.Mp4,
+    StreamKind.Dash -> Route.Player(source.url, label, kind = source.kind)
+    StreamKind.DirectEmbed -> Route.WebPlayer(source.url, label, source.headers)
 }
 
 private const val TAG = "DtApp"

@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -24,14 +23,19 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.dash.DashMediaSource
 import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.exoplayer.source.MediaSource
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.PlayerView
 import com.dt.streamz.DtApplication
+import com.dt.streamz.data.StreamKind
 import com.dt.streamz.ui.twitchchat.TwitchChatOverlay
 
 @Composable
 fun PlayerScreen(
-    hlsUrl: String,
+    url: String,
+    streamKind: StreamKind = StreamKind.Hls,
     title: String = "",
     twitchChannel: String? = null,
     onExit: () -> Unit = {},
@@ -40,10 +44,8 @@ fun PlayerScreen(
     val monitor = (context.applicationContext as? DtApplication)?.networkMonitor
     var chatOpen by remember(twitchChannel) { mutableStateOf(twitchChannel != null) }
 
-    // While the player is visible, retarget the net-monitor probe at the
-    // stream CDN so the indicator reflects the actual pipe we're watching.
-    DisposableEffect(hlsUrl) {
-        monitor?.setActiveHost(hlsUrl)
+    DisposableEffect(url) {
+        monitor?.setActiveHost(url)
         onDispose { monitor?.setActiveHost(null) }
     }
 
@@ -65,13 +67,7 @@ fun PlayerScreen(
                         .setLoadControl(loadControl)
                         .build()
                         .apply {
-                            val source = HlsMediaSource.Factory(DefaultHttpDataSource.Factory())
-                                .createMediaSource(
-                                    MediaItem.Builder()
-                                        .setUri(hlsUrl)
-                                        .setMimeType(MimeTypes.APPLICATION_M3U8)
-                                        .build(),
-                                )
+                            val source = buildMediaSource(url, streamKind)
                             setMediaSource(source)
                             prepare()
                             playWhenReady = true
@@ -110,3 +106,36 @@ fun PlayerScreen(
         onDispose { /* AndroidView.onRelease handles player disposal */ }
     }
 }
+
+/**
+ * Pick the right [MediaSource] factory for the stream type. HLS stays on
+ * HlsMediaSource (live + VOD). MP4 / progressive containers go through
+ * ProgressiveMediaSource. DASH manifests use DashMediaSource — needed for
+ * YouTube where most modern videos no longer expose progressive streams.
+ *
+ * DirectEmbed never reaches here (it routes to WebPlayer instead).
+ */
+private fun buildMediaSource(url: String, kind: StreamKind): MediaSource {
+    val factory = DefaultHttpDataSource.Factory()
+        .setUserAgent(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        )
+    val (mime, builderFn) = when (kind) {
+        StreamKind.Hls -> MimeTypes.APPLICATION_M3U8 to ::hlsSource
+        StreamKind.Mp4 -> MimeTypes.VIDEO_MP4 to ::progressiveSource
+        StreamKind.Dash -> MimeTypes.APPLICATION_MPD to ::dashSource
+        StreamKind.DirectEmbed -> MimeTypes.VIDEO_MP4 to ::progressiveSource
+    }
+    val item = MediaItem.Builder().setUri(url).setMimeType(mime).build()
+    return builderFn(factory, item)
+}
+
+private fun hlsSource(factory: DefaultHttpDataSource.Factory, item: MediaItem): MediaSource =
+    HlsMediaSource.Factory(factory).createMediaSource(item)
+
+private fun progressiveSource(factory: DefaultHttpDataSource.Factory, item: MediaItem): MediaSource =
+    ProgressiveMediaSource.Factory(factory).createMediaSource(item)
+
+private fun dashSource(factory: DefaultHttpDataSource.Factory, item: MediaItem): MediaSource =
+    DashMediaSource.Factory(factory).createMediaSource(item)
