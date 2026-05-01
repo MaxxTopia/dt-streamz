@@ -59,6 +59,14 @@ private sealed interface LoadState {
 private const val LOAD_TIMEOUT_MS = 20_000L
 
 /**
+ * After page-finished, how long to wait for a <video> element or playable
+ * iframe to appear in the DOM before declaring the embed dead and walking
+ * to the next mirror. vidsrc/2embed normally inject the player within
+ * 1-3 seconds; 5s gives them headroom on a slow box.
+ */
+private const val CONTENT_CHECK_MS = 5_000L
+
+/**
  * WebView error codes that indicate the embed host itself is unreachable
  * (TCP reset, DNS failure, TLS handshake refused, etc.). When we hit one
  * of these AND we have a [WebPlayerScreen.fallbacks] list, walking to the
@@ -149,6 +157,35 @@ fun WebPlayerScreen(
                     "Stream didn't load — embed may be blocked or offline.",
                 )
             }
+        }
+    }
+
+    // Content-gate: WebView reports "loaded" for HTTP 200 even when the
+    // embed body is an HTML error page (no <video>, no iframe). Probe the
+    // DOM for a real player element after page-finish; if nothing playable
+    // shows up within CONTENT_CHECK_MS, advance to the next mirror.
+    LaunchedEffect(activeUrl, attempt, loadState) {
+        if (loadState !is LoadState.Loaded) return@LaunchedEffect
+        val deadline = System.currentTimeMillis() + CONTENT_CHECK_MS
+        while (System.currentTimeMillis() < deadline) {
+            delay(500)
+            val wv = webViewRef ?: return@LaunchedEffect
+            val found = probeForPlayer(wv)
+            if (found) return@LaunchedEffect
+        }
+        // No <video> or playable iframe surfaced. Walk to next mirror,
+        // or surface a friendly error if we've exhausted them.
+        if (mirrorIndex + 1 < totalMirrors) {
+            Log.i(
+                TAG,
+                "no playable element on $activeUrl after ${CONTENT_CHECK_MS}ms; advancing",
+            )
+            mirrorIndex += 1
+        } else {
+            loadState = LoadState.Failed(
+                "All mirrors loaded but none surfaced a video — the title may be unavailable.",
+                0,
+            )
         }
     }
 
@@ -290,6 +327,45 @@ private fun MirrorWalkChip(modifier: Modifier, index: Int, total: Int) {
             style = MaterialTheme.typography.labelMedium,
         )
     }
+}
+
+/**
+ * Looks for a `<video>` element in the page or any of its same-origin
+ * iframes. Cross-origin iframes are treated as "playable" because we
+ * can't introspect them (security model) — those are the typical cases
+ * where vidsrc embeds itself inside a sub-iframe like cloudnestra.
+ *
+ * Returns true if anything resembling a player is present.
+ */
+private suspend fun probeForPlayer(webView: WebView): Boolean {
+    val js = """
+        (function(){
+          if (document.querySelector('video')) return 'video';
+          var frames = document.querySelectorAll('iframe');
+          for (var i = 0; i < frames.length; i++) {
+            var src = frames[i].getAttribute('src') || '';
+            if (!src) continue;
+            // Same-origin iframes can be introspected.
+            try {
+              var doc = frames[i].contentDocument;
+              if (doc && doc.querySelector('video')) return 'iframe-video';
+            } catch (e) {
+              // Cross-origin — assume the iframe is the player.
+              if (src.indexOf('about:') !== 0) return 'iframe-cross-origin';
+            }
+          }
+          return 'none';
+        })();
+    """.trimIndent()
+    val result = kotlinx.coroutines.suspendCancellableCoroutine<String> { cont ->
+        webView.post {
+            webView.evaluateJavascript(js) { value ->
+                cont.resumeWith(Result.success(value ?: "\"none\""))
+            }
+        }
+    }
+    val unwrapped = result.removeSurrounding("\"")
+    return unwrapped != "none"
 }
 
 private fun fireSkip10s(webView: WebView) {

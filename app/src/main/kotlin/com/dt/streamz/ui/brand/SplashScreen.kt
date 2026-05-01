@@ -238,19 +238,19 @@ private fun BrandTile(tile: BrandTile, entryProgress: Float, pulse: Float) {
     // gives the tile a small overshoot for spring feel. pulse is a steady
     // 0..1..0 used for outer glow. Glow alpha cut roughly in half from
     // the original loud version so the row breathes instead of throbbing.
-    val tileScale = 0.7f + 0.3f * entryProgress
-    val glowAlpha = 0.10f + 0.12f * pulse
+    val tileScale = 0.6f + 0.4f * entryProgress
+    val glowAlpha = 0.18f + 0.22f * pulse
     Box(
         modifier = Modifier
-            .size(width = 96.dp, height = 96.dp)
+            .size(width = 110.dp, height = 110.dp)
             .alpha(entryProgress)
             .scale(tileScale)
-            .clip(RoundedCornerShape(18.dp))
+            .clip(RoundedCornerShape(20.dp))
             .background(
                 Brush.linearGradient(
                     listOf(
-                        tile.color.copy(alpha = 0.85f),
-                        tile.color.copy(alpha = 0.50f),
+                        tile.color.copy(alpha = 0.95f),
+                        tile.color.copy(alpha = 0.55f),
                     ),
                 ),
             ),
@@ -260,7 +260,7 @@ private fun BrandTile(tile: BrandTile, entryProgress: Float, pulse: Float) {
             drawCircle(
                 color = tile.color.copy(alpha = glowAlpha),
                 radius = size.minDimension * 0.55f,
-                style = Stroke(width = 4f),
+                style = Stroke(width = 6f),
             )
             val pad = size.minDimension * 0.22f
             val inner = Size(size.width - pad * 2, size.height - pad * 2)
@@ -274,13 +274,13 @@ private fun BrandTile(tile: BrandTile, entryProgress: Float, pulse: Float) {
             Text(
                 text = tile.label,
                 style = TextStyle(
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    letterSpacing = 1.sp,
-                    color = Color.White.copy(alpha = 0.92f),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = 2.sp,
+                    color = Color.White,
                 ),
             )
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(8.dp))
         }
     }
 }
@@ -531,9 +531,9 @@ private fun Wordmark(alpha: Float) {
         text = "VIEWMAXXING",
         modifier = Modifier.alpha(alpha),
         style = TextStyle(
-            fontSize = 36.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 4.sp,
+            fontSize = 48.sp,
+            fontWeight = FontWeight.ExtraBold,
+            letterSpacing = 8.sp,
             brush = brush,
         ),
     )

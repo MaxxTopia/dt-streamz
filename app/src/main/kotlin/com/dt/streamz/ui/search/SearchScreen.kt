@@ -160,7 +160,7 @@ private fun SearchBarCard(query: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun SearchEditorDialog(
+internal fun SearchEditorDialog(
     initialQuery: String,
     onDismiss: () -> Unit,
     onSubmit: (String) -> Unit,

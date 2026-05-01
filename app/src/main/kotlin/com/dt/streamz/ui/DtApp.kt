@@ -240,16 +240,18 @@ private fun TabsDestination(
     var selected by remember { mutableStateOf(Section.Home) }
 
     val tabTint = tabTintFor(selected)
+    val bgColor = MaterialTheme.colorScheme.background
+    val tintBrush = remember(tabTint, bgColor) {
+        androidx.compose.ui.graphics.Brush.verticalGradient(
+            0f to tabTint.copy(alpha = 0.28f),
+            0.45f to bgColor,
+            1f to bgColor,
+        )
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                androidx.compose.ui.graphics.Brush.verticalGradient(
-                    0f to tabTint.copy(alpha = 0.10f),
-                    0.30f to MaterialTheme.colorScheme.background,
-                    1f to MaterialTheme.colorScheme.background,
-                ),
-            ),
+            .background(tintBrush),
     ) {
         TabRow(selectedTabIndex = selected.ordinal) {
             Section.entries.forEach { section ->
@@ -338,20 +340,17 @@ private fun TabsDestination(
     }
 }
 
-// Brand accents — desaturated/lifted versions of the original palette so
-// the row reads "branded but quiet" instead of carnival. Used for both
-// the selected tab label and the gradient wash behind each section.
-private val AnimeRed = androidx.compose.ui.graphics.Color(0xFFE57373)
-private val MoviesGold = androidx.compose.ui.graphics.Color(0xFFE8C56A)
-private val TwitchPurple = androidx.compose.ui.graphics.Color(0xFFB39DDB)
-private val TvBlue = androidx.compose.ui.graphics.Color(0xFF64B5F6)
-private val LibraryTeal = androidx.compose.ui.graphics.Color(0xFF80CBC4)
-private val GenresPink = androidx.compose.ui.graphics.Color(0xFFF48FB1)
-private val LatestGreen = androidx.compose.ui.graphics.Color(0xFF81C784)
-private val YouTubeRed = androidx.compose.ui.graphics.Color(0xFFEF5350)
+private val AnimeRed = androidx.compose.ui.graphics.Color(0xFFE51C23)
+private val MoviesGold = androidx.compose.ui.graphics.Color(0xFFFFC107)
+private val TwitchPurple = androidx.compose.ui.graphics.Color(0xFF9146FF)
+private val TvBlue = androidx.compose.ui.graphics.Color(0xFF1E88E5)
+private val LibraryTeal = androidx.compose.ui.graphics.Color(0xFF26A69A)
+private val GenresPink = androidx.compose.ui.graphics.Color(0xFFE91E63)
+private val LatestGreen = androidx.compose.ui.graphics.Color(0xFF43A047)
+private val YouTubeRed = androidx.compose.ui.graphics.Color(0xFFFF0000)
 
 private fun tabTintFor(section: Section): androidx.compose.ui.graphics.Color = when (section) {
-    Section.Home -> androidx.compose.ui.graphics.Color(0xFF7986CB)
+    Section.Home -> androidx.compose.ui.graphics.Color(0xFF3F51B5)
     Section.Anime -> AnimeRed
     Section.Movies -> MoviesGold
     Section.TV -> TvBlue
@@ -360,27 +359,31 @@ private fun tabTintFor(section: Section): androidx.compose.ui.graphics.Color = w
     Section.Library -> LibraryTeal
     Section.Genres -> GenresPink
     Section.Twitch -> TwitchPurple
-    Section.Search -> androidx.compose.ui.graphics.Color(0xFF90A4AE)
-    Section.Settings -> androidx.compose.ui.graphics.Color(0xFF90A4AE)
+    Section.Search -> androidx.compose.ui.graphics.Color(0xFF37474F)
+    Section.Settings -> androidx.compose.ui.graphics.Color(0xFF37474F)
 }
 
 @Composable
 private fun TabLabel(section: Section, selected: Boolean) {
-    // Quieter look: drop UPPERCASE, keep brand-tinted accent on the
-    // selected tab, soft gray on the rest. No special-cased ExtraBold for
-    // any one section — every tab uses the same weight rules.
-    val accent = tabTintFor(section)
-    val unselected = androidx.compose.ui.graphics.Color(0xFFB0B0B0)
-    val color = if (selected) accent else unselected
-    val weight = if (selected)
-        androidx.compose.ui.text.font.FontWeight.SemiBold
-    else androidx.compose.ui.text.font.FontWeight.Medium
+    val color = when (section) {
+        Section.Anime -> if (selected) AnimeRed else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
+        Section.Movies -> if (selected) MoviesGold else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
+        Section.Twitch -> if (selected) TwitchPurple else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
+        Section.TV -> if (selected) TvBlue else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
+        Section.YouTube -> if (selected) YouTubeRed else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
+        Section.Library -> if (selected) LibraryTeal else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
+        Section.Genres -> if (selected) GenresPink else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
+        Section.Latest -> if (selected) LatestGreen else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
+        else -> androidx.compose.ui.graphics.Color.White
+    }
+    val weight = if (section == Section.Anime && selected)
+        androidx.compose.ui.text.font.FontWeight.ExtraBold else androidx.compose.ui.text.font.FontWeight.SemiBold
     Text(
-        text = section.label,
-        style = MaterialTheme.typography.titleSmall.copy(
+        text = section.label.uppercase(),
+        style = MaterialTheme.typography.labelLarge.copy(
             color = color,
             fontWeight = weight,
-            letterSpacing = 0.4.sp,
+            letterSpacing = if (section == Section.Anime) 2.sp else 1.sp,
         ),
         modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
     )

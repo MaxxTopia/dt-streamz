@@ -29,11 +29,14 @@ class MainActivity : ComponentActivity() {
                 val prefs = remember {
                     ctx.getSharedPreferences(SPLASH_PREFS, Context.MODE_PRIVATE)
                 }
-                // Splash plays once per fresh install. After the first
-                // completion (timeout or remote-key skip) the flag flips
-                // and every subsequent launch goes straight to the app.
+                // Splash plays once *per version*. Sideload "Update" preserves
+                // SharedPreferences, so a single boolean would mean every
+                // future release's splash never shows. Keying the flag on
+                // VERSION_NAME makes each new tagged release replay the
+                // splash once, then go quiet for that version.
+                val seenKey = remember { "$KEY_SPLASH_SEEN_PREFIX${BuildConfig.VERSION_NAME}" }
                 var splashDone by remember {
-                    mutableStateOf(prefs.getBoolean(KEY_SPLASH_SEEN, false))
+                    mutableStateOf(prefs.getBoolean(seenKey, false))
                 }
                 Box(modifier = Modifier.fillMaxSize()) {
                     DtApp()
@@ -46,7 +49,7 @@ class MainActivity : ComponentActivity() {
                             onFinished = {
                                 if (!splashDone) {
                                     splashDone = true
-                                    prefs.edit().putBoolean(KEY_SPLASH_SEEN, true).apply()
+                                    prefs.edit().putBoolean(seenKey, true).apply()
                                 }
                             },
                         )
@@ -58,6 +61,6 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val SPLASH_PREFS = "ui"
-        private const val KEY_SPLASH_SEEN = "splash_seen"
+        private const val KEY_SPLASH_SEEN_PREFIX = "splash_seen_v"
     }
 }

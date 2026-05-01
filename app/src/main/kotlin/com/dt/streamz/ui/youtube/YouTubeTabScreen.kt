@@ -16,10 +16,6 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -31,15 +27,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
@@ -48,6 +38,7 @@ import coil3.compose.AsyncImage
 import com.dt.streamz.data.SearchResult
 import com.dt.streamz.scraper.Provider
 import com.dt.streamz.scraper.ProviderRegistry
+import com.dt.streamz.ui.search.SearchEditorDialog
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -163,7 +154,7 @@ fun YouTubeTabScreen(
     }
 
     if (editorOpen) {
-        YouTubeSearchDialog(
+        SearchEditorDialog(
             initialQuery = query,
             onDismiss = { editorOpen = false },
             onSubmit = { text ->
@@ -254,78 +245,6 @@ private fun ClearButton(onClick: () -> Unit) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
             )
-        }
-    }
-}
-
-@Composable
-private fun YouTubeSearchDialog(
-    initialQuery: String,
-    onDismiss: () -> Unit,
-    onSubmit: (String) -> Unit,
-) {
-    var text by remember { mutableStateOf(initialQuery) }
-    val focusRequester = remember { FocusRequester() }
-    val keyboard = LocalSoftwareKeyboardController.current
-
-    LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
-        keyboard?.show()
-    }
-
-    Dialog(
-        onDismissRequest = {
-            keyboard?.hide()
-            onDismiss()
-        },
-        properties = DialogProperties(
-            dismissOnBackPress = true,
-            dismissOnClickOutside = true,
-        ),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(0.7f)
-                .padding(20.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.surface),
-        ) {
-            Column(
-                modifier = Modifier.padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Text(
-                    text = "Search YouTube",
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .focusRequester(focusRequester),
-                    singleLine = true,
-                    placeholder = {
-                        androidx.compose.material3.Text("e.g. lofi mix, mkbhd, gameplay")
-                    },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = {
-                        keyboard?.hide()
-                        onSubmit(text.trim())
-                    }),
-                    textStyle = MaterialTheme.typography.bodyMedium,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surface,
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                        focusedBorderColor = Color(0xFFFF0000),
-                    ),
-                )
-                Text(
-                    text = "BACK to cancel · search to submit",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                )
-            }
         }
     }
 }
