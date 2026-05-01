@@ -150,16 +150,16 @@ fun SettingsScreen() {
     }
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 32.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(
             text = "Settings",
-            style = MaterialTheme.typography.displaySmall,
+            style = MaterialTheme.typography.headlineSmall,
             color = MaterialTheme.colorScheme.onBackground,
         )
         LazyColumn(
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier.fillMaxSize(),
         ) {
             items(items, key = { it.title }) { item ->
@@ -184,7 +184,7 @@ private fun SettingRow(item: SettingItem) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 14.dp)
+                .padding(horizontal = 14.dp, vertical = 10.dp)
                 .border(
                     1.dp,
                     if (focused && clickable) Color.White else Color.Transparent,
@@ -193,17 +193,17 @@ private fun SettingRow(item: SettingItem) {
                 .clip(RoundedCornerShape(6.dp))
                 .background(Color.Transparent),
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
                     text = item.title,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleSmall,
                 )
                 Text(
                     text = item.subtitle,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.labelSmall,
                     color = if (focused && clickable)
                         MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f)
-                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                 )
                 if (clickable) {
                     Text(

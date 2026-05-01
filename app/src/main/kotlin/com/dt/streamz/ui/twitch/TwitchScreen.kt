@@ -74,12 +74,12 @@ fun TwitchScreen(
     }
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 32.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(
             text = "Twitch",
-            style = androidx.tv.material3.MaterialTheme.typography.displaySmall,
+            style = androidx.tv.material3.MaterialTheme.typography.headlineSmall,
             color = androidx.tv.material3.MaterialTheme.colorScheme.onBackground,
         )
         Text(
@@ -87,12 +87,12 @@ fun TwitchScreen(
                 channels.isEmpty() -> "No pinned channels — add one with the + card."
                 else -> "Click a channel to watch (ad-free HLS). Press MENU to remove."
             },
-            style = androidx.tv.material3.MaterialTheme.typography.titleMedium,
-            color = androidx.tv.material3.MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+            style = androidx.tv.material3.MaterialTheme.typography.bodyMedium,
+            color = androidx.tv.material3.MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f),
         )
 
         LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
             items(channels, key = { it }) { channel ->
@@ -152,7 +152,7 @@ private fun ChannelCard(
     val mt = androidx.tv.material3.MaterialTheme
     Box(
         modifier = Modifier
-            .width(260.dp)
+            .width(196.dp)
             .onFocusChanged { focused = it.isFocused }
             .onKeyEvent { event ->
                 val menuKey = event.key == Key.Menu || event.key == Key.F10
@@ -161,7 +161,7 @@ private fun ChannelCard(
                     true
                 } else false
             }
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(8.dp))
             .background(
                 if (focused) mt.colorScheme.primary else mt.colorScheme.surface,
             )
@@ -169,11 +169,11 @@ private fun ChannelCard(
             .border(
                 2.dp,
                 if (focused) Color.White else Color.Transparent,
-                RoundedCornerShape(10.dp),
+                RoundedCornerShape(8.dp),
             )
-            .padding(20.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             val (badgeText, badgeColor) = when (live) {
                 true -> "● LIVE" to Color(0xFFE91916)
                 false -> "○ OFFLINE" to Color(0xFF9E9E9E)
@@ -181,19 +181,19 @@ private fun ChannelCard(
             }
             androidx.tv.material3.Text(
                 text = badgeText,
-                style = mt.typography.labelLarge,
+                style = mt.typography.labelSmall,
                 color = if (focused) Color.White else badgeColor,
             )
             androidx.tv.material3.Text(
                 text = channel,
-                style = mt.typography.titleLarge,
+                style = mt.typography.titleSmall,
                 color = if (focused) mt.colorScheme.onPrimary else mt.colorScheme.onSurface,
             )
             androidx.tv.material3.Text(
                 text = "twitch.tv/$channel",
-                style = mt.typography.bodySmall,
-                color = if (focused) mt.colorScheme.onPrimary.copy(alpha = 0.75f)
-                else mt.colorScheme.onSurface.copy(alpha = 0.6f),
+                style = mt.typography.labelSmall,
+                color = if (focused) mt.colorScheme.onPrimary.copy(alpha = 0.7f)
+                else mt.colorScheme.onSurface.copy(alpha = 0.55f),
             )
         }
     }
@@ -205,9 +205,9 @@ private fun AddChannelCard(onClick: () -> Unit) {
     val mt = androidx.tv.material3.MaterialTheme
     Box(
         modifier = Modifier
-            .width(200.dp)
+            .width(140.dp)
             .onFocusChanged { focused = it.isFocused }
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(8.dp))
             .background(
                 if (focused) mt.colorScheme.primary
                 else mt.colorScheme.surface.copy(alpha = 0.5f),
@@ -216,23 +216,23 @@ private fun AddChannelCard(onClick: () -> Unit) {
             .border(
                 2.dp,
                 if (focused) Color.White else Color.Transparent,
-                RoundedCornerShape(10.dp),
+                RoundedCornerShape(8.dp),
             )
-            .padding(20.dp),
+            .padding(horizontal = 12.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             androidx.tv.material3.Text(
                 text = "+",
-                style = mt.typography.displayMedium,
+                style = mt.typography.headlineMedium,
                 color = if (focused) mt.colorScheme.onPrimary else mt.colorScheme.onSurface,
             )
             androidx.tv.material3.Text(
                 text = "Add channel",
-                style = mt.typography.bodyMedium,
+                style = mt.typography.labelMedium,
                 color = if (focused) mt.colorScheme.onPrimary.copy(alpha = 0.75f)
                 else mt.colorScheme.onSurface.copy(alpha = 0.7f),
             )

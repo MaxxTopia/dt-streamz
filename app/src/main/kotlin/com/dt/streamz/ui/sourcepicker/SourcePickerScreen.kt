@@ -42,21 +42,21 @@ fun SourcePickerScreen(
     LaunchedEffect(Unit) { runCatching { firstFocus.requestFocus() } }
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 32.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text(
             text = "Pick a source",
-            style = MaterialTheme.typography.displaySmall,
+            style = MaterialTheme.typography.headlineSmall,
             color = MaterialTheme.colorScheme.onBackground,
         )
         Text(
             text = title,
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f),
         )
         LazyColumn(
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier.fillMaxSize(),
         ) {
             itemsIndexed(sources, key = { _, s -> "${s.url}:${s.kind}" }) { index, source ->
@@ -92,7 +92,7 @@ private fun SourceRow(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 14.dp)
+                .padding(horizontal = 14.dp, vertical = 10.dp)
                 .border(
                     1.dp,
                     if (focused) Color.White else Color.Transparent,
@@ -101,7 +101,7 @@ private fun SourceRow(
                 .clip(RoundedCornerShape(6.dp))
                 .background(Color.Transparent),
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 val label = buildString {
                     append(source.serverLabel ?: "Server")
                     if (!source.quality.isNullOrBlank()) {
@@ -120,13 +120,13 @@ private fun SourceRow(
                 }
                 Text(
                     text = label,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleSmall,
                 )
                 Text(
                     text = source.url,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (focused) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.75f)
-                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (focused) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f)
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                     maxLines = 1,
                 )
             }

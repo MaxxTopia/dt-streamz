@@ -65,20 +65,20 @@ fun LibraryScreen(
     val scope = rememberCoroutineScope()
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(
             text = "My Library",
-            style = MaterialTheme.typography.displaySmall,
+            style = MaterialTheme.typography.headlineSmall,
             color = MaterialTheme.colorScheme.onBackground,
         )
 
         if (continueEntries.isEmpty() && favoriteEntries.isEmpty()) {
             Text(
                 text = "Nothing saved yet — open a title and press MENU on the poster to favorite it.",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
             )
             return
         }
@@ -86,10 +86,10 @@ fun LibraryScreen(
         if (continueEntries.isNotEmpty()) {
             Text(
                 text = "Continue watching  ·  MENU to remove",
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onBackground,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
             )
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 rowItems(continueEntries, key = { "${it.providerId}:${it.titleId}" }) { entry ->
                     ContinueTile(
                         entry = entry,
@@ -103,13 +103,13 @@ fun LibraryScreen(
         if (favoriteEntries.isNotEmpty()) {
             Text(
                 text = "Favorites  ·  MENU to unfavorite",
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onBackground,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
             )
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 160.dp),
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+                columns = GridCells.Adaptive(minSize = 132.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 items(favoriteEntries, key = { "${it.providerId}:${it.titleId}" }) { entry ->
@@ -153,7 +153,7 @@ private fun ContinueTile(
     Column(
         verticalArrangement = Arrangement.spacedBy(4.dp),
         modifier = Modifier
-            .width(200.dp)
+            .width(168.dp)
             .onFocusChanged { focused = it.isFocused }
             .onKeyEvent { event ->
                 val menuKey = event.key == Key.Menu || event.key == Key.F10
@@ -164,7 +164,7 @@ private fun ContinueTile(
     ) {
         Surface(
             onClick = onClick,
-            modifier = Modifier.width(200.dp).height(120.dp),
+            modifier = Modifier.width(168.dp).height(100.dp),
             colors = ClickableSurfaceDefaults.colors(
                 containerColor = MaterialTheme.colorScheme.surface,
                 focusedContainerColor = MaterialTheme.colorScheme.surface,
@@ -188,12 +188,12 @@ private fun ContinueTile(
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
-                        .background(Color.Black.copy(alpha = 0.7f))
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                        .background(Color.Black.copy(alpha = 0.72f))
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
                 ) {
                     Text(
                         text = "▶ Ep ${entry.episodeNumber}",
-                        style = MaterialTheme.typography.labelLarge,
+                        style = MaterialTheme.typography.labelSmall,
                         color = Color.White,
                     )
                 }
@@ -201,7 +201,7 @@ private fun ContinueTile(
         }
         Text(
             text = entry.titleName,
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.labelMedium,
             maxLines = 1,
             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
         )
@@ -231,7 +231,7 @@ private fun FavoriteTile(
             onClick = onClick,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(240.dp),
+                .height(198.dp),
             colors = ClickableSurfaceDefaults.colors(
                 containerColor = MaterialTheme.colorScheme.surface,
                 focusedContainerColor = MaterialTheme.colorScheme.surface,
@@ -269,7 +269,7 @@ private fun FavoriteTile(
         }
         Text(
             text = entry.title,
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.labelMedium,
             maxLines = 2,
             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
         )

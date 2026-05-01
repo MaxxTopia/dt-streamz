@@ -93,12 +93,12 @@ fun HomeScreen(
     val visibleProviders = registry?.all?.filter(providerFilter).orEmpty()
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(
             text = title,
-            style = MaterialTheme.typography.displaySmall,
+            style = MaterialTheme.typography.headlineSmall,
             color = MaterialTheme.colorScheme.onBackground,
         )
         if (continueEntries.isNotEmpty()) {
@@ -178,11 +178,11 @@ private fun ContinueRow(
 ) {
     Text(
         text = "Continue watching  ·  Press MENU to remove",
-        style = MaterialTheme.typography.titleLarge,
-        color = MaterialTheme.colorScheme.onBackground,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
     )
     LazyRow(
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
         items(entries, key = { "${it.providerId}:${it.titleId}" }) { entry ->
@@ -206,7 +206,7 @@ private fun ContinueCard(
     Column(
         verticalArrangement = Arrangement.spacedBy(4.dp),
         modifier = Modifier
-            .width(200.dp)
+            .width(168.dp)
             .onFocusChanged { focused = it.isFocused }
             .onKeyEvent { event ->
                 val menuKey = event.key == Key.Menu || event.key == Key.F10
@@ -219,8 +219,8 @@ private fun ContinueCard(
         Surface(
             onClick = onClick,
             modifier = Modifier
-                .width(200.dp)
-                .height(120.dp),
+                .width(168.dp)
+                .height(100.dp),
             colors = ClickableSurfaceDefaults.colors(
                 containerColor = MaterialTheme.colorScheme.surface,
                 focusedContainerColor = MaterialTheme.colorScheme.surface,
@@ -244,12 +244,12 @@ private fun ContinueCard(
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
-                        .background(Color.Black.copy(alpha = 0.7f))
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                        .background(Color.Black.copy(alpha = 0.72f))
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
                 ) {
                     Text(
                         text = "▶ Ep ${entry.episodeNumber}",
-                        style = MaterialTheme.typography.labelLarge,
+                        style = MaterialTheme.typography.labelSmall,
                         color = Color.White,
                     )
                 }
@@ -257,7 +257,7 @@ private fun ContinueCard(
         }
         Text(
             text = entry.titleName,
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.labelMedium,
             maxLines = 1,
             color = if (focused) MaterialTheme.colorScheme.onBackground
             else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),
@@ -295,11 +295,11 @@ internal fun BrowseRow(
     if (filtered.isEmpty()) return
     Text(
         text = titleOverride ?: "Latest · ${provider.displayName}",
-        style = MaterialTheme.typography.titleLarge,
-        color = MaterialTheme.colorScheme.onBackground,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
     )
     LazyRow(
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
         items(filtered, key = { "${it.providerId}:${it.id}" }) { item ->
@@ -350,8 +350,8 @@ private fun RandomPickCard(
     Surface(
         onClick = ::pickRandom,
         modifier = Modifier
-            .width(320.dp)
-            .height(160.dp)
+            .width(232.dp)
+            .height(120.dp)
             .onFocusChanged { focused = it.isFocused }
             .onKeyEvent { event ->
                 val menuKey = event.key == Key.Menu || event.key == Key.F10
@@ -370,15 +370,15 @@ private fun RandomPickCard(
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
                     text = if (loading) "🎲 picking…" else "🎲 Random · ${kind.label}",
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleMedium,
                     color = if (focused) MaterialTheme.colorScheme.onPrimary
                     else MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
                     text = "OK to pick · MENU to cycle kind",
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.labelSmall,
                     color = (if (focused) MaterialTheme.colorScheme.onPrimary
-                    else MaterialTheme.colorScheme.onSurface).copy(alpha = 0.7f),
+                    else MaterialTheme.colorScheme.onSurface).copy(alpha = 0.65f),
                 )
             }
         }
@@ -398,7 +398,7 @@ internal fun PosterCard(
     Column(
         verticalArrangement = Arrangement.spacedBy(4.dp),
         modifier = Modifier
-            .width(160.dp)
+            .width(132.dp)
             .onFocusChanged { focused = it.isFocused }
             .onKeyEvent { event ->
                 val menuKey = event.key == Key.Menu || event.key == Key.F10
@@ -411,8 +411,8 @@ internal fun PosterCard(
         Surface(
             onClick = onClick,
             modifier = Modifier
-                .width(160.dp)
-                .height(240.dp),
+                .width(132.dp)
+                .height(198.dp),
             colors = ClickableSurfaceDefaults.colors(
                 containerColor = MaterialTheme.colorScheme.surface,
                 focusedContainerColor = MaterialTheme.colorScheme.surface,
@@ -435,7 +435,7 @@ internal fun PosterCard(
                 } else {
                     Text(
                         text = result.title.take(2).uppercase(),
-                        style = MaterialTheme.typography.displaySmall,
+                        style = MaterialTheme.typography.headlineSmall,
                     )
                 }
                 if (watched) {
@@ -479,7 +479,7 @@ internal fun PosterCard(
         }
         Text(
             text = result.title,
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.labelMedium,
             maxLines = 2,
             color = if (focused) MaterialTheme.colorScheme.onBackground
             else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),

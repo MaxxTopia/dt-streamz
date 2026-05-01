@@ -45,6 +45,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.dt.streamz.DtApplication
 import com.dt.streamz.adblock.HostBlocker
+import com.dt.streamz.data.StreamSource
 import java.io.ByteArrayInputStream
 import kotlinx.coroutines.delay
 import org.json.JSONObject
@@ -52,10 +53,34 @@ import org.json.JSONObject
 private sealed interface LoadState {
     data object Loading : LoadState
     data object Loaded : LoadState
-    data class Failed(val reason: String) : LoadState
+    data class Failed(val reason: String, val errorCode: Int = 0) : LoadState
 }
 
 private const val LOAD_TIMEOUT_MS = 20_000L
+
+/**
+ * WebView error codes that indicate the embed host itself is unreachable
+ * (TCP reset, DNS failure, TLS handshake refused, etc.). When we hit one
+ * of these AND we have a [WebPlayerScreen.fallbacks] list, walking to the
+ * next mirror is almost always the right move — the user shouldn't have
+ * to back out and re-pick because vidsrc.to's CDN got banned that hour.
+ *
+ * 200-class errors (HTTP 4xx/5xx delivered as content) won't reach
+ * onReceivedError as main-frame errors, so we don't need to enumerate
+ * those here.
+ */
+private val TRANSPORT_ERROR_CODES = setOf(
+    android.webkit.WebViewClient.ERROR_HOST_LOOKUP,
+    android.webkit.WebViewClient.ERROR_CONNECT,
+    android.webkit.WebViewClient.ERROR_TIMEOUT,
+    android.webkit.WebViewClient.ERROR_FAILED_SSL_HANDSHAKE,
+    android.webkit.WebViewClient.ERROR_PROXY_AUTHENTICATION,
+    android.webkit.WebViewClient.ERROR_IO,
+    android.webkit.WebViewClient.ERROR_REDIRECT_LOOP,
+    android.webkit.WebViewClient.ERROR_UNSUPPORTED_SCHEME,
+    android.webkit.WebViewClient.ERROR_BAD_URL,
+    android.webkit.WebViewClient.ERROR_UNKNOWN,
+)
 
 /**
  * Renders an embed (iframe-style) URL inside a WebView so episodes from
@@ -74,6 +99,7 @@ private const val LOAD_TIMEOUT_MS = 20_000L
 fun WebPlayerScreen(
     embedUrl: String,
     headers: Map<String, String> = emptyMap(),
+    fallbacks: List<StreamSource> = emptyList(),
     onExit: () -> Unit = {},
 ) {
     val ctx = LocalContext.current
@@ -81,28 +107,48 @@ fun WebPlayerScreen(
     val blocker = app?.hostBlocker
     val monitor = app?.networkMonitor
 
-    val effectiveHeaders = remember(embedUrl, headers) {
-        if (headers.keys.any { it.equals("Referer", ignoreCase = true) }) headers
-        else headers + ("Referer" to defaultReferer(embedUrl))
+    // Active mirror walks: 0 = original embedUrl, 1.. = fallbacks[i-1].
+    var mirrorIndex by remember(embedUrl) { mutableStateOf(0) }
+    val activeSource = remember(embedUrl, mirrorIndex, fallbacks) {
+        if (mirrorIndex == 0) ActiveSource(embedUrl, headers)
+        else fallbacks.getOrNull(mirrorIndex - 1)
+            ?.let { ActiveSource(it.url, it.headers) }
+            ?: ActiveSource(embedUrl, headers)
+    }
+    val activeUrl = activeSource.url
+    val totalMirrors = 1 + fallbacks.size
+
+    val effectiveHeaders = remember(activeUrl, activeSource.headers) {
+        if (activeSource.headers.keys.any { it.equals("Referer", ignoreCase = true) })
+            activeSource.headers
+        else activeSource.headers + ("Referer" to defaultReferer(activeUrl))
     }
 
-    var loadState by remember(embedUrl) { mutableStateOf<LoadState>(LoadState.Loading) }
+    var loadState by remember(activeUrl) { mutableStateOf<LoadState>(LoadState.Loading) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
-    var attempt by remember(embedUrl) { mutableStateOf(0) }
-    val blockedHosts = remember(embedUrl) { mutableStateListOf<String>() }
-    var mainFrameHost by remember(embedUrl) { mutableStateOf(hostOf(embedUrl)) }
+    var attempt by remember(activeUrl) { mutableStateOf(0) }
+    val blockedHosts = remember(activeUrl) { mutableStateListOf<String>() }
+    var mainFrameHost by remember(activeUrl) { mutableStateOf(hostOf(activeUrl)) }
 
-    DisposableEffect(embedUrl) {
-        monitor?.setActiveHost(embedUrl)
+    DisposableEffect(activeUrl) {
+        monitor?.setActiveHost(activeUrl)
         onDispose { monitor?.setActiveHost(null) }
     }
 
-    LaunchedEffect(embedUrl, attempt) {
+    LaunchedEffect(activeUrl, attempt) {
         if (loadState !is LoadState.Loading) loadState = LoadState.Loading
         delay(LOAD_TIMEOUT_MS)
         if (loadState is LoadState.Loading) {
-            Log.w(TAG, "embed load exceeded ${LOAD_TIMEOUT_MS}ms: $embedUrl")
-            loadState = LoadState.Failed("Stream didn't load — embed may be blocked or offline.")
+            Log.w(TAG, "embed load exceeded ${LOAD_TIMEOUT_MS}ms: $activeUrl")
+            // Treat a slow mirror like a dead one — try the next.
+            if (mirrorIndex + 1 < totalMirrors) {
+                Log.i(TAG, "timeout on mirror $mirrorIndex; advancing to ${mirrorIndex + 1}")
+                mirrorIndex += 1
+            } else {
+                loadState = LoadState.Failed(
+                    "Stream didn't load — embed may be blocked or offline.",
+                )
+            }
         }
     }
 
@@ -129,8 +175,17 @@ fun WebPlayerScreen(
                             hostOf(url)?.let { mainFrameHost = it }
                         },
                         onMainFrameFinished = { loadState = LoadState.Loaded },
-                        onMainFrameError = { reason ->
-                            loadState = LoadState.Failed(reason)
+                        onMainFrameError = { code, reason ->
+                            val transport = code in TRANSPORT_ERROR_CODES
+                            if (transport && mirrorIndex + 1 < totalMirrors) {
+                                Log.i(
+                                    TAG,
+                                    "transport error $code on mirror $mirrorIndex ($activeUrl); advancing",
+                                )
+                                mirrorIndex += 1
+                            } else {
+                                loadState = LoadState.Failed(reason, code)
+                            }
                         },
                         onResourceBlocked = { host ->
                             // Bounded — we only need a hint for the error overlay.
@@ -148,10 +203,19 @@ fun WebPlayerScreen(
                     if (BuildConfig.DEBUG) {
                         WebView.setWebContentsDebuggingEnabled(true)
                     }
-                    loadUrl(embedUrl, effectiveHeaders)
+                    loadUrl(activeUrl, effectiveHeaders)
                 }
                 webViewRef = webView
                 webView
+            },
+            update = { wv ->
+                // Re-load when the active mirror changes (auto-advance after
+                // transport error). Without this, AndroidView keeps the old
+                // page since factory only runs once.
+                if (wv.url != activeUrl && wv.url != "about:blank") {
+                    wv.stopLoading()
+                    wv.loadUrl(activeUrl, effectiveHeaders)
+                }
             },
             onRelease = { wv ->
                 webViewRef = null
@@ -162,21 +226,41 @@ fun WebPlayerScreen(
             },
         )
 
+        // Mirror-walk indicator while auto-advancing — gives a brief
+        // "Trying mirror N of M" so the user knows the screen isn't dead.
+        if (mirrorIndex > 0 && loadState is LoadState.Loading) {
+            MirrorWalkChip(
+                modifier = Modifier.align(Alignment.TopStart).padding(16.dp),
+                index = mirrorIndex + 1,
+                total = totalMirrors,
+            )
+        }
+
         if (loadState is LoadState.Failed) {
-            val baseReason = (loadState as LoadState.Failed).reason
-            val reason = if (blockedHosts.isEmpty()) baseReason
-            else baseReason + "\n\nAdblock blocked ${blockedHosts.size} request" +
-                (if (blockedHosts.size == 1) "" else "s") +
-                " (e.g. ${blockedHosts.last()}). Try Settings → 'Block ads in player' → off."
+            val failed = loadState as LoadState.Failed
+            val baseReason = failed.reason
+            val codeSuffix = if (failed.errorCode != 0) " (code ${failed.errorCode})" else ""
+            val mirrorSuffix = if (totalMirrors > 1)
+                "\n\nTried ${totalMirrors} mirror" +
+                    (if (totalMirrors == 1) "" else "s") +
+                    " — all unreachable."
+            else ""
+            val reason = baseReason + codeSuffix + mirrorSuffix +
+                if (blockedHosts.isEmpty()) ""
+                else "\n\nAdblock blocked ${blockedHosts.size} request" +
+                    (if (blockedHosts.size == 1) "" else "s") +
+                    " (e.g. ${blockedHosts.last()}). Try Settings → 'Block ads in player' → off."
             ErrorOverlay(
                 message = reason,
                 onRetry = {
+                    // Restart the walk from the original embed.
                     webViewRef?.let { wv ->
                         wv.stopLoading()
                         blockedHosts.clear()
-                        wv.loadUrl(embedUrl, effectiveHeaders)
+                        mirrorIndex = 0
                         loadState = LoadState.Loading
                         attempt += 1
+                        wv.loadUrl(embedUrl, headers + ("Referer" to defaultReferer(embedUrl)))
                     }
                 },
                 onBack = onExit,
@@ -187,6 +271,24 @@ fun WebPlayerScreen(
                 onClick = { webViewRef?.let(::fireSkip10s) },
             )
         }
+    }
+}
+
+private data class ActiveSource(val url: String, val headers: Map<String, String>)
+
+@Composable
+private fun MirrorWalkChip(modifier: Modifier, index: Int, total: Int) {
+    Box(
+        modifier = modifier
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+            .background(Color.Black.copy(alpha = 0.55f))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+    ) {
+        Text(
+            text = "Trying mirror $index of $total…",
+            color = Color.White.copy(alpha = 0.85f),
+            style = MaterialTheme.typography.labelMedium,
+        )
     }
 }
 
@@ -290,7 +392,7 @@ private class EmbedWebViewClient(
     private val mainFrameHost: () -> String?,
     private val onMainFrameStarted: (String) -> Unit,
     private val onMainFrameFinished: () -> Unit,
-    private val onMainFrameError: (String) -> Unit,
+    private val onMainFrameError: (Int, String) -> Unit,
     private val onResourceBlocked: (String) -> Unit,
 ) : WebViewClient() {
 
@@ -328,7 +430,7 @@ private class EmbedWebViewClient(
         super.onReceivedError(view, request, error)
         if (!request.isForMainFrame) return
         Log.w(TAG, "main-frame error ${error.errorCode}: ${error.description}")
-        onMainFrameError("Embed failed to load: ${error.description}")
+        onMainFrameError(error.errorCode, "Embed failed to load: ${error.description}")
     }
 
     override fun shouldOverrideUrlLoading(

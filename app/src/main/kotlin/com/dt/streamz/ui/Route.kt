@@ -17,5 +17,13 @@ sealed interface Route {
         val embedUrl: String,
         val title: String = "",
         val headers: Map<String, String> = emptyMap(),
+        /**
+         * DirectEmbed mirrors to auto-try if [embedUrl] fails with a
+         * transport error (ERR_CONNECTION_CLOSED, ERR_NAME_NOT_RESOLVED,
+         * etc.). WebPlayerScreen walks this list silently before showing
+         * the error overlay so a single dead mirror doesn't dead-end
+         * playback.
+         */
+        val fallbacks: List<StreamSource> = emptyList(),
     ) : Route
 }

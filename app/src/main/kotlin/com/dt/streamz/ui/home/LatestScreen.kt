@@ -66,12 +66,12 @@ fun LatestScreen(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 48.dp, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
+            .padding(horizontal = 28.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(
             text = "Latest",
-            style = MaterialTheme.typography.displaySmall,
+            style = MaterialTheme.typography.headlineSmall,
             color = MaterialTheme.colorScheme.onBackground,
         )
         registry.all.forEach { provider ->

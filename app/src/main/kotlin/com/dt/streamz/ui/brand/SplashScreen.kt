@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -77,6 +78,11 @@ fun SplashScreen(onFinished: () -> Unit) {
     var skipped by remember { mutableStateOf(false) }
     val focusReq = remember { FocusRequester() }
 
+    // Firework state — list of in-flight particles + a frame-tick counter
+    // that forces recomposition every ~16ms while bursts are alive.
+    val particles = remember { mutableStateListOf<FireParticle>() }
+    var frameTick by remember { mutableStateOf(0L) }
+
     LaunchedEffect(Unit) {
         runCatching { focusReq.requestFocus() }
         delay(100)
@@ -93,6 +99,30 @@ fun SplashScreen(onFinished: () -> Unit) {
             }
         }
         delay(1100)
+        // Fireworks: 4 staggered bursts radiating from random points in the
+        // upper half of the screen. Triggers right as the wordmark begins
+        // to fade in — celebratory but bounded. Frame ticker drives Canvas
+        // recomposition for the integration loop.
+        val rng = kotlin.random.Random(System.currentTimeMillis())
+        launch {
+            val tickerStart = System.currentTimeMillis()
+            while (System.currentTimeMillis() - tickerStart < 1200L) {
+                frameTick = System.currentTimeMillis()
+                delay(16)
+            }
+            frameTick = System.currentTimeMillis()
+        }
+        launch {
+            val burstOffsets = listOf(0L, 180L, 360L, 540L)
+            for (off in burstOffsets) {
+                delay(off)
+                val cx = 0.20f + rng.nextFloat() * 0.60f
+                val cy = 0.18f + rng.nextFloat() * 0.30f
+                particles.addAll(
+                    spawnBurst(cx, cy, System.currentTimeMillis(), rng),
+                )
+            }
+        }
         // Wordmark + subtitle fade-in, sequenced.
         val wordmarkAnim = Animatable(0f)
         launch {
@@ -155,6 +185,12 @@ fun SplashScreen(onFinished: () -> Unit) {
             ),
         contentAlignment = Alignment.Center,
     ) {
+        // Fireworks layer — draws behind the brand column. Reads frameTick
+        // so it recomposes each tick while bursts are alive; once particles
+        // is empty the canvas is effectively a no-op.
+        if (particles.isNotEmpty()) {
+            FireworksLayer(particles = particles, frameTick = frameTick)
+        }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                 tiles.forEachIndexed { index, tile ->
@@ -198,35 +234,34 @@ fun SplashScreen(onFinished: () -> Unit) {
 
 @Composable
 private fun BrandTile(tile: BrandTile, entryProgress: Float, pulse: Float) {
-    // entryProgress drives scale (0.6→1.0) + alpha (0→1) — EaseOutBack
+    // entryProgress drives scale (0.7→1.0) + alpha (0→1) — EaseOutBack
     // gives the tile a small overshoot for spring feel. pulse is a steady
-    // 0..1..0 used for outer glow.
-    val tileScale = 0.6f + 0.4f * entryProgress
-    val glowAlpha = 0.18f + 0.22f * pulse
+    // 0..1..0 used for outer glow. Glow alpha cut roughly in half from
+    // the original loud version so the row breathes instead of throbbing.
+    val tileScale = 0.7f + 0.3f * entryProgress
+    val glowAlpha = 0.10f + 0.12f * pulse
     Box(
         modifier = Modifier
-            .size(width = 110.dp, height = 110.dp)
+            .size(width = 96.dp, height = 96.dp)
             .alpha(entryProgress)
             .scale(tileScale)
-            .clip(RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(18.dp))
             .background(
                 Brush.linearGradient(
                     listOf(
-                        tile.color.copy(alpha = 0.95f),
-                        tile.color.copy(alpha = 0.55f),
+                        tile.color.copy(alpha = 0.85f),
+                        tile.color.copy(alpha = 0.50f),
                     ),
                 ),
             ),
         contentAlignment = Alignment.Center,
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
-            // Outer glow ring — pulse makes the row "breathe."
             drawCircle(
                 color = tile.color.copy(alpha = glowAlpha),
                 radius = size.minDimension * 0.55f,
-                style = Stroke(width = 6f),
+                style = Stroke(width = 4f),
             )
-            // Translate the icon glyph to a clean inner box.
             val pad = size.minDimension * 0.22f
             val inner = Size(size.width - pad * 2, size.height - pad * 2)
             drawIntoInner(tile, Offset(pad, pad), inner)
@@ -239,13 +274,13 @@ private fun BrandTile(tile: BrandTile, entryProgress: Float, pulse: Float) {
             Text(
                 text = tile.label,
                 style = TextStyle(
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 2.sp,
-                    color = Color.White,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 1.sp,
+                    color = Color.White.copy(alpha = 0.92f),
                 ),
             )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
         }
     }
 }
@@ -265,153 +300,207 @@ private fun DrawScope.drawIntoInner(tile: BrandTile, offset: Offset, area: Size)
 }
 
 private fun DrawScope.drawYouTubeGlyph(o: Offset, s: Size) {
-    // White play triangle inside a slightly inset rounded rect — the
-    // outer tile color already reads "YouTube red," so just need the
-    // recognizable play-button silhouette.
-    val pad = s.width * 0.05f
+    // Rounded white pill with a centered red play-triangle. Antialiased
+    // path-only — no chunky right-angle corners.
+    val pillW = s.width * 0.78f
+    val pillH = s.height * 0.52f
+    val pillX = o.x + (s.width - pillW) / 2f
+    val pillY = o.y + (s.height - pillH) / 2f
     drawRoundRect(
         color = Color.White,
-        topLeft = Offset(o.x + pad, o.y + s.height * 0.20f),
-        size = Size(s.width - pad * 2, s.height * 0.55f),
-        cornerRadius = androidx.compose.ui.geometry.CornerRadius(s.width * 0.12f, s.width * 0.12f),
+        topLeft = Offset(pillX, pillY),
+        size = Size(pillW, pillH),
+        cornerRadius = androidx.compose.ui.geometry.CornerRadius(pillH * 0.36f, pillH * 0.36f),
     )
     val cx = o.x + s.width / 2f
-    val cy = o.y + s.height * 0.475f
+    val cy = o.y + s.height / 2f
+    val triH = pillH * 0.52f
+    val triW = triH * 0.86f
     val tri = Path().apply {
-        moveTo(cx - s.width * 0.10f, cy - s.height * 0.13f)
-        lineTo(cx + s.width * 0.14f, cy)
-        lineTo(cx - s.width * 0.10f, cy + s.height * 0.13f)
+        moveTo(cx - triW / 2f, cy - triH / 2f)
+        lineTo(cx + triW / 2f, cy)
+        lineTo(cx - triW / 2f, cy + triH / 2f)
         close()
     }
-    drawPath(tri, color = Color(0xFFFF0000))
+    drawPath(tri, color = Color(0xFFE53935))
 }
 
 private fun DrawScope.drawMoviesGlyph(o: Offset, s: Size) {
-    // Filmstrip: rounded rect with 4 sprocket holes top and bottom.
-    val white = Color.White
-    val stripTop = o.y + s.height * 0.2f
-    val stripBottom = o.y + s.height * 0.65f
+    // Filmstrip: rounded white rect with paired sprocket holes top + bottom.
+    // Holes drawn as cutouts via rounded rects so corners read smoothly at
+    // 110dp. Two rows + four columns reads more "film" than the prior
+    // single-row strip.
+    val stripL = o.x + s.width * 0.10f
+    val stripR = o.x + s.width * 0.90f
+    val stripT = o.y + s.height * 0.18f
+    val stripB = o.y + s.height * 0.82f
     drawRoundRect(
-        color = white,
-        topLeft = Offset(o.x + s.width * 0.05f, stripTop),
-        size = Size(s.width * 0.9f, stripBottom - stripTop),
-        cornerRadius = androidx.compose.ui.geometry.CornerRadius(8f, 8f),
+        color = Color.White,
+        topLeft = Offset(stripL, stripT),
+        size = Size(stripR - stripL, stripB - stripT),
+        cornerRadius = androidx.compose.ui.geometry.CornerRadius(s.width * 0.06f, s.width * 0.06f),
     )
-    val holeRadius = s.width * 0.05f
-    val holeY = (stripTop + stripBottom) / 2f
-    for (i in 0..3) {
-        val cx = o.x + s.width * (0.18f + 0.21f * i)
-        drawCircle(
-            color = Color(0xFF000000),
-            radius = holeRadius,
-            center = Offset(cx, holeY),
-        )
+    val holeW = s.width * 0.085f
+    val holeH = s.height * 0.085f
+    val tint = Color(0xFF8A6800)  // tile color punched through
+    val rows = listOf(stripT + s.height * 0.07f, stripB - s.height * 0.07f - holeH)
+    for (row in rows) {
+        for (i in 0..3) {
+            val cx = stripL + s.width * 0.10f + i * s.width * 0.18f
+            drawRoundRect(
+                color = tint,
+                topLeft = Offset(cx, row),
+                size = Size(holeW, holeH),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(holeW * 0.35f, holeW * 0.35f),
+            )
+        }
     }
 }
 
 private fun DrawScope.drawAnimeGlyph(o: Offset, s: Size) {
-    // Stylized 4-point sparkle — the "anime sparkle" eye-flash trope. Two
-    // crossed elongated diamonds + a small center bead.
+    // 4-point sparkle with a soft halo + tighter waist for a smoother
+    // "anime eye-flash" silhouette. Bezier curves on each petal so the
+    // diamond points don't read as jagged at small sizes.
     val cx = o.x + s.width / 2f
     val cy = o.y + s.height / 2f
-    val long = s.width * 0.45f
-    val short = s.width * 0.10f
-    val white = Color.White
+    val long = s.width * 0.46f
+    val waist = s.width * 0.07f
 
-    val vertical = Path().apply {
-        moveTo(cx, cy - long)
-        lineTo(cx + short, cy)
-        lineTo(cx, cy + long)
-        lineTo(cx - short, cy)
-        close()
+    fun petal(angleRad: Double): Path {
+        val cos = kotlin.math.cos(angleRad).toFloat()
+        val sin = kotlin.math.sin(angleRad).toFloat()
+        val tx = cos * long
+        val ty = sin * long
+        val px = -sin * waist
+        val py = cos * waist
+        return Path().apply {
+            moveTo(cx + tx, cy + ty)
+            quadraticTo(cx + px, cy + py, cx, cy)
+            quadraticTo(cx - px, cy - py, cx + tx, cy + ty)
+            close()
+        }
     }
-    val horizontal = Path().apply {
-        moveTo(cx - long, cy)
-        lineTo(cx, cy - short)
-        lineTo(cx + long, cy)
-        lineTo(cx, cy + short)
-        close()
+    // Soft halo for sparkle bloom
+    drawCircle(
+        color = Color(0xFFFFFFFF).copy(alpha = 0.18f),
+        radius = s.width * 0.40f,
+        center = Offset(cx, cy),
+    )
+    val petals = listOf(0.0, Math.PI / 2, Math.PI, 3 * Math.PI / 2)
+    for (a in petals) {
+        drawPath(petal(a), color = Color.White)
+        drawPath(petal(a + Math.PI), color = Color.White)
     }
-    drawPath(vertical, color = white)
-    drawPath(horizontal, color = white)
     drawCircle(
         color = Color(0xFFFFE8EC),
-        radius = s.width * 0.06f,
+        radius = s.width * 0.055f,
         center = Offset(cx, cy),
     )
 }
 
 private fun DrawScope.drawTvGlyph(o: Offset, s: Size) {
-    // CRT silhouette: two antennae lines + rounded rect screen.
-    val white = Color.White
-    val antennaTopY = o.y + s.height * 0.05f
-    val screenTop = o.y + s.height * 0.30f
-    val screenLeft = o.x + s.width * 0.1f
-    val screenSize = Size(s.width * 0.8f, s.height * 0.55f)
-
+    // CRT silhouette with soft round-cap antennae + rounded screen + small
+    // base. Stroke caps + joins set to round so antennae don't end in
+    // hard pixels.
+    val antennaTopY = o.y + s.height * 0.06f
+    val screenTop = o.y + s.height * 0.32f
+    val screenLeft = o.x + s.width * 0.13f
+    val screenW = s.width * 0.74f
+    val screenH = s.height * 0.50f
     val cx = o.x + s.width / 2f
-    drawLine(
-        color = white,
-        start = Offset(cx - 2f, screenTop),
-        end = Offset(cx - s.width * 0.18f, antennaTopY),
-        strokeWidth = 5f,
+
+    val antennaStroke = androidx.compose.ui.graphics.drawscope.Stroke(
+        width = 4.5f,
+        cap = androidx.compose.ui.graphics.StrokeCap.Round,
+        join = androidx.compose.ui.graphics.StrokeJoin.Round,
     )
-    drawLine(
-        color = white,
-        start = Offset(cx + 2f, screenTop),
-        end = Offset(cx + s.width * 0.18f, antennaTopY),
-        strokeWidth = 5f,
-    )
+    val leftPath = Path().apply {
+        moveTo(cx - 2f, screenTop)
+        lineTo(cx - s.width * 0.20f, antennaTopY)
+    }
+    val rightPath = Path().apply {
+        moveTo(cx + 2f, screenTop)
+        lineTo(cx + s.width * 0.20f, antennaTopY)
+    }
+    drawPath(leftPath, color = Color.White, style = antennaStroke)
+    drawPath(rightPath, color = Color.White, style = antennaStroke)
+
+    // Outer bezel
     drawRoundRect(
-        color = white,
+        color = Color.White,
         topLeft = Offset(screenLeft, screenTop),
-        size = screenSize,
-        cornerRadius = androidx.compose.ui.geometry.CornerRadius(10f, 10f),
+        size = Size(screenW, screenH),
+        cornerRadius = androidx.compose.ui.geometry.CornerRadius(s.width * 0.10f, s.width * 0.10f),
     )
-    // Inner darker rect to read as a screen, not a brick.
+    // Inner glassy screen
+    val inset = s.width * 0.05f
     drawRoundRect(
-        color = Color(0xFF1565C0),
-        topLeft = Offset(screenLeft + 6f, screenTop + 6f),
-        size = Size(screenSize.width - 12f, screenSize.height - 12f),
-        cornerRadius = androidx.compose.ui.geometry.CornerRadius(7f, 7f),
+        color = Color(0xFF0D47A1),
+        topLeft = Offset(screenLeft + inset, screenTop + inset),
+        size = Size(screenW - inset * 2, screenH - inset * 2),
+        cornerRadius = androidx.compose.ui.geometry.CornerRadius(s.width * 0.07f, s.width * 0.07f),
+    )
+    // Soft scanline highlight for that CRT feel
+    drawRect(
+        color = Color.White.copy(alpha = 0.10f),
+        topLeft = Offset(screenLeft + inset, screenTop + inset + (screenH - inset * 2) * 0.18f),
+        size = Size(screenW - inset * 2, (screenH - inset * 2) * 0.10f),
+    )
+    // Tiny base feet
+    val baseY = screenTop + screenH + s.height * 0.02f
+    val footW = s.width * 0.08f
+    val footH = s.height * 0.05f
+    drawRoundRect(
+        color = Color.White,
+        topLeft = Offset(cx - s.width * 0.20f, baseY),
+        size = Size(footW, footH),
+        cornerRadius = androidx.compose.ui.geometry.CornerRadius(footH * 0.4f, footH * 0.4f),
+    )
+    drawRoundRect(
+        color = Color.White,
+        topLeft = Offset(cx + s.width * 0.12f, baseY),
+        size = Size(footW, footH),
+        cornerRadius = androidx.compose.ui.geometry.CornerRadius(footH * 0.4f, footH * 0.4f),
     )
 }
 
 private fun DrawScope.drawTwitchGlyph(o: Offset, s: Size) {
-    // Twitch's "glitch" silhouette — house-with-notch shape + two interior
-    // stripes for the eyes. Approximated rather than pixel-exact, but
-    // recognizable on the splash.
-    val white = Color.White
-    val left = o.x + s.width * 0.18f
-    val right = o.x + s.width * 0.82f
-    val top = o.y + s.height * 0.10f
-    val bottom = o.y + s.height * 0.85f
-    val stepX = s.width * 0.14f
-    val stepY = s.height * 0.14f
+    // Cleaner glitch-mark silhouette + two rounded "eye" pills. Slight
+    // softening on the bevel angle so the chamfer reads at 110dp.
+    val left = o.x + s.width * 0.20f
+    val right = o.x + s.width * 0.80f
+    val top = o.y + s.height * 0.13f
+    val bottom = o.y + s.height * 0.83f
+    val stepX = s.width * 0.13f
+    val stepY = s.height * 0.13f
     val mark = Path().apply {
         moveTo(left, top + stepY)
-        lineTo(left + stepX * 0.7f, top)
+        lineTo(left + stepX * 0.85f, top)
         lineTo(right, top)
-        lineTo(right, bottom - stepY * 1.6f)
-        lineTo(right - stepX * 0.9f, bottom - stepY * 0.7f)
-        lineTo(right - stepX * 1.7f, bottom - stepY * 0.7f)
+        lineTo(right, bottom - stepY * 1.4f)
+        lineTo(right - stepX * 0.95f, bottom - stepY * 0.55f)
+        lineTo(right - stepX * 1.7f, bottom - stepY * 0.55f)
         lineTo(right - stepX * 2.4f, bottom)
         lineTo(right - stepX * 2.9f, bottom)
-        lineTo(right - stepX * 2.9f, bottom - stepY * 0.7f)
-        lineTo(left, bottom - stepY * 0.7f)
+        lineTo(right - stepX * 2.9f, bottom - stepY * 0.55f)
+        lineTo(left, bottom - stepY * 0.55f)
         close()
     }
-    drawPath(mark, color = white)
-    // Two eye stripes (vertical mini-rects)
-    drawRect(
+    drawPath(mark, color = Color.White)
+    val eyeW = stepX * 0.42f
+    val eyeH = stepY * 1.6f
+    val eyeY = top + stepY * 1.55f
+    drawRoundRect(
         color = Color(0xFF6A2BD8),
-        topLeft = Offset(left + stepX * 0.95f, top + stepY * 1.5f),
-        size = Size(stepX * 0.45f, stepY * 1.6f),
+        topLeft = Offset(left + stepX * 1.05f, eyeY),
+        size = Size(eyeW, eyeH),
+        cornerRadius = androidx.compose.ui.geometry.CornerRadius(eyeW * 0.45f, eyeW * 0.45f),
     )
-    drawRect(
+    drawRoundRect(
         color = Color(0xFF6A2BD8),
-        topLeft = Offset(left + stepX * 2.25f, top + stepY * 1.5f),
-        size = Size(stepX * 0.45f, stepY * 1.6f),
+        topLeft = Offset(left + stepX * 2.30f, eyeY),
+        size = Size(eyeW, eyeH),
+        cornerRadius = androidx.compose.ui.geometry.CornerRadius(eyeW * 0.45f, eyeW * 0.45f),
     )
 }
 
@@ -442,12 +531,101 @@ private fun Wordmark(alpha: Float) {
         text = "VIEWMAXXING",
         modifier = Modifier.alpha(alpha),
         style = TextStyle(
-            fontSize = 48.sp,
-            fontWeight = FontWeight.ExtraBold,
-            letterSpacing = 8.sp,
+            fontSize = 36.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 4.sp,
             brush = brush,
         ),
     )
+}
+
+@Composable
+private fun FireworksLayer(particles: List<FireParticle>, frameTick: Long) {
+    // We integrate each particle's position from (vel * elapsed) plus a
+    // small downward bias so they arc instead of stay on the spawn ring.
+    // Origin coords are normalized 0..1 in the splash size; multiply
+    // back out per-frame against the canvas size.
+    val gravity = 0.0012f  // px/ms²-ish, in normalized units
+    val now = frameTick.takeIf { it != 0L } ?: System.currentTimeMillis()
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        for (p in particles) {
+            val elapsed = (now - p.bornAt).coerceAtLeast(0L)
+            if (elapsed > p.lifeMs) continue
+            val t = elapsed.toFloat() / p.lifeMs.toFloat()
+            // Position integration in screen space. velX/velY are in
+            // arbitrary units; we treat them as fraction-of-width per
+            // 100ms to keep things resolution-independent.
+            val px = p.originX * size.width + (p.velX * elapsed * 0.0008f) * size.width
+            val py = p.originY * size.height + (p.velY * elapsed * 0.0008f) * size.height +
+                gravity * elapsed * elapsed * size.height * 0.0008f
+            val fade = 1f - t
+            val r = p.sizeDp * (0.7f + (1f - t) * 0.5f)
+            // Soft halo
+            drawCircle(
+                color = p.color.copy(alpha = (fade * 0.30f)),
+                radius = r * 2.4f,
+                center = Offset(px, py),
+            )
+            // Core
+            drawCircle(
+                color = p.color.copy(alpha = fade.coerceIn(0f, 1f)),
+                radius = r,
+                center = Offset(px, py),
+            )
+        }
+    }
+}
+
+/**
+ * Single emitted particle. We keep this a plain data class with mutable
+ * fields rather than animatables since each splash spawns at most ~64
+ * particles and lifetimes are sub-second — driving each via Animatable
+ * would be far heavier than per-frame integration.
+ */
+private data class FireParticle(
+    val originX: Float,
+    val originY: Float,
+    val velX: Float,
+    val velY: Float,
+    val color: Color,
+    val bornAt: Long,
+    val lifeMs: Long,
+    val sizeDp: Float,
+)
+
+private val FIREWORK_PALETTE = listOf(
+    Color(0xFFFFD54F),
+    Color(0xFFFF7043),
+    Color(0xFF42A5F5),
+    Color(0xFFE91E63),
+    Color(0xFF66BB6A),
+    Color(0xFFAB47BC),
+)
+
+private fun spawnBurst(
+    cx: Float,
+    cy: Float,
+    now: Long,
+    rng: kotlin.random.Random,
+): List<FireParticle> {
+    val count = 16
+    val color = FIREWORK_PALETTE[rng.nextInt(FIREWORK_PALETTE.size)]
+    val baseSpeed = rng.nextFloat() * 2.0f + 4.0f  // px/ms baseline
+    return List(count) { i ->
+        val angle = (i.toFloat() / count) * (2.0 * Math.PI).toFloat() +
+            (rng.nextFloat() - 0.5f) * 0.18f
+        val speed = baseSpeed * (0.7f + rng.nextFloat() * 0.6f)
+        FireParticle(
+            originX = cx,
+            originY = cy,
+            velX = kotlin.math.cos(angle) * speed,
+            velY = kotlin.math.sin(angle) * speed,
+            color = color,
+            bornAt = now,
+            lifeMs = 700L + rng.nextLong(0, 250L),
+            sizeDp = 2.4f + rng.nextFloat() * 1.6f,
+        )
+    }
 }
 
 private enum class TileKind { Movies, Anime, Tv, YouTube, Twitch }

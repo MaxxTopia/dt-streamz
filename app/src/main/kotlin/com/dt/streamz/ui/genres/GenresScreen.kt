@@ -84,12 +84,12 @@ fun GenresScreen(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 48.dp, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
+            .padding(horizontal = 28.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(
             text = "Genres",
-            style = MaterialTheme.typography.displaySmall,
+            style = MaterialTheme.typography.headlineSmall,
             color = MaterialTheme.colorScheme.onBackground,
         )
         GENRES.forEach { genre ->
@@ -102,11 +102,11 @@ fun GenresScreen(
             if (titles.isEmpty()) return@forEach
             Text(
                 text = genre,
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onBackground,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
             )
             LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 items(titles, key = { "${it.providerId}:${it.id}" }) { item ->

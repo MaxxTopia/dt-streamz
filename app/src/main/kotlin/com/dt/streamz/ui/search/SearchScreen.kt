@@ -90,8 +90,8 @@ fun SearchScreen(
     }
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         SearchBarCard(query = query, onClick = { editorOpen = true })
 
@@ -127,8 +127,8 @@ private fun SearchBarCard(query: String, onClick: () -> Unit) {
     Surface(
         onClick = onClick,
         modifier = Modifier
-            .fillMaxWidth(0.6f)
-            .height(56.dp)
+            .fillMaxWidth(0.5f)
+            .height(44.dp)
             .onFocusChanged { focused = it.isFocused },
         colors = ClickableSurfaceDefaults.colors(
             containerColor = MaterialTheme.colorScheme.surface,
@@ -138,19 +138,19 @@ private fun SearchBarCard(query: String, onClick: () -> Unit) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .clip(RoundedCornerShape(10.dp))
+                .clip(RoundedCornerShape(8.dp))
                 .border(
                     width = if (focused) 2.dp else 1.dp,
                     color = if (focused) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                    shape = RoundedCornerShape(10.dp),
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                    shape = RoundedCornerShape(8.dp),
                 )
-                .padding(horizontal = 16.dp),
+                .padding(horizontal = 12.dp),
             contentAlignment = Alignment.CenterStart,
         ) {
             Text(
-                text = query.ifBlank { "Search anime, movies, TV…" },
-                style = MaterialTheme.typography.bodyLarge,
+                text = query.ifBlank { "🔍  Search anime, movies, TV…" },
+                style = MaterialTheme.typography.bodyMedium,
                 color = if (query.isBlank())
                     MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                 else MaterialTheme.colorScheme.onSurface,
@@ -200,7 +200,7 @@ private fun SearchEditorDialog(
             ) {
                 Text(
                     text = "Search",
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleMedium,
                 )
                 OutlinedTextField(
                     value = text,
@@ -238,8 +238,8 @@ private fun SearchEditorDialog(
 private fun Hint(text: String) {
     Text(
         text = text,
-        style = MaterialTheme.typography.bodyLarge,
-        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.65f),
     )
 }
 
@@ -255,9 +255,9 @@ private fun ResultsGrid(
         return
     }
     LazyVerticalGrid(
-        columns = GridCells.Fixed(6),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        columns = GridCells.Fixed(7),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
         items(results, key = { "${it.providerId}:${it.id}" }) { result ->
@@ -281,7 +281,7 @@ private fun PosterCard(
     var focused by remember { mutableStateOf(false) }
     val border = if (focused) Color.White else Color.Transparent
     Column(
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
         modifier = Modifier
             .onFocusChanged { focused = it.isFocused }
             .onKeyEvent { event ->
@@ -319,7 +319,7 @@ private fun PosterCard(
                 } else {
                     Text(
                         text = result.title.take(2).uppercase(),
-                        style = MaterialTheme.typography.displaySmall,
+                        style = MaterialTheme.typography.headlineSmall,
                     )
                 }
                 if (favorited) {
@@ -342,7 +342,7 @@ private fun PosterCard(
         }
         Text(
             text = result.title,
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.labelMedium,
             maxLines = 2,
             color = if (focused) MaterialTheme.colorScheme.onBackground
             else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),

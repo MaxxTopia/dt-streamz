@@ -61,17 +61,17 @@ fun DtLogo(modifier: Modifier = Modifier) {
 
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(6.dp))
-            .background(Color.Black.copy(alpha = 0.35f))
-            .padding(horizontal = 10.dp, vertical = 4.dp),
+            .clip(RoundedCornerShape(5.dp))
+            .background(Color.Black.copy(alpha = 0.30f))
+            .padding(horizontal = 8.dp, vertical = 3.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = "DT",
             style = TextStyle(
-                fontSize = 16.sp,
-                fontWeight = FontWeight.ExtraBold,
-                letterSpacing = 2.sp,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 1.sp,
                 textAlign = TextAlign.Center,
                 brush = brush,
             ),

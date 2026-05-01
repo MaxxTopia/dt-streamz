@@ -47,6 +47,7 @@ import com.dt.streamz.ui.sourcepicker.SourcePickerScreen
 import com.dt.streamz.twitch.TwitchStreamResolver
 import com.dt.streamz.ui.twitch.TwitchScreen
 import com.dt.streamz.ui.webplayer.WebPlayerScreen
+import com.dt.streamz.ui.youtube.YouTubeTabScreen
 import kotlinx.coroutines.launch
 
 private enum class Section(val label: String) {
@@ -127,7 +128,7 @@ fun DtApp() {
                                     ctx, "No source — title may be gone",
                                     Toast.LENGTH_SHORT,
                                 ).show()
-                                sources.size == 1 -> route = playRouteFor(sources.first(), label)
+                                sources.size == 1 -> route = playRouteFor(sources.first(), label, sources)
                                 else -> route = Route.SourcePicker(label, sources)
                             }
                         }.onFailure {
@@ -164,7 +165,7 @@ fun DtApp() {
                                             Log.w(TAG, "no playable source for $providerId/$titleId ep=${ep.number}")
                                             Toast.makeText(ctx, "No playable source found", Toast.LENGTH_SHORT).show()
                                         }
-                                        sources.size == 1 -> route = playRouteFor(sources.first(), epLabel)
+                                        sources.size == 1 -> route = playRouteFor(sources.first(), epLabel, sources)
                                         else -> route = Route.SourcePicker(epLabel, sources)
                                     }
                                 }
@@ -181,7 +182,7 @@ fun DtApp() {
                 SourcePickerScreen(
                     title = r.title,
                     sources = r.sources,
-                    onPick = { picked -> route = playRouteFor(picked, r.title) },
+                    onPick = { picked -> route = playRouteFor(picked, r.title, r.sources) },
                 )
             }
             is Route.Player -> {
@@ -205,6 +206,7 @@ fun DtApp() {
                 WebPlayerScreen(
                     embedUrl = r.embedUrl,
                     headers = r.headers,
+                    fallbacks = r.fallbacks,
                     onExit = { route = Route.Tabs },
                 )
             }
@@ -214,9 +216,9 @@ fun DtApp() {
         modifier = Modifier
             .align(Alignment.TopEnd)
             .statusBarsPadding()
-            .padding(12.dp),
+            .padding(8.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
     ) {
         val update by app.availableUpdate.collectAsState()
         UpdateChip(update = update)
@@ -243,8 +245,8 @@ private fun TabsDestination(
             .fillMaxSize()
             .background(
                 androidx.compose.ui.graphics.Brush.verticalGradient(
-                    0f to tabTint.copy(alpha = 0.28f),
-                    0.45f to MaterialTheme.colorScheme.background,
+                    0f to tabTint.copy(alpha = 0.10f),
+                    0.30f to MaterialTheme.colorScheme.background,
                     1f to MaterialTheme.colorScheme.background,
                 ),
             ),
@@ -254,7 +256,7 @@ private fun TabsDestination(
                 Tab(
                     selected = selected == section,
                     onFocus = { selected = section },
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
                 ) {
                     TabLabel(section = section, selected = selected == section)
                 }
@@ -302,15 +304,9 @@ private fun TabsDestination(
                 onResume = onResume,
                 onRemoveContinue = onRemoveContinue,
             )
-            Section.YouTube -> HomeScreen(
-                title = "YouTube",
+            Section.YouTube -> YouTubeTabScreen(
                 registry = app.providerRegistry,
-                providerFilter = { it.supportsYouTube },
-                continueWatching = app.continueWatching,
-                favorites = app.favorites,
                 onOpenTitle = onOpenTitle,
-                onResume = onResume,
-                onRemoveContinue = onRemoveContinue,
             )
             Section.Latest -> LatestScreen(
                 registry = app.providerRegistry,
@@ -342,17 +338,20 @@ private fun TabsDestination(
     }
 }
 
-private val AnimeRed = androidx.compose.ui.graphics.Color(0xFFE51C23)
-private val MoviesGold = androidx.compose.ui.graphics.Color(0xFFFFC107)
-private val TwitchPurple = androidx.compose.ui.graphics.Color(0xFF9146FF)
-private val TvBlue = androidx.compose.ui.graphics.Color(0xFF1E88E5)
-private val LibraryTeal = androidx.compose.ui.graphics.Color(0xFF26A69A)
-private val GenresPink = androidx.compose.ui.graphics.Color(0xFFE91E63)
-private val LatestGreen = androidx.compose.ui.graphics.Color(0xFF43A047)
-private val YouTubeRed = androidx.compose.ui.graphics.Color(0xFFFF0000)
+// Brand accents — desaturated/lifted versions of the original palette so
+// the row reads "branded but quiet" instead of carnival. Used for both
+// the selected tab label and the gradient wash behind each section.
+private val AnimeRed = androidx.compose.ui.graphics.Color(0xFFE57373)
+private val MoviesGold = androidx.compose.ui.graphics.Color(0xFFE8C56A)
+private val TwitchPurple = androidx.compose.ui.graphics.Color(0xFFB39DDB)
+private val TvBlue = androidx.compose.ui.graphics.Color(0xFF64B5F6)
+private val LibraryTeal = androidx.compose.ui.graphics.Color(0xFF80CBC4)
+private val GenresPink = androidx.compose.ui.graphics.Color(0xFFF48FB1)
+private val LatestGreen = androidx.compose.ui.graphics.Color(0xFF81C784)
+private val YouTubeRed = androidx.compose.ui.graphics.Color(0xFFEF5350)
 
 private fun tabTintFor(section: Section): androidx.compose.ui.graphics.Color = when (section) {
-    Section.Home -> androidx.compose.ui.graphics.Color(0xFF3F51B5)
+    Section.Home -> androidx.compose.ui.graphics.Color(0xFF7986CB)
     Section.Anime -> AnimeRed
     Section.Movies -> MoviesGold
     Section.TV -> TvBlue
@@ -361,41 +360,49 @@ private fun tabTintFor(section: Section): androidx.compose.ui.graphics.Color = w
     Section.Library -> LibraryTeal
     Section.Genres -> GenresPink
     Section.Twitch -> TwitchPurple
-    Section.Search -> androidx.compose.ui.graphics.Color(0xFF37474F)
-    Section.Settings -> androidx.compose.ui.graphics.Color(0xFF37474F)
+    Section.Search -> androidx.compose.ui.graphics.Color(0xFF90A4AE)
+    Section.Settings -> androidx.compose.ui.graphics.Color(0xFF90A4AE)
 }
 
 @Composable
 private fun TabLabel(section: Section, selected: Boolean) {
-    val color = when (section) {
-        Section.Anime -> if (selected) AnimeRed else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
-        Section.Movies -> if (selected) MoviesGold else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
-        Section.Twitch -> if (selected) TwitchPurple else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
-        Section.TV -> if (selected) TvBlue else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
-        Section.YouTube -> if (selected) YouTubeRed else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
-        Section.Library -> if (selected) LibraryTeal else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
-        Section.Genres -> if (selected) GenresPink else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
-        Section.Latest -> if (selected) LatestGreen else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
-        else -> androidx.compose.ui.graphics.Color.White
-    }
-    val weight = if (section == Section.Anime && selected)
-        androidx.compose.ui.text.font.FontWeight.ExtraBold else androidx.compose.ui.text.font.FontWeight.SemiBold
+    // Quieter look: drop UPPERCASE, keep brand-tinted accent on the
+    // selected tab, soft gray on the rest. No special-cased ExtraBold for
+    // any one section — every tab uses the same weight rules.
+    val accent = tabTintFor(section)
+    val unselected = androidx.compose.ui.graphics.Color(0xFFB0B0B0)
+    val color = if (selected) accent else unselected
+    val weight = if (selected)
+        androidx.compose.ui.text.font.FontWeight.SemiBold
+    else androidx.compose.ui.text.font.FontWeight.Medium
     Text(
-        text = section.label.uppercase(),
-        style = MaterialTheme.typography.titleMedium.copy(
+        text = section.label,
+        style = MaterialTheme.typography.titleSmall.copy(
             color = color,
             fontWeight = weight,
-            letterSpacing = if (section == Section.Anime) 3.sp else 1.sp,
+            letterSpacing = 0.4.sp,
         ),
-        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
     )
 }
 
-private fun playRouteFor(source: StreamSource, label: String): Route = when (source.kind) {
+private fun playRouteFor(
+    source: StreamSource,
+    label: String,
+    siblings: List<StreamSource> = emptyList(),
+): Route = when (source.kind) {
     StreamKind.Hls,
     StreamKind.Mp4,
     StreamKind.Dash -> Route.Player(source.url, label, kind = source.kind)
-    StreamKind.DirectEmbed -> Route.WebPlayer(source.url, label, source.headers)
+    StreamKind.DirectEmbed -> {
+        // Auto-fallback list = every other DirectEmbed source we know
+        // about, preserving the provider's intent order. Lets WebPlayer
+        // walk past a dead mirror without dumping the user back to the
+        // picker.
+        val fallbacks = siblings
+            .filter { it.kind == StreamKind.DirectEmbed && it.url != source.url }
+        Route.WebPlayer(source.url, label, source.headers, fallbacks)
+    }
 }
 
 private const val TAG = "DtApp"
