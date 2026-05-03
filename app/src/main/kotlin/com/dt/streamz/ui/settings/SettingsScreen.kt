@@ -32,9 +32,14 @@ import androidx.tv.material3.Text
 import com.dt.streamz.BuildConfig
 import com.dt.streamz.DtApplication
 import com.dt.streamz.adblock.HostBlocker
+import com.dt.streamz.diag.DebugLog
 import com.dt.streamz.updater.ApkInstaller
 import com.dt.streamz.updater.UpdateChecker
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 
 @Composable
 fun SettingsScreen() {
@@ -45,6 +50,7 @@ fun SettingsScreen() {
     val pinnedChannels by app.pinnedChannels.channels.collectAsState(initial = emptyList())
 
     var blockerEnabled by remember { mutableStateOf(app.hostBlocker.enabled()) }
+    var debugLogOpen by remember { mutableStateOf(false) }
 
     val items = buildList<SettingItem> {
         add(
@@ -147,6 +153,14 @@ fun SettingsScreen() {
                 action = null,
             ),
         )
+        add(
+            SettingItem(
+                title = "View debug log",
+                subtitle = "Last ${DebugLog.snapshot().size} lines from WebPlayer / mirror walker. Screenshot to report a stream failure.",
+                action = { debugLogOpen = true },
+                actionLabel = "Open",
+            ),
+        )
     }
 
     Column(
@@ -164,6 +178,72 @@ fun SettingsScreen() {
         ) {
             items(items, key = { it.title }) { item ->
                 SettingRow(item)
+            }
+        }
+    }
+
+    if (debugLogOpen) {
+        DebugLogDialog(onDismiss = { debugLogOpen = false })
+    }
+}
+
+@Composable
+private fun DebugLogDialog(onDismiss: () -> Unit) {
+    val lines = remember { DebugLog.snapshot() }
+    val scrollState = rememberScrollState()
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            dismissOnBackPress = true,
+            dismissOnClickOutside = true,
+            usePlatformDefaultWidth = false,
+        ),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(0.92f)
+                .padding(24.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(Color(0xFF101216)),
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Text(
+                    text = "Debug log · ${lines.size} lines",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.White,
+                )
+                Text(
+                    text = "Press BACK to close. Screenshot anything red/W. Most-recent at the bottom.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFF9AA3D9),
+                    modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
+                )
+                if (lines.isEmpty()) {
+                    Text(
+                        text = "(no lines yet — try playing a stream first, then come back)",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFFAAB0BC),
+                    )
+                } else {
+                    Column(
+                        modifier = Modifier.verticalScroll(scrollState),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        lines.forEach { line ->
+                            val tint = when {
+                                line.contains(" W/") -> Color(0xFFFFB74D)
+                                line.contains(" E/") -> Color(0xFFEF5350)
+                                line.contains(" I/") -> Color(0xFF81D4FA)
+                                else -> Color(0xFFB0BEC5)
+                            }
+                            Text(
+                                text = line,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = tint,
+                            )
+                        }
+                    }
+                }
             }
         }
     }

@@ -48,6 +48,7 @@ import androidx.tv.material3.Text
 import com.dt.streamz.DtApplication
 import com.dt.streamz.adblock.HostBlocker
 import com.dt.streamz.data.StreamSource
+import com.dt.streamz.diag.DebugLog
 import java.io.ByteArrayInputStream
 import kotlinx.coroutines.delay
 import org.json.JSONObject
@@ -146,13 +147,14 @@ fun WebPlayerScreen(
     }
 
     LaunchedEffect(activeUrl, attempt) {
+        DebugLog.i(TAG, "load mirror=$mirrorIndex/${totalMirrors - 1} url=${truncUrl(activeUrl)}")
         if (loadState !is LoadState.Loading) loadState = LoadState.Loading
         delay(LOAD_TIMEOUT_MS)
         if (loadState is LoadState.Loading) {
-            Log.w(TAG, "embed load exceeded ${LOAD_TIMEOUT_MS}ms: $activeUrl")
+            DebugLog.w(TAG, "timeout ${LOAD_TIMEOUT_MS}ms mirror=$mirrorIndex url=${truncUrl(activeUrl)}")
             // Treat a slow mirror like a dead one — try the next.
             if (mirrorIndex + 1 < totalMirrors) {
-                Log.i(TAG, "timeout on mirror $mirrorIndex; advancing to ${mirrorIndex + 1}")
+                DebugLog.i(TAG, "advance ${mirrorIndex} -> ${mirrorIndex + 1} (timeout)")
                 mirrorIndex += 1
             } else {
                 loadState = LoadState.Failed(
@@ -178,12 +180,10 @@ fun WebPlayerScreen(
         // No <video> or playable iframe surfaced. Walk to next mirror,
         // or surface a friendly error if we've exhausted them.
         if (mirrorIndex + 1 < totalMirrors) {
-            Log.i(
-                TAG,
-                "no playable element on $activeUrl after ${CONTENT_CHECK_MS}ms; advancing",
-            )
+            DebugLog.i(TAG, "no <video> on mirror=$mirrorIndex after ${CONTENT_CHECK_MS}ms; advancing")
             mirrorIndex += 1
         } else {
+            DebugLog.w(TAG, "exhausted ${totalMirrors} mirrors — none surfaced <video>")
             loadState = LoadState.Failed(
                 "All mirrors loaded but none surfaced a video — the title may be unavailable.",
                 0,
@@ -216,11 +216,9 @@ fun WebPlayerScreen(
                         onMainFrameFinished = { loadState = LoadState.Loaded },
                         onMainFrameError = { code, reason ->
                             val transport = code in TRANSPORT_ERROR_CODES
+                            DebugLog.w(TAG, "main-frame err code=$code reason=$reason mirror=$mirrorIndex")
                             if (transport && mirrorIndex + 1 < totalMirrors) {
-                                Log.i(
-                                    TAG,
-                                    "transport error $code on mirror $mirrorIndex ($activeUrl); advancing",
-                                )
+                                DebugLog.i(TAG, "advance ${mirrorIndex} -> ${mirrorIndex + 1} (transport err $code)")
                                 mirrorIndex += 1
                             } else {
                                 loadState = LoadState.Failed(reason, code)
@@ -488,6 +486,7 @@ private class EmbedWebViewClient(
     override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
         super.onPageStarted(view, url, favicon)
         if (url != null && url != "about:blank") {
+            DebugLog.d(TAG, "page-start ${truncUrl(url)}")
             onMainFrameStarted(url)
         }
     }
@@ -496,6 +495,7 @@ private class EmbedWebViewClient(
         super.onPageFinished(view, url)
         // Only the top document's onPageFinished fires with the WebView's own URL.
         if (url != null && url != "about:blank" && url == view.url) {
+            DebugLog.i(TAG, "page-finish ${truncUrl(url)}")
             onMainFrameFinished()
         }
         if (cosmeticCss.isBlank()) return
@@ -518,7 +518,7 @@ private class EmbedWebViewClient(
     ) {
         super.onReceivedError(view, request, error)
         if (!request.isForMainFrame) return
-        Log.w(TAG, "main-frame error ${error.errorCode}: ${error.description}")
+        DebugLog.w(TAG, "main-frame err code=${error.errorCode} desc=${error.description} url=${truncUrl(request.url?.toString().orEmpty())}")
         onMainFrameError(error.errorCode, "Embed failed to load: ${error.description}")
     }
 
@@ -556,7 +556,7 @@ private class EmbedWebViewClient(
         if (CDN_ALLOWLIST_SUFFIXES.any { host == it || host.endsWith(".$it") }) return null
 
         if (blocker?.isBlocked(host) == true) {
-            Log.d(TAG, "blocked $host (path=$path) — main=$main")
+            DebugLog.d(TAG, "blocked $host path=$path main=$main")
             onResourceBlocked(host)
             return WebResourceResponse(
                 "text/plain",
@@ -615,6 +615,10 @@ private fun shareEffectiveDomain(a: String, b: String): Boolean {
 }
 
 private fun hostOf(url: String): String? = runCatching { Uri.parse(url).host?.lowercase() }.getOrNull()
+
+/** Shortens a URL for the in-app debug log so screenshots stay readable. */
+private fun truncUrl(url: String, max: Int = 90): String =
+    if (url.length <= max) url else url.take(max - 1) + "…"
 
 private fun defaultReferer(embedUrl: String): String {
     val uri = runCatching { Uri.parse(embedUrl) }.getOrNull()
