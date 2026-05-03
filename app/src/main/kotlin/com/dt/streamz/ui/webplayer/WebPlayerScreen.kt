@@ -62,12 +62,15 @@ private sealed interface LoadState {
 private const val LOAD_TIMEOUT_MS = 20_000L
 
 /**
- * After page-finished, how long to wait for a <video> element or playable
- * iframe to appear in the DOM before declaring the embed dead and walking
- * to the next mirror. vidsrc/2embed normally inject the player within
- * 1-3 seconds; 5s gives them headroom on a slow box.
+ * After page-finished, how long to wait for actual media traffic
+ * (.m3u8 / .ts / .mp4 / etc.) before deciding the embed is a dead
+ * wrapper. 12s lets a slow box fetch the player JS, decode the
+ * obfuscated URL, and start the first segment request. If we never
+ * see media traffic in that window, the embed is confirmed dead and
+ * we walk to the next mirror — no more 20s sit-and-wait for a
+ * cross-origin iframe wrapper that's actually empty inside.
  */
-private const val CONTENT_CHECK_MS = 5_000L
+private const val MEDIA_CHECK_MS = 12_000L
 
 /**
  * WebView error codes that indicate the embed host itself is unreachable
@@ -146,13 +149,32 @@ fun WebPlayerScreen(
         onDispose { monitor?.setActiveHost(null) }
     }
 
+    // Pre-flight: if this mirror's host has been marked dead this session
+    // (transport err on a prior pick), skip it without waiting for a
+    // 20-second timeout to confirm the obvious. Walks forward until we
+    // find a candidate that hasn't been marked, or exhaust the list.
+    LaunchedEffect(mirrorIndex, fallbacks, embedUrl) {
+        if (DeadHostRegistry.isDead(activeUrl) && mirrorIndex + 1 < totalMirrors) {
+            DebugLog.i(TAG, "skip mirror=$mirrorIndex (host dead) -> ${mirrorIndex + 1}")
+            mirrorIndex += 1
+        }
+    }
+
     LaunchedEffect(activeUrl, attempt) {
         DebugLog.i(TAG, "load mirror=$mirrorIndex/${totalMirrors - 1} url=${truncUrl(activeUrl)}")
         if (loadState !is LoadState.Loading) loadState = LoadState.Loading
-        delay(LOAD_TIMEOUT_MS)
+        // Poll-based timeout instead of single delay — bail the moment
+        // loadState transitions out of Loading (page-finish, transport
+        // error, etc.). Single-delay had a race where the timeout branch
+        // fired late even after Loaded was set.
+        val deadline = System.currentTimeMillis() + LOAD_TIMEOUT_MS
+        while (System.currentTimeMillis() < deadline) {
+            delay(500)
+            if (loadState !is LoadState.Loading) return@LaunchedEffect
+        }
         if (loadState is LoadState.Loading) {
             DebugLog.w(TAG, "timeout ${LOAD_TIMEOUT_MS}ms mirror=$mirrorIndex url=${truncUrl(activeUrl)}")
-            // Treat a slow mirror like a dead one — try the next.
+            DeadHostRegistry.markIfHost(activeUrl)
             if (mirrorIndex + 1 < totalMirrors) {
                 DebugLog.i(TAG, "advance ${mirrorIndex} -> ${mirrorIndex + 1} (timeout)")
                 mirrorIndex += 1
@@ -164,28 +186,39 @@ fun WebPlayerScreen(
         }
     }
 
-    // Content-gate: WebView reports "loaded" for HTTP 200 even when the
-    // embed body is an HTML error page (no <video>, no iframe). Probe the
-    // DOM for a real player element after page-finish; if nothing playable
-    // shows up within CONTENT_CHECK_MS, advance to the next mirror.
+    // Media-traffic gate: WebView fires "page finished" even when the
+    // embed body is just a wrapper that never starts playing — common
+    // when ISP/system adblock kills the player iframe (vidsrc ->
+    // cloudnestra) or the embed is rate-limited. We poll Resource Timing
+    // every 500ms; the embed has to actually fetch a media segment
+    // (m3u8/ts/mp4/...) within MEDIA_CHECK_MS for us to consider it
+    // alive. No segment? Walk to the next mirror.
     LaunchedEffect(activeUrl, attempt, loadState) {
         if (loadState !is LoadState.Loaded) return@LaunchedEffect
-        val deadline = System.currentTimeMillis() + CONTENT_CHECK_MS
+        val deadline = System.currentTimeMillis() + MEDIA_CHECK_MS
+        var lastSignal = "none"
         while (System.currentTimeMillis() < deadline) {
             delay(500)
             val wv = webViewRef ?: return@LaunchedEffect
-            val found = probeForPlayer(wv)
-            if (found) return@LaunchedEffect
+            val signal = probeForPlayer(wv)
+            lastSignal = signal
+            if (signal == "media" || signal == "video" || signal == "iframe-video") {
+                DebugLog.i(TAG, "play confirmed mirror=$mirrorIndex via $signal")
+                return@LaunchedEffect
+            }
         }
-        // No <video> or playable iframe surfaced. Walk to next mirror,
-        // or surface a friendly error if we've exhausted them.
+        // No media traffic and no DOM-side video. The embed loaded but
+        // isn't actually streaming. Most likely cause: ISP / system
+        // adblock blocking the player CDN (cloudnestra etc.) or the
+        // embed is geo-blocked.
         if (mirrorIndex + 1 < totalMirrors) {
-            DebugLog.i(TAG, "no <video> on mirror=$mirrorIndex after ${CONTENT_CHECK_MS}ms; advancing")
+            DebugLog.i(TAG, "no media after ${MEDIA_CHECK_MS}ms (signal=$lastSignal) mirror=$mirrorIndex; advancing")
             mirrorIndex += 1
         } else {
-            DebugLog.w(TAG, "exhausted ${totalMirrors} mirrors — none surfaced <video>")
+            DebugLog.w(TAG, "exhausted ${totalMirrors} mirrors — last signal=$lastSignal")
+            DeadHostRegistry.markIfHost(activeUrl)
             loadState = LoadState.Failed(
-                "All mirrors loaded but none surfaced a video — the title may be unavailable.",
+                "Embed loaded but never started playing (no media traffic). Likely cause: an adblocker on the box / network is blocking the player CDN (cloudnestra etc.). Try: Settings → 'Block ads in player' OFF, or pause your system adblocker / VPN.",
                 0,
             )
         }
@@ -217,6 +250,9 @@ fun WebPlayerScreen(
                         onMainFrameError = { code, reason ->
                             val transport = code in TRANSPORT_ERROR_CODES
                             DebugLog.w(TAG, "main-frame err code=$code reason=$reason mirror=$mirrorIndex")
+                            if (transport) {
+                                DeadHostRegistry.markIfHost(activeUrl)
+                            }
                             if (transport && mirrorIndex + 1 < totalMirrors) {
                                 DebugLog.i(TAG, "advance ${mirrorIndex} -> ${mirrorIndex + 1} (transport err $code)")
                                 mirrorIndex += 1
@@ -330,30 +366,54 @@ private fun MirrorWalkChip(modifier: Modifier, index: Int, total: Int) {
 }
 
 /**
- * Looks for a `<video>` element in the page or any of its same-origin
- * iframes. Cross-origin iframes are treated as "playable" because we
- * can't introspect them (security model) — those are the typical cases
- * where vidsrc embeds itself inside a sub-iframe like cloudnestra.
+ * "Is the embed actually playing?" check, two-stage:
  *
- * Returns true if anything resembling a player is present.
+ *  1) DOM probe — `<video>` in the main doc or same-origin iframes.
+ *     Cross-origin iframes (where most embeds live) are noted but NOT
+ *     trusted on their own — too easy to be tricked by an empty wrapper.
+ *  2) Resource Timing API probe — has the page actually fetched any
+ *     media bytes (.m3u8 / .ts / .mp4 / .m4s / .key / .webm)? Resource
+ *     Timing entries are visible across origins (they don't expose
+ *     content, just URLs/timings), so this works through the
+ *     vidsrc -> vsembed -> cloudnestra iframe chain.
+ *
+ * Returns one of: "media" (real playback confirmed by network traffic),
+ * "video" / "iframe-video" (DOM-side player present, traffic might catch
+ * up), "iframe-cross-origin" (just a wrapper, weakest signal), "none".
+ *
+ * Caller decides what to accept. Strong gate = require "media".
  */
-private suspend fun probeForPlayer(webView: WebView): Boolean {
+private suspend fun probeForPlayer(webView: WebView): String {
     val js = """
         (function(){
+          // Resource Timing tells us if any media segment has been fetched.
+          // Cross-origin entries are visible by URL — perfect for the
+          // vidsrc -> cloudnestra iframe chain where we can't poke into
+          // contentDocument but CAN see the network it fired.
+          try {
+            var entries = (performance.getEntriesByType('resource') || []);
+            for (var i = 0; i < entries.length; i++) {
+              var name = entries[i].name || '';
+              if (/\.(m3u8|ts|mp4|m4s|webm|aac|key)(\?|$)/i.test(name)) {
+                return 'media';
+              }
+            }
+          } catch (e) {}
+
           if (document.querySelector('video')) return 'video';
           var frames = document.querySelectorAll('iframe');
+          var sawCrossOrigin = false;
           for (var i = 0; i < frames.length; i++) {
             var src = frames[i].getAttribute('src') || '';
-            if (!src) continue;
-            // Same-origin iframes can be introspected.
+            if (!src || src.indexOf('about:') === 0) continue;
             try {
               var doc = frames[i].contentDocument;
               if (doc && doc.querySelector('video')) return 'iframe-video';
             } catch (e) {
-              // Cross-origin — assume the iframe is the player.
-              if (src.indexOf('about:') !== 0) return 'iframe-cross-origin';
+              sawCrossOrigin = true;
             }
           }
+          if (sawCrossOrigin) return 'iframe-cross-origin';
           return 'none';
         })();
     """.trimIndent()
@@ -364,8 +424,7 @@ private suspend fun probeForPlayer(webView: WebView): Boolean {
             }
         }
     }
-    val unwrapped = result.removeSurrounding("\"")
-    return unwrapped != "none"
+    return result.removeSurrounding("\"")
 }
 
 private fun fireSkip10s(webView: WebView) {

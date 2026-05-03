@@ -249,11 +249,63 @@ class VidSrcProvider(
                 listOf("tv/$titleId/$season/$number")
             }
         }
+        // Order matters — the WebPlayer walks top-to-bottom on transport
+        // failures or no-media-traffic timeouts. Front-load the
+        // independent-infrastructure embeds (autoembed, embed.su,
+        // moviesapi, multiembed) since the four vidsrc.* aliases all
+        // funnel into the same vsembed.ru / cloudnestra player chain
+        // and tend to fail or succeed together. Diversity > redundancy.
         return paths.flatMap { path ->
+            // 2embed and vidsrc both publish movie/<id> + tv/<id>/<season>/<ep>
+            // on a single path; we forward `path` as-is. The alt embeds
+            // each take a per-host URL shape, so we destructure once.
+            val pathKindIsTv = path.startsWith("tv/")
+            val (imdb, season, ep) = if (pathKindIsTv) {
+                val parts = path.removePrefix("tv/").split("/")
+                Triple(parts.getOrNull(0).orEmpty(), parts.getOrNull(1).orEmpty(), parts.getOrNull(2).orEmpty())
+            } else {
+                Triple(path.removePrefix("movie/"), "", "")
+            }
             listOf(
-                // vidsrc rotates: .to is the canonical alias, .net/.cc/.xyz
-                // are mirror DNS that flip in and out as cdns get banned.
-                // Listing all four lets the user step through if one's dead.
+                // --- non-vidsrc embeds first (different infra) ---
+                StreamSource(
+                    url = if (pathKindIsTv) "https://embed.su/embed/tv/$imdb/$season/$ep"
+                          else "https://embed.su/embed/movie/$imdb",
+                    kind = StreamKind.DirectEmbed,
+                    serverLabel = "embed.su",
+                    headers = mapOf("Referer" to "https://embed.su/"),
+                ),
+                StreamSource(
+                    url = if (pathKindIsTv) "https://autoembed.cc/embed/player.php?id=$imdb&s=$season&e=$ep"
+                          else "https://autoembed.cc/embed/player.php?id=$imdb",
+                    kind = StreamKind.DirectEmbed,
+                    serverLabel = "autoembed",
+                    headers = mapOf("Referer" to "https://autoembed.cc/"),
+                ),
+                StreamSource(
+                    url = if (pathKindIsTv) "https://multiembed.mov/?video_id=$imdb&tmdb=0&s=$season&e=$ep"
+                          else "https://multiembed.mov/?video_id=$imdb&tmdb=0",
+                    kind = StreamKind.DirectEmbed,
+                    serverLabel = "multiembed",
+                    headers = mapOf("Referer" to "https://multiembed.mov/"),
+                ),
+                StreamSource(
+                    url = if (pathKindIsTv) "https://moviesapi.club/tv/$imdb-$season-$ep"
+                          else "https://moviesapi.club/movie/$imdb",
+                    kind = StreamKind.DirectEmbed,
+                    serverLabel = "moviesapi",
+                    headers = mapOf("Referer" to "https://moviesapi.club/"),
+                ),
+                StreamSource(
+                    url = "https://www.2embed.cc/embed/$path",
+                    kind = StreamKind.DirectEmbed,
+                    serverLabel = "2embed",
+                    headers = mapOf("Referer" to "https://www.2embed.cc/"),
+                ),
+
+                // --- vidsrc family last; same player chain so they
+                //     succeed or fail together. Keep them so the user
+                //     still has a path when the alt embeds are down. ---
                 StreamSource(
                     url = "https://vidsrc.to/embed/$path",
                     kind = StreamKind.DirectEmbed,
@@ -271,12 +323,6 @@ class VidSrcProvider(
                     kind = StreamKind.DirectEmbed,
                     serverLabel = "VidSrc · .xyz",
                     headers = mapOf("Referer" to "https://vidsrc.xyz/"),
-                ),
-                StreamSource(
-                    url = "https://www.2embed.cc/embed/$path",
-                    kind = StreamKind.DirectEmbed,
-                    serverLabel = "2embed",
-                    headers = mapOf("Referer" to "https://www.2embed.cc/"),
                 ),
             )
         }
