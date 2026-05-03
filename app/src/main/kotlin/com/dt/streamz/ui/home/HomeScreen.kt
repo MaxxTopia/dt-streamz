@@ -59,14 +59,23 @@ fun HomeScreen(
     registry: ProviderRegistry? = null,
     providerFilter: (Provider) -> Boolean = { it.supportsAnime },
     kindFilter: (MediaKind) -> Boolean = { true },
+    // null on Home (show every kind); on Anime/Movies/TV we pass the
+    // matching MediaKind so Continue Watching only shows that tab's content.
+    // Entries persisted before kind was tracked have a null .kind and are
+    // hidden from typed tabs — they still appear on Home.
+    cwKind: MediaKind? = null,
     continueWatching: ContinueWatchingStore? = null,
     favorites: FavoritesStore? = null,
     onOpenTitle: (providerId: String, titleId: String) -> Unit = { _, _ -> },
     onResume: (WatchEntry) -> Unit = {},
     onRemoveContinue: (WatchEntry) -> Unit = {},
 ) {
-    val continueEntries by (continueWatching?.entries ?: flowOf(emptyList()))
+    val rawContinueEntries by (continueWatching?.entries ?: flowOf(emptyList()))
         .collectAsState(initial = emptyList())
+    val continueEntries = remember(rawContinueEntries, cwKind) {
+        if (cwKind == null) rawContinueEntries
+        else rawContinueEntries.filter { it.kind == cwKind.name }
+    }
     val favoriteEntries by (favorites?.entries ?: flowOf(emptyList()))
         .collectAsState(initial = emptyList())
     val favoriteKeys = remember(favoriteEntries) {

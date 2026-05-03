@@ -19,6 +19,10 @@ data class WatchEntry(
     val episodeId: String,
     val episodeNumber: Int,
     val timestamp: Long,
+    // Stored as MediaKind.name (Anime / Movie / Series). Default null lets
+    // entries persisted before this field shipped deserialize cleanly; they
+    // only show on Home until the user re-watches and re-records them.
+    val kind: String? = null,
 )
 
 private val Context.continueWatchingStore by preferencesDataStore(name = "continue_watching")

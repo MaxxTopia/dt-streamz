@@ -11,10 +11,13 @@ android {
 
     defaultConfig {
         applicationId = "com.dt.streamz"
-        minSdk = 30
+        // 26 covers Android 8+ — the SuperBox V3 ships Android 9, VSeebox V3
+        // ships Android 11. Lowering from 30 unblocks SuperBox installs; no
+        // code path requires API 30+ (no @RequiresApi / SDK_INT branches).
+        minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.3.2"
+        versionCode = 7
+        versionName = "0.3.3"
     }
 
     signingConfigs {

@@ -1,6 +1,13 @@
 package com.dt.streamz
 
 import android.app.Application
+import coil3.ImageLoader
+import coil3.PlatformContext
+import coil3.SingletonImageLoader
+import coil3.disk.DiskCache
+import coil3.disk.directory
+import coil3.memory.MemoryCache
+import coil3.request.crossfade
 import com.dt.streamz.adblock.BlocklistRefreshWorker
 import com.dt.streamz.adblock.HostBlocker
 import com.dt.streamz.config.ScraperConfigLoader
@@ -24,7 +31,33 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-class DtApplication : Application() {
+class DtApplication : Application(), SingletonImageLoader.Factory {
+
+    /**
+     * Wider memory cache + on-disk persistence + 180ms crossfade so posters
+     * fade in instead of popping (or staying grey forever) on the box.
+     * The grey users were seeing was the surfaceVariant placeholder behind
+     * a Coil load that hadn't completed — slow box + no disk persistence
+     * meant every scroll re-fetched. 80 MiB of disk gives a row of posters
+     * room to stick around.
+     */
+    override fun newImageLoader(context: PlatformContext): ImageLoader {
+        return ImageLoader.Builder(context)
+            .crossfade(180)
+            .memoryCache {
+                MemoryCache.Builder()
+                    .maxSizePercent(context, 0.20)
+                    .build()
+            }
+            .diskCache {
+                DiskCache.Builder()
+                    .directory(cacheDir.resolve("image_cache"))
+                    .maxSizeBytes(80L * 1024 * 1024)
+                    .build()
+            }
+            .build()
+    }
+
 
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     lateinit var scraperConfig: ScraperConfigLoader

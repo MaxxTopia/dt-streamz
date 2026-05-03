@@ -32,7 +32,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -167,21 +166,24 @@ internal fun SearchEditorDialog(
 ) {
     var text by remember { mutableStateOf(initialQuery) }
     val focusRequester = remember { FocusRequester() }
-    val keyboard = LocalSoftwareKeyboardController.current
 
+    // No keyboard?.show() — Android TV has no IME, and the request was
+    // racing focus on VSeebox: focus would land on the field then jump
+    // away when the IME callback fired with no controller, and physical
+    // letter keys (USB keyboard / air-mouse) never reached the field.
+    // Plain focusRequester.requestFocus() with a small delay so the
+    // Dialog window is fully laid out before we pull focus.
     LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
-        keyboard?.show()
+        kotlinx.coroutines.delay(80)
+        runCatching { focusRequester.requestFocus() }
     }
 
     Dialog(
-        onDismissRequest = {
-            keyboard?.hide()
-            onDismiss()
-        },
+        onDismissRequest = onDismiss,
         properties = DialogProperties(
             dismissOnBackPress = true,
             dismissOnClickOutside = true,
+            usePlatformDefaultWidth = false,
         ),
     ) {
         // Plain Box wrapper — wrapping in a clickable tv-material Surface
@@ -214,7 +216,6 @@ internal fun SearchEditorDialog(
                     },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     keyboardActions = KeyboardActions(onSearch = {
-                        keyboard?.hide()
                         onSubmit(text.trim())
                     }),
                     textStyle = MaterialTheme.typography.bodyLarge,

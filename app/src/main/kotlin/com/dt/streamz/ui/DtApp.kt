@@ -144,7 +144,7 @@ fun DtApp() {
                     registry = registry,
                     providerId = r.providerId,
                     titleId = r.titleId,
-                    onPlayEpisode = { titleId, ep, providerId, titleName, poster ->
+                    onPlayEpisode = { titleId, ep, providerId, titleName, poster, kind ->
                         scope.launch {
                             app.continueWatching.record(
                                 WatchEntry(
@@ -155,6 +155,7 @@ fun DtApp() {
                                     episodeId = ep.id,
                                     episodeNumber = ep.number,
                                     timestamp = System.currentTimeMillis(),
+                                    kind = kind.name,
                                 ),
                             )
                             runCatching { registry.get(providerId).streams(titleId, ep) }
@@ -278,6 +279,7 @@ private fun TabsDestination(
                 title = "Anime",
                 registry = app.providerRegistry,
                 providerFilter = { it.supportsAnime },
+                cwKind = MediaKind.Anime,
                 continueWatching = app.continueWatching,
                 favorites = app.favorites,
                 onOpenTitle = onOpenTitle,
@@ -289,6 +291,7 @@ private fun TabsDestination(
                 registry = app.providerRegistry,
                 providerFilter = { it.supportsMovies },
                 kindFilter = { it == MediaKind.Movie },
+                cwKind = MediaKind.Movie,
                 continueWatching = app.continueWatching,
                 favorites = app.favorites,
                 onOpenTitle = onOpenTitle,
@@ -300,6 +303,7 @@ private fun TabsDestination(
                 registry = app.providerRegistry,
                 providerFilter = { it.supportsMovies },
                 kindFilter = { it == MediaKind.Series },
+                cwKind = MediaKind.Series,
                 continueWatching = app.continueWatching,
                 favorites = app.favorites,
                 onOpenTitle = onOpenTitle,

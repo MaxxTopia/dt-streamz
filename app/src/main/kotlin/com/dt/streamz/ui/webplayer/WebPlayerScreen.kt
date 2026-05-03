@@ -35,6 +35,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -417,6 +419,14 @@ private fun SkipForwardChip(modifier: Modifier, onClick: () -> Unit) {
 
 @Composable
 private fun ErrorOverlay(message: String, onRetry: () -> Unit, onBack: () -> Unit) {
+    // The WebView under us holds focus while playing. When the overlay
+    // shows up, the remote keeps sending events to the WebView and the
+    // Retry / Back buttons feel unclickable. Request focus on Retry as
+    // soon as the overlay enters composition so D-pad lands on it.
+    val retryFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        runCatching { retryFocus.requestFocus() }
+    }
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -434,7 +444,10 @@ private fun ErrorOverlay(message: String, onRetry: () -> Unit, onBack: () -> Uni
                 color = Color.White,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Button(onClick = onRetry) {
+                Button(
+                    onClick = onRetry,
+                    modifier = Modifier.focusRequester(retryFocus),
+                ) {
                     Text("Retry", modifier = Modifier.padding(horizontal = 8.dp))
                 }
                 Spacer(Modifier.width(4.dp))

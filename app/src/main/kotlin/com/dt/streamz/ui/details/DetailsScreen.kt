@@ -55,6 +55,7 @@ fun DetailsScreen(
         providerId: String,
         titleName: String,
         poster: String?,
+        kind: com.dt.streamz.data.MediaKind,
     ) -> Unit,
 ) {
     val vm: DetailsViewModel = viewModel(
@@ -81,7 +82,7 @@ fun DetailsScreen(
                 details = s.details,
                 watchedNumbers = watchedNumbers,
                 onPlay = { ep ->
-                    onPlayEpisode(titleId, ep, providerId, s.details.title, s.details.poster)
+                    onPlayEpisode(titleId, ep, providerId, s.details.title, s.details.poster, s.details.kind)
                 },
             )
         }
