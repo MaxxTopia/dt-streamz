@@ -138,15 +138,34 @@ fun WebPlayerScreen(
         else activeSource.headers + ("Referer" to defaultReferer(activeUrl))
     }
 
-    var loadState by remember(activeUrl) { mutableStateOf<LoadState>(LoadState.Loading) }
+    // CRITICAL: these states must NOT be `remember(activeUrl)` because
+    // the WebView factory captures their setters/getters in closures
+    // (onMainFrameFinished, onResourceBlocked, onMainFrameStarted, etc.).
+    // factory runs ONCE; on subsequent mirror advances the WebView is
+    // reused and the closures still write to the original MutableState.
+    // If we re-key these to activeUrl, every advance creates a *new*
+    // MutableState that the closures can't see — Loaded never arrives,
+    // mirror walker hits the 20s LOAD_TIMEOUT every time.
+    // Reset these manually in LaunchedEffect(activeUrl) below instead.
+    var loadState by remember { mutableStateOf<LoadState>(LoadState.Loading) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var attempt by remember(activeUrl) { mutableStateOf(0) }
-    val blockedHosts = remember(activeUrl) { mutableStateListOf<String>() }
-    var mainFrameHost by remember(activeUrl) { mutableStateOf(hostOf(activeUrl)) }
+    val blockedHosts = remember { mutableStateListOf<String>() }
+    var mainFrameHost by remember { mutableStateOf<String?>(hostOf(activeUrl)) }
 
     DisposableEffect(activeUrl) {
         monitor?.setActiveHost(activeUrl)
         onDispose { monitor?.setActiveHost(null) }
+    }
+
+    // Per-mirror state reset — replaces the `remember(activeUrl)` keying
+    // we can't use (see above). Runs whenever the WebPlayer points at a
+    // new mirror URL: clear the per-mirror book-keeping so the next
+    // load starts clean.
+    LaunchedEffect(activeUrl) {
+        loadState = LoadState.Loading
+        blockedHosts.clear()
+        mainFrameHost = hostOf(activeUrl)
     }
 
     // Pre-flight: if this mirror's host has been marked dead this session

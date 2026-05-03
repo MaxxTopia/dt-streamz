@@ -225,6 +225,31 @@ internal fun SearchEditorDialog(
                         focusedBorderColor = MaterialTheme.colorScheme.primary,
                     ),
                 )
+                // Explicit Submit + Cancel buttons. On older Android (the
+                // SuperBox is on 9), the Compose Dialog occasionally
+                // doesn't propagate BACK to dismiss, leaving the user
+                // stranded if focus also misbehaves. Buttons are a
+                // reachable escape hatch via D-pad.
+                androidx.compose.foundation.layout.Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    androidx.tv.material3.Button(
+                        onClick = { onSubmit(text.trim()) },
+                    ) {
+                        androidx.tv.material3.Text(
+                            text = "Search",
+                            modifier = Modifier.padding(horizontal = 8.dp),
+                        )
+                    }
+                    androidx.tv.material3.Button(
+                        onClick = onDismiss,
+                    ) {
+                        androidx.tv.material3.Text(
+                            text = "Close",
+                            modifier = Modifier.padding(horizontal = 8.dp),
+                        )
+                    }
+                }
                 Text(
                     text = "BACK to cancel · 🔍 to submit",
                     style = MaterialTheme.typography.bodySmall,

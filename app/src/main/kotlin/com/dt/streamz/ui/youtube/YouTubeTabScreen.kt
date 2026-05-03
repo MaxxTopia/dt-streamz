@@ -131,8 +131,10 @@ fun YouTubeTabScreen(
                     color = MaterialTheme.colorScheme.onBackground,
                 )
                 when {
-                    list == null -> Hint("Loading…")
-                    list.isEmpty() -> Hint("Couldn't fetch trending — extractor may be stale.")
+                    list == null -> Hint("Loading trending…")
+                    list.isEmpty() -> Hint(
+                        "Trending unavailable on this network — open the search bar above to look up a video by name.",
+                    )
                     else -> ResultsGrid(list, onOpenTitle)
                 }
             }
