@@ -78,7 +78,12 @@ fun YouTubeTabScreen(
     var searchJob by remember { mutableStateOf<Job?>(null) }
 
     LaunchedEffect(provider.id) {
-        trending = runCatching { provider.browse() }.getOrDefault(emptyList())
+        // 5s cap — NewPipeExtractor on Android 9 can hang for tens of
+        // seconds on filtered networks while it retries YouTube's
+        // anti-bot endpoints. Fail fast and let the user search instead.
+        trending = runCatching {
+            kotlinx.coroutines.withTimeoutOrNull(5_000) { provider.browse() } ?: emptyList()
+        }.getOrDefault(emptyList())
     }
 
     // Debounced live search — typing in the dialog will pre-warm results

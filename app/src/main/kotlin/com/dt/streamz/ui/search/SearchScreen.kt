@@ -14,10 +14,6 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -32,7 +28,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -158,6 +153,17 @@ private fun SearchBarCard(query: String, onClick: () -> Unit) {
     }
 }
 
+/**
+ * On-screen keyboard for TV input. We deliberately avoid any
+ * system IME (Material `OutlinedTextField` + ImeAction.Search) because
+ * on the SuperBox (Android 9) opening the IME locks the whole box up,
+ * and on the VSeebox the IME shows but never delivers committed text
+ * back to the field. A grid of D-pad-navigable letter cells sidesteps
+ * the IME entirely — same approach Netflix / Prime / YouTube TV use.
+ *
+ * Layout: A-Z grid (6 cols), 0-9 row, special row (space/del/clear),
+ * action row (Search/Close). First letter cell auto-focuses.
+ */
 @Composable
 internal fun SearchEditorDialog(
     initialQuery: String,
@@ -165,17 +171,11 @@ internal fun SearchEditorDialog(
     onSubmit: (String) -> Unit,
 ) {
     var text by remember { mutableStateOf(initialQuery) }
-    val focusRequester = remember { FocusRequester() }
+    val firstKeyFocus = remember { FocusRequester() }
 
-    // No keyboard?.show() — Android TV has no IME, and the request was
-    // racing focus on VSeebox: focus would land on the field then jump
-    // away when the IME callback fired with no controller, and physical
-    // letter keys (USB keyboard / air-mouse) never reached the field.
-    // Plain focusRequester.requestFocus() with a small delay so the
-    // Dialog window is fully laid out before we pull focus.
     LaunchedEffect(Unit) {
         kotlinx.coroutines.delay(80)
-        runCatching { focusRequester.requestFocus() }
+        runCatching { firstKeyFocus.requestFocus() }
     }
 
     Dialog(
@@ -186,76 +186,198 @@ internal fun SearchEditorDialog(
             usePlatformDefaultWidth = false,
         ),
     ) {
-        // Plain Box wrapper — wrapping in a clickable tv-material Surface
-        // steals focus from the inner TextField so D-pad/IME keystrokes
-        // never reach the input.
         Box(
             modifier = Modifier
-                .fillMaxWidth(0.8f)
+                .fillMaxWidth(0.7f)
                 .padding(24.dp)
                 .clip(RoundedCornerShape(10.dp))
                 .background(MaterialTheme.colorScheme.surface),
         ) {
             Column(
-                modifier = Modifier.padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text(
-                    text = "Search",
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { text = it },
+                // Live query display + cursor. No system text field, so
+                // there's nothing for the IME to attach to.
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .focusRequester(focusRequester),
-                    singleLine = true,
-                    placeholder = {
-                        androidx.compose.material3.Text("e.g. frieren, dune, breaking bad")
-                    },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = {
-                        onSubmit(text.trim())
-                    }),
-                    textStyle = MaterialTheme.typography.bodyLarge,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surface,
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surface,
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    ),
-                )
-                // Explicit Submit + Cancel buttons. On older Android (the
-                // SuperBox is on 9), the Compose Dialog occasionally
-                // doesn't propagate BACK to dismiss, leaving the user
-                // stranded if focus also misbehaves. Buttons are a
-                // reachable escape hatch via D-pad.
-                androidx.compose.foundation.layout.Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    androidx.tv.material3.Button(
-                        onClick = { onSubmit(text.trim()) },
-                    ) {
-                        androidx.tv.material3.Text(
-                            text = "Search",
-                            modifier = Modifier.padding(horizontal = 8.dp),
+                        .background(
+                            MaterialTheme.colorScheme.surfaceVariant,
+                            RoundedCornerShape(6.dp),
                         )
-                    }
-                    androidx.tv.material3.Button(
-                        onClick = onDismiss,
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                ) {
+                    Text(
+                        text = if (text.isEmpty()) "type below…" else "$text|",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = if (text.isEmpty())
+                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                        else MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+
+                // Letters: 6-col grid, A-Z (26 cells, 4 rows of 6 + 1
+                // row of 2). First cell carries the auto-focus requester.
+                LETTER_ROWS.forEachIndexed { rowIdx, row ->
+                    androidx.compose.foundation.layout.Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        androidx.tv.material3.Text(
-                            text = "Close",
-                            modifier = Modifier.padding(horizontal = 8.dp),
+                        row.forEach { ch ->
+                            KeyCell(
+                                label = ch.toString(),
+                                onClick = { text = text + ch },
+                                focusRequester = if (rowIdx == 0 && ch == 'A') firstKeyFocus else null,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        // Pad short rows so widths stay consistent.
+                        repeat(6 - row.size) {
+                            Box(modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+
+                // 0-9 row.
+                androidx.compose.foundation.layout.Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    for (n in '0'..'9') {
+                        KeyCell(
+                            label = n.toString(),
+                            onClick = { text = text + n },
+                            modifier = Modifier.weight(1f),
                         )
                     }
                 }
+
+                // Edit-action row.
+                androidx.compose.foundation.layout.Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    KeyCell(
+                        label = "SPACE",
+                        onClick = { text = text + " " },
+                        modifier = Modifier.weight(2f),
+                    )
+                    KeyCell(
+                        label = "DEL",
+                        onClick = { text = text.dropLast(1) },
+                        modifier = Modifier.weight(1f),
+                    )
+                    KeyCell(
+                        label = "CLEAR",
+                        onClick = { text = "" },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+
+                // Submit / cancel row.
+                androidx.compose.foundation.layout.Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    PrimaryActionCell(
+                        label = if (text.isBlank()) "type a query" else "🔍  Search",
+                        enabled = text.isNotBlank(),
+                        onClick = { onSubmit(text.trim()) },
+                        modifier = Modifier.weight(1f),
+                    )
+                    PrimaryActionCell(
+                        label = "Close",
+                        enabled = true,
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
                 Text(
-                    text = "BACK to cancel · 🔍 to submit",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    text = "D-pad to move · OK to type · BACK to close",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 )
             }
+        }
+    }
+}
+
+private val LETTER_ROWS: List<List<Char>> = listOf(
+    listOf('A', 'B', 'C', 'D', 'E', 'F'),
+    listOf('G', 'H', 'I', 'J', 'K', 'L'),
+    listOf('M', 'N', 'O', 'P', 'Q', 'R'),
+    listOf('S', 'T', 'U', 'V', 'W', 'X'),
+    listOf('Y', 'Z'),
+)
+
+@Composable
+private fun KeyCell(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    focusRequester: FocusRequester? = null,
+) {
+    var focused by remember { mutableStateOf(false) }
+    Surface(
+        onClick = onClick,
+        modifier = modifier
+            .height(44.dp)
+            .let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
+            .onFocusChanged { focused = it.isFocused },
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            focusedContainerColor = MaterialTheme.colorScheme.primary,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            focusedContentColor = MaterialTheme.colorScheme.onPrimary,
+        ),
+        shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(6.dp)),
+    ) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.titleSmall,
+                color = if (focused) MaterialTheme.colorScheme.onPrimary
+                else MaterialTheme.colorScheme.onSurface,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PrimaryActionCell(
+    label: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var focused by remember { mutableStateOf(false) }
+    Surface(
+        onClick = { if (enabled) onClick() },
+        modifier = modifier
+            .height(50.dp)
+            .onFocusChanged { focused = it.isFocused },
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = if (enabled) MaterialTheme.colorScheme.primary
+                             else MaterialTheme.colorScheme.surfaceVariant,
+            focusedContainerColor = if (enabled) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.surfaceVariant,
+            contentColor = if (enabled) MaterialTheme.colorScheme.onPrimary
+                           else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+            focusedContentColor = MaterialTheme.colorScheme.onPrimary,
+        ),
+        shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(6.dp)),
+    ) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.titleMedium,
+                color = if (focused && enabled) MaterialTheme.colorScheme.onPrimary
+                else if (enabled) MaterialTheme.colorScheme.onPrimary
+                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+            )
         }
     }
 }
