@@ -1,6 +1,9 @@
 package com.dt.streamz.ui.webplayer
 
 import android.annotation.SuppressLint
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.net.Uri
 import android.util.Log
 import android.view.View
@@ -14,6 +17,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.dt.streamz.BuildConfig
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
@@ -149,6 +153,7 @@ fun WebPlayerScreen(
     // Reset these manually in LaunchedEffect(activeUrl) below instead.
     var loadState by remember { mutableStateOf<LoadState>(LoadState.Loading) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
+    var chromeClientRef by remember { mutableStateOf<FullscreenChromeClient?>(null) }
     var attempt by remember(activeUrl) { mutableStateOf(0) }
     val blockedHosts = remember { mutableStateListOf<String>() }
     var mainFrameHost by remember { mutableStateOf<String?>(hostOf(activeUrl)) }
@@ -243,6 +248,15 @@ fun WebPlayerScreen(
         }
     }
 
+    // Inner BACK handler: while in HTML5 fullscreen, BACK exits fullscreen
+    // first instead of bubbling up to the route-level handler. This shadows
+    // DtApp's `BackHandler { route = Route.Tabs }` only while a custom view
+    // is showing, so normal navigation is unaffected.
+    BackHandler(enabled = chromeClientRef?.isInCustomView() == true) {
+        DebugLog.i(TAG, "BACK while in custom view — exiting fullscreen")
+        chromeClientRef?.forceExit()
+    }
+
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
@@ -286,7 +300,12 @@ fun WebPlayerScreen(
                             }
                         },
                     )
-                    webChromeClient = FullscreenChromeClient()
+                    val chrome = FullscreenChromeClient(
+                        getActivity = { ctx.findActivity() },
+                        getWebView = { webViewRef },
+                    )
+                    chromeClientRef = chrome
+                    webChromeClient = chrome
                     CookieManager.getInstance().setAcceptCookie(true)
                     CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                     isFocusable = true
@@ -310,6 +329,15 @@ fun WebPlayerScreen(
                 }
             },
             onRelease = { wv ->
+                // Force-exit any in-progress HTML5 fullscreen BEFORE we
+                // tear down the WebView. Without this, an embed that
+                // entered fullscreen leaves the activity with a detached
+                // video surface, immersive system-UI flags still applied,
+                // and the WebView holding focus — that's the freeze that
+                // required a hard reboot. Hiding the custom view restores
+                // system UI, returns focus to Compose, and lets BACK work.
+                chromeClientRef?.forceExit()
+                chromeClientRef = null
                 webViewRef = null
                 wv.stopLoading()
                 wv.loadUrl("about:blank")
@@ -649,23 +677,88 @@ private class EmbedWebViewClient(
     }
 }
 
-private class FullscreenChromeClient : WebChromeClient() {
+/**
+ * HTML5 fullscreen handler. The previous implementation just stored the
+ * custom view without attaching it, which left the embed's `<video>`
+ * reparented to an orphaned surface — the player thought it was
+ * fullscreen, the WebView kept focus, and the activity ended up with no
+ * way to recover (BACK never reached Compose). The Snowfall freeze that
+ * needed a hard reboot was almost certainly this path.
+ *
+ * Correct behaviour:
+ *   onShow  -> hide the WebView, attach `view` to the activity's content
+ *              frame, set immersive system-UI flags
+ *   onHide  -> reverse all of that, restore system-UI flags, return focus
+ *              to the WebView
+ */
+private class FullscreenChromeClient(
+    private val getActivity: () -> Activity?,
+    private val getWebView: () -> WebView?,
+) : WebChromeClient() {
     private var customView: View? = null
     private var callback: CustomViewCallback? = null
+    private var savedSystemUi: Int = 0
 
-    override fun onShowCustomView(view: View, callback: CustomViewCallback) {
-        customView?.let { previous ->
-            (previous.parent as? ViewGroup)?.removeView(previous)
+    override fun onShowCustomView(view: View, cb: CustomViewCallback) {
+        if (customView != null) {
+            // Player tried to enter fullscreen twice without hiding —
+            // dismiss the new request to avoid leaking an orphan view.
+            cb.onCustomViewHidden()
+            return
+        }
+        val activity = getActivity() ?: run {
+            DebugLog.w(TAG, "onShowCustomView: no activity — dismissing")
+            cb.onCustomViewHidden()
+            return
         }
         customView = view
-        this.callback = callback
+        callback = cb
+        getWebView()?.visibility = View.GONE
+        val content = activity.findViewById<ViewGroup>(android.R.id.content)
+        content.addView(
+            view,
+            ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ),
+        )
+        @Suppress("DEPRECATION")
+        run {
+            savedSystemUi = activity.window.decorView.systemUiVisibility
+            activity.window.decorView.systemUiVisibility = (
+                View.SYSTEM_UI_FLAG_FULLSCREEN
+                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                )
+        }
     }
 
     override fun onHideCustomView() {
-        customView = null
+        val view = customView ?: return
+        val activity = getActivity()
+        (view.parent as? ViewGroup)?.removeView(view)
+        getWebView()?.let {
+            it.visibility = View.VISIBLE
+            it.requestFocus()
+        }
+        if (activity != null) {
+            @Suppress("DEPRECATION")
+            activity.window.decorView.systemUiVisibility = savedSystemUi
+        }
         callback?.onCustomViewHidden()
+        customView = null
         callback = null
     }
+
+    /** Idempotent escape hatch for AndroidView.onRelease + BACK. */
+    fun forceExit() {
+        if (customView != null) onHideCustomView()
+    }
+
+    fun isInCustomView(): Boolean = customView != null
 
     override fun onConsoleMessage(msg: ConsoleMessage): Boolean {
         val tag = "WebPlayer/js"
@@ -677,6 +770,15 @@ private class FullscreenChromeClient : WebChromeClient() {
         }
         return true
     }
+}
+
+private fun Context.findActivity(): Activity? {
+    var c: Context? = this
+    while (c is ContextWrapper) {
+        if (c is Activity) return c
+        c = c.baseContext
+    }
+    return null
 }
 
 /**

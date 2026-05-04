@@ -1,12 +1,12 @@
 package com.dt.streamz.scraper.youtube
 
-import android.util.Log
 import com.dt.streamz.data.Episode
 import com.dt.streamz.data.MediaKind
 import com.dt.streamz.data.SearchResult
 import com.dt.streamz.data.StreamKind
 import com.dt.streamz.data.StreamSource
 import com.dt.streamz.data.TitleDetails
+import com.dt.streamz.diag.DebugLog
 import com.dt.streamz.scraper.Provider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -43,7 +43,7 @@ class YouTubeProvider : Provider {
             items.filterIsInstance<StreamInfoItem>()
                 .take(24)
                 .map { it.toSearchResult() }
-        }.onFailure { Log.w(TAG, "browse() failed", it) }.getOrDefault(emptyList())
+        }.onFailure { DebugLog.w(TAG, "browse() failed", it) }.getOrDefault(emptyList())
     }
 
     override suspend fun search(query: String): List<SearchResult> = withContext(Dispatchers.IO) {
@@ -53,7 +53,7 @@ class YouTubeProvider : Provider {
             extractor.fetchPage()
             val items = extractor.initialPage.items.orEmpty()
             items.filterIsInstance<StreamInfoItem>().map { it.toSearchResult() }
-        }.onFailure { Log.w(TAG, "search($query) failed", it) }.getOrDefault(emptyList())
+        }.onFailure { DebugLog.w(TAG, "search($query) failed", it) }.getOrDefault(emptyList())
     }
 
     override suspend fun details(titleId: String): TitleDetails = withContext(Dispatchers.IO) {
@@ -74,7 +74,7 @@ class YouTubeProvider : Provider {
                 episodes = listOf(Episode(id = "watch", number = 1, title = "Watch")),
             )
         }.getOrElse {
-            Log.w(TAG, "details($titleId) failed", it)
+            DebugLog.w(TAG, "details($titleId) failed", it)
             TitleDetails(
                 providerId = id,
                 id = titleId,
@@ -134,7 +134,7 @@ class YouTubeProvider : Provider {
                 }
 
                 out
-            }.onFailure { Log.w(TAG, "streams($titleId) failed", it) }.getOrDefault(emptyList())
+            }.onFailure { DebugLog.w(TAG, "streams($titleId) failed", it) }.getOrDefault(emptyList())
         }
 
     private fun StreamInfoItem.toSearchResult(): SearchResult {
