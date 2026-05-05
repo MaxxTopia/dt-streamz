@@ -53,7 +53,8 @@ import kotlinx.coroutines.launch
  * versions ran an infinite tile-pulse loop, an infinite wordmark
  * shimmer, and a 64-particle fireworks layer concurrently, which made
  * the whole splash judder. Now: tiles slide in, wordmark fades in,
- * everything fades out. Total ~1.6s. Press any key to skip.
+ * everything fades out. Total ~5s with a hold beat so all five tiles
+ * land before the screen moves on. Press any key to skip.
  */
 @Composable
 fun SplashScreen(onFinished: () -> Unit) {
@@ -69,41 +70,47 @@ fun SplashScreen(onFinished: () -> Unit) {
         runCatching { focusReq.requestFocus() }
         delay(60)
         if (skipped) { onFinished(); return@LaunchedEffect }
-        // Tile entry — staggered slide-in, no infinite pulse.
+        // Tile entry — staggered slide-in. Slower stagger + per-tile
+        // animation so the user can clock each tile as it lands instead
+        // of the whole row flashing past in <1s on a fast box.
         tileAnims.forEachIndexed { index, anim ->
             launch {
-                delay(index * 90L)
+                delay(index * 160L)
                 anim.animateTo(
                     targetValue = 1f,
-                    animationSpec = tween(durationMillis = 500, easing = EaseOutBack),
+                    animationSpec = tween(durationMillis = 650, easing = EaseOutBack),
                 )
             }
         }
-        delay(700)
+        // Wait for the last tile's anim to finish, then hold all five
+        // visible for a beat before the wordmark slides in.
+        delay(160L * (tiles.size - 1) + 650L + 900L)
+        if (skipped) { onFinished(); return@LaunchedEffect }
 
         val wordmarkAnim = Animatable(0f)
         launch {
-            wordmarkAnim.animateTo(1f, tween(360, easing = FastOutSlowInEasing))
+            wordmarkAnim.animateTo(1f, tween(520, easing = FastOutSlowInEasing))
         }
         val wmStart = System.currentTimeMillis()
-        while (System.currentTimeMillis() - wmStart < 360 && !skipped) {
+        while (System.currentTimeMillis() - wmStart < 520 && !skipped) {
             wordmarkAlpha = wordmarkAnim.value
             delay(16)
         }
         wordmarkAlpha = 1f
 
-        delay(160)
+        delay(220)
         val subAnim = Animatable(0f)
-        launch { subAnim.animateTo(1f, tween(280)) }
+        launch { subAnim.animateTo(1f, tween(360)) }
         val subStart = System.currentTimeMillis()
-        while (System.currentTimeMillis() - subStart < 280 && !skipped) {
+        while (System.currentTimeMillis() - subStart < 360 && !skipped) {
             subtitleAlpha = subAnim.value
             delay(16)
         }
         subtitleAlpha = 1f
 
-        delay(320)
-        rootAlpha.animateTo(0f, tween(durationMillis = 280, easing = EaseOutCubic))
+        // Final hold so the wordmark has time to register before fade.
+        delay(900)
+        rootAlpha.animateTo(0f, tween(durationMillis = 420, easing = EaseOutCubic))
         onFinished()
     }
 

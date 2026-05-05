@@ -266,6 +266,11 @@ class VidSrcProvider(
             } else {
                 Triple(path.removePrefix("movie/"), "", "")
             }
+            // vidsrc.cc uses a different path shape (Movie capital M, /v2/embed)
+            // than the rest of the family. Keep it on its own to avoid
+            // accidental URL malformation.
+            val ccMovieOrTv = if (pathKindIsTv) "tv/$imdb/$season/$ep" else "Movie/$imdb"
+
             listOf(
                 // --- non-vidsrc embeds first (different infra) ---
                 StreamSource(
@@ -303,7 +308,32 @@ class VidSrcProvider(
                     headers = mapOf("Referer" to "https://www.2embed.cc/"),
                 ),
 
-                // --- vidsrc family last; same player chain so they
+                // --- 2026-additions: independent infra, IMDB-compatible.
+                //     vidsrc.cc uses /v2/embed/Movie/<id> (capital M) and
+                //     /v2/embed/tv/<id>/<s>/<e>. vidsrc.icu and vidsrc.mov
+                //     stick to lowercase movie/tv. ---
+                StreamSource(
+                    url = "https://vidsrc.cc/v2/embed/$ccMovieOrTv",
+                    kind = StreamKind.DirectEmbed,
+                    serverLabel = "vidsrc.cc",
+                    headers = mapOf("Referer" to "https://vidsrc.cc/"),
+                ),
+                StreamSource(
+                    url = if (pathKindIsTv) "https://vidsrc.icu/embed/tv/$imdb/$season/$ep"
+                          else "https://vidsrc.icu/embed/movie/$imdb",
+                    kind = StreamKind.DirectEmbed,
+                    serverLabel = "vidsrc.icu",
+                    headers = mapOf("Referer" to "https://vidsrc.icu/"),
+                ),
+                StreamSource(
+                    url = if (pathKindIsTv) "https://vidsrc.mov/embed/tv/$imdb/$season/$ep"
+                          else "https://vidsrc.mov/embed/movie/$imdb",
+                    kind = StreamKind.DirectEmbed,
+                    serverLabel = "vidsrc.mov",
+                    headers = mapOf("Referer" to "https://vidsrc.mov/"),
+                ),
+
+                // --- vidsrc.to family last; same player chain so they
                 //     succeed or fail together. Keep them so the user
                 //     still has a path when the alt embeds are down. ---
                 StreamSource(
