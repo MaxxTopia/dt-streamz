@@ -21,6 +21,20 @@ import com.dt.streamz.ui.brand.SplashScreen
 import com.dt.streamz.ui.theme.DtTheme
 
 class MainActivity : ComponentActivity() {
+
+    private val networkMonitor get() = (application as DtApplication).networkMonitor
+
+    // Run the latency-probe loop only while the app is in the foreground.
+    override fun onStart() {
+        super.onStart()
+        networkMonitor.start()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        networkMonitor.stop()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {

@@ -19,6 +19,7 @@ import com.dt.streamz.scraper.anicrush.AnicrushProvider
 import com.dt.streamz.scraper.anikai.AnikaiProvider
 import com.dt.streamz.scraper.anikai.AnikaiResolver
 import com.dt.streamz.scraper.fixtures.FixturesProvider
+import com.dt.streamz.scraper.tmdb.TmdbProvider
 import com.dt.streamz.scraper.vidsrc.VidSrcProvider
 import com.dt.streamz.scraper.youtube.YouTubeProvider
 import com.dt.streamz.twitch.PinnedChannelsStore
@@ -96,6 +97,7 @@ class DtApplication : Application(), SingletonImageLoader.Factory {
         providerRegistry = ProviderRegistry(
             providers = listOf(
                 FixturesProvider(),
+                TmdbProvider(),
                 AnikaiProvider(resolver = anikaiResolver),
                 VidSrcProvider(),
                 AnicrushProvider(),
@@ -112,8 +114,9 @@ class DtApplication : Application(), SingletonImageLoader.Factory {
         }
         BlocklistRefreshWorker.schedule(this)
 
+        // Sampling is driven by MainActivity's start/stop lifecycle so the
+        // 3s TCP probe loop doesn't run while the app is backgrounded.
         networkMonitor = NetworkMonitor(this)
-        networkMonitor.start()
 
         pinnedChannels = PinnedChannelsStore(this)
         continueWatching = ContinueWatchingStore(this)

@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items as lazyRowItems
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -28,6 +30,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -60,6 +63,19 @@ fun SearchScreen(
     val query by vm.query.collectAsState()
     val state by vm.state.collectAsState()
     var editorOpen by remember { mutableStateOf(false) }
+
+    // Recent searches, persisted so the painful on-screen keyboard isn't
+    // needed to re-run a past query. SharedPreferences keeps it simple;
+    // historyTick re-reads after a write.
+    val ctx = LocalContext.current
+    val historyPrefs = remember { ctx.getSharedPreferences("search_history", android.content.Context.MODE_PRIVATE) }
+    var historyTick by remember { mutableStateOf(0) }
+    val recentSearches = remember(historyTick) { readSearchHistory(historyPrefs) }
+    fun runQuery(q: String) {
+        vm.onQueryChange(q); vm.onSubmit()
+        writeSearchHistory(historyPrefs, q); historyTick++
+    }
+    val liveCount = (state as? SearchState.Loaded)?.results?.size
     val favoriteEntries by (favorites?.entries ?: flowOf(emptyList()))
         .collectAsState(initial = emptyList())
     val favoriteKeys = remember(favoriteEntries) {
@@ -90,7 +106,16 @@ fun SearchScreen(
         SearchBarCard(query = query, onClick = { editorOpen = true })
 
         when (val s = state) {
-            SearchState.Idle -> Hint("Press OK on the search bar to type.")
+            SearchState.Idle -> {
+                Hint("Press OK on the search bar to type.")
+                if (recentSearches.isNotEmpty()) {
+                    RecentSearches(
+                        items = recentSearches,
+                        onPick = { runQuery(it) },
+                        onClear = { clearSearchHistory(historyPrefs); historyTick++ },
+                    )
+                }
+            }
             SearchState.Loading -> Hint("Searching…")
             is SearchState.Error -> Hint("Error: ${s.message}")
             is SearchState.Loaded -> ResultsGrid(
@@ -105,12 +130,74 @@ fun SearchScreen(
     if (editorOpen) {
         SearchEditorDialog(
             initialQuery = query,
+            liveResultCount = liveCount,
+            onLiveQuery = { vm.onQueryChange(it) },   // search-as-you-type (VM debounces)
             onDismiss = { editorOpen = false },
             onSubmit = { text ->
-                vm.onQueryChange(text)
-                vm.onSubmit()
+                runQuery(text)
                 editorOpen = false
             },
+        )
+    }
+}
+
+private const val HISTORY_KEY = "queries"
+private const val HISTORY_MAX = 12
+
+private fun readSearchHistory(prefs: android.content.SharedPreferences): List<String> =
+    prefs.getString(HISTORY_KEY, "").orEmpty().split("\n").filter { it.isNotBlank() }
+
+private fun writeSearchHistory(prefs: android.content.SharedPreferences, query: String) {
+    val q = query.trim()
+    if (q.length < 2) return
+    val next = (listOf(q) + readSearchHistory(prefs).filterNot { it.equals(q, ignoreCase = true) })
+        .take(HISTORY_MAX)
+    prefs.edit().putString(HISTORY_KEY, next.joinToString("\n")).apply()
+}
+
+private fun clearSearchHistory(prefs: android.content.SharedPreferences) {
+    prefs.edit().remove(HISTORY_KEY).apply()
+}
+
+@Composable
+private fun RecentSearches(items: List<String>, onPick: (String) -> Unit, onClear: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        androidx.compose.foundation.layout.Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                text = "Recent",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
+            )
+            RecentChip(label = "✕ Clear", onClick = onClear)
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            lazyRowItems(items) { q ->
+                RecentChip(label = q, onClick = { onPick(q) })
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecentChip(label: String, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.onFocusChanged { focused = it.isFocused },
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = MaterialTheme.colorScheme.surface,
+            focusedContainerColor = MaterialTheme.colorScheme.primary,
+        ),
+        shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(16.dp)),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (focused) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
         )
     }
 }
@@ -169,6 +256,8 @@ internal fun SearchEditorDialog(
     initialQuery: String,
     onDismiss: () -> Unit,
     onSubmit: (String) -> Unit,
+    liveResultCount: Int? = null,
+    onLiveQuery: (String) -> Unit = {},
 ) {
     var text by remember { mutableStateOf(initialQuery) }
     val firstKeyFocus = remember { FocusRequester() }
@@ -177,6 +266,9 @@ internal fun SearchEditorDialog(
         kotlinx.coroutines.delay(80)
         runCatching { firstKeyFocus.requestFocus() }
     }
+    // Search-as-you-type: push each change to the VM (which debounces) so
+    // results are already warm when the dialog closes.
+    LaunchedEffect(text) { onLiveQuery(text) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -272,6 +364,13 @@ internal fun SearchEditorDialog(
                     )
                 }
 
+                if (liveResultCount != null && text.trim().length >= 2) {
+                    Text(
+                        text = "🔎 $liveResultCount result${if (liveResultCount == 1) "" else "s"} so far",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
                 // Submit / cancel row.
                 androidx.compose.foundation.layout.Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),

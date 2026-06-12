@@ -46,6 +46,7 @@ import com.dt.streamz.data.FavoritesStore
 import com.dt.streamz.data.MediaKind
 import com.dt.streamz.data.SearchResult
 import com.dt.streamz.data.WatchEntry
+import com.dt.streamz.scraper.BrowseCache
 import com.dt.streamz.scraper.Provider
 import com.dt.streamz.scraper.ProviderRegistry
 import kotlinx.coroutines.async
@@ -69,6 +70,9 @@ fun HomeScreen(
     onOpenTitle: (providerId: String, titleId: String) -> Unit = { _, _ -> },
     onResume: (WatchEntry) -> Unit = {},
     onRemoveContinue: (WatchEntry) -> Unit = {},
+    // Show the TMDb-fed "Must Watch / trending" row. On for Home/Movies/TV,
+    // off for Anime (trending is movies+TV, not anime).
+    showMustWatch: Boolean = false,
 ) {
     val rawContinueEntries by (continueWatching?.entries ?: flowOf(emptyList()))
         .collectAsState(initial = emptyList())
@@ -99,7 +103,14 @@ fun HomeScreen(
         }
     }
     var pendingRemoval by remember { mutableStateOf<WatchEntry?>(null) }
+    // tmdb feeds only the dedicated Must-Watch row — keep it out of the
+    // generic per-provider browse rows.
     val visibleProviders = registry?.all?.filter(providerFilter).orEmpty()
+        .filter { it.id != "tmdb" }
+    val mustWatchProvider = registry?.all?.firstOrNull { it.id == "tmdb" }
+    val watchedKeys = remember(continueEntries) {
+        continueEntries.map { "${it.providerId}:${it.titleId}" }.toSet()
+    }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 14.dp),
@@ -117,13 +128,21 @@ fun HomeScreen(
                 onRequestRemove = { pendingRemoval = it },
             )
         }
+        if (showMustWatch && mustWatchProvider != null) {
+            BrowseRow(
+                provider = mustWatchProvider,
+                watchedKeys = watchedKeys,
+                favoriteKeys = favoriteKeys,
+                kindFilter = kindFilter,
+                titleOverride = "🔥 Must Watch · trending now",
+                onOpenTitle = onOpenTitle,
+                onToggleFavorite = toggleFavorite,
+            )
+        }
         RandomPickCard(
             providers = visibleProviders,
             onOpenTitle = onOpenTitle,
         )
-        val watchedKeys = remember(continueEntries) {
-            continueEntries.map { "${it.providerId}:${it.titleId}" }.toSet()
-        }
         val recentProviders = remember(continueEntries, visibleProviders) {
             continueEntries
                 .map { it.providerId }
@@ -262,6 +281,23 @@ private fun ContinueCard(
                         color = Color.White,
                     )
                 }
+                if (entry.durationMs > 0) {
+                    val frac = (entry.positionMs.toFloat() / entry.durationMs).coerceIn(0f, 1f)
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .height(4.dp)
+                            .background(Color.Black.copy(alpha = 0.55f)),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(frac)
+                                .height(4.dp)
+                                .background(Color(0xFFE51C23)),
+                        )
+                    }
+                }
             }
         }
         Text(
@@ -286,7 +322,7 @@ internal fun BrowseRow(
 ) {
     var results by remember(provider.id) { mutableStateOf<List<SearchResult>?>(null) }
     LaunchedEffect(provider.id) {
-        results = runCatching { provider.browse() }.getOrDefault(emptyList())
+        results = runCatching { BrowseCache.browse(provider) }.getOrDefault(emptyList())
     }
     val list = results
     if (list == null) {
@@ -347,7 +383,7 @@ private fun RandomPickCard(
         loading = true
         scope.launch {
             val all = providers.map { p ->
-                async { runCatching { p.browse() }.getOrDefault(emptyList()) }
+                async { runCatching { BrowseCache.browse(p) }.getOrDefault(emptyList()) }
             }.awaitAll().flatten()
             val pool = all.filter { kind.matches(it.kind) }
             loading = false

@@ -26,6 +26,7 @@ import com.dt.streamz.data.FavoriteEntry
 import com.dt.streamz.data.FavoritesStore
 import com.dt.streamz.data.MediaKind
 import com.dt.streamz.data.SearchResult
+import com.dt.streamz.scraper.BrowseCache
 import com.dt.streamz.scraper.ProviderRegistry
 import com.dt.streamz.scraper.vidsrc.VidSrcProvider
 import com.dt.streamz.ui.home.PosterCard
@@ -76,7 +77,7 @@ fun GenresScreen(
 
     LaunchedEffect(Unit) {
         allResults = registry.all.map { p ->
-            async { runCatching { p.browse() }.getOrDefault(emptyList()) }
+            async { runCatching { BrowseCache.browse(p) }.getOrDefault(emptyList()) }
         }.awaitAll().flatten()
     }
 

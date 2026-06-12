@@ -197,6 +197,23 @@ private fun ContinueTile(
                         color = Color.White,
                     )
                 }
+                if (entry.durationMs > 0) {
+                    val frac = (entry.positionMs.toFloat() / entry.durationMs).coerceIn(0f, 1f)
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .height(4.dp)
+                            .background(Color.Black.copy(alpha = 0.55f)),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(frac)
+                                .height(4.dp)
+                                .background(Color(0xFFE51C23)),
+                        )
+                    }
+                }
             }
         }
         Text(

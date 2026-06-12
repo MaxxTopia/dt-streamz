@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,6 +33,7 @@ import com.dt.streamz.data.StreamKind
 import com.dt.streamz.data.StreamSource
 import com.dt.streamz.data.WatchEntry
 import com.dt.streamz.networkmonitor.NetworkIndicator
+import com.dt.streamz.scraper.Binge
 import com.dt.streamz.ui.brand.DtLogo
 import com.dt.streamz.ui.brand.UpdateChip
 import androidx.compose.runtime.collectAsState
@@ -74,6 +76,78 @@ fun DtApp() {
 
     var route: Route by remember { mutableStateOf(Route.Tabs) }
 
+    // Remembered Sub/Dub choice. When a title offers both and the user has a
+    // saved preference, auto-pick it instead of showing the picker again.
+    val audioPrefs = remember { ctx.getSharedPreferences("ui", android.content.Context.MODE_PRIVATE) }
+    fun audioPref(): String? = audioPrefs.getString("audio_pref", null)
+    fun setAudioPref(v: String) { audioPrefs.edit().putString("audio_pref", v).apply() }
+
+    // Central source -> route: single source plays; a remembered Sub/Dub
+    // choice auto-picks its variant; otherwise show the picker. Empty toasts.
+    fun routeForSources(
+        label: String, sources: List<StreamSource>,
+        pid: String?, tid: String?, eid: String?, startMs: Long = 0,
+    ): Route {
+        if (sources.isEmpty()) {
+            Toast.makeText(ctx, "No source — title may be gone", Toast.LENGTH_SHORT).show()
+            return Route.Tabs
+        }
+        if (sources.size == 1) {
+            return playRouteFor(sources.first(), label, sources, pid, tid, eid, startMs)
+        }
+        audioPref()?.let { pref ->
+            val match = sources.firstOrNull { (it.serverLabel ?: "").contains(pref, ignoreCase = true) }
+            if (match != null) return playRouteFor(match, label, sources, pid, tid, eid, startMs)
+        }
+        return Route.SourcePicker(label, sources, pid, tid, eid, startMs)
+    }
+
+    // Record + resolve + route to a specific episode (fresh start, position 0).
+    // Checks the prefetch cache first so Next/auto-play feel instant.
+    suspend fun playEpisode(
+        pid: String, tid: String, ep: com.dt.streamz.data.Episode,
+        titleName: String, poster: String?, kindName: String?,
+    ) {
+        Toast.makeText(ctx, "▶ Ep ${ep.number}", Toast.LENGTH_SHORT).show()
+        app.continueWatching.record(
+            WatchEntry(
+                providerId = pid, titleId = tid, titleName = titleName, poster = poster,
+                episodeId = ep.id, episodeNumber = ep.number,
+                timestamp = System.currentTimeMillis(), kind = kindName,
+            ),
+        )
+        val sources = Binge.takeStreams(pid, tid, ep.id)
+            ?: runCatching { registry.get(pid).streams(tid, ep) }.getOrDefault(emptyList())
+        route = routeForSources("$titleName · Ep ${ep.number}", sources, pid, tid, ep.id)
+    }
+
+    // Resolve + play the episode [delta] steps from [r]'s current one
+    // (+1 = next, -1 = previous). Shared by the Next/Prev buttons (manual =
+    // true, toasts when there's nothing there) and auto-play-on-end
+    // (manual = false, +1, returns to tabs at the finale).
+    fun advanceEpisode(r: Route.Player, delta: Int, manual: Boolean) {
+        val pid = r.providerId
+        val tid = r.titleId
+        val eid = r.episodeId
+        if (pid == null || tid == null || eid == null) {
+            if (!manual) route = Route.Tabs
+            return
+        }
+        scope.launch {
+            val details = Binge.details(registry.get(pid), tid)
+            val eps = details?.episodes.orEmpty()
+            val idx = eps.indexOfFirst { it.id == eid }
+            val target = if (idx >= 0) eps.getOrNull(idx + delta) else null
+            if (target == null) {
+                val which = if (delta > 0) "next" else "previous"
+                if (manual) Toast.makeText(ctx, "No $which episode", Toast.LENGTH_SHORT).show()
+                else route = Route.Tabs
+                return@launch
+            }
+            playEpisode(pid, tid, target, details?.title ?: r.title, details?.poster, details?.kind?.name)
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -114,23 +188,37 @@ fun DtApp() {
                 },
                 onResume = { entry ->
                     scope.launch {
+                        // Up Next: if the saved episode is finished, roll into
+                        // the next one instead of replaying it.
+                        if (isFinished(entry)) {
+                            val details = Binge.details(registry.get(entry.providerId), entry.titleId)
+                            val eps = details?.episodes.orEmpty()
+                            val idx = eps.indexOfFirst { it.id == entry.episodeId }
+                            val next = if (idx >= 0) eps.getOrNull(idx + 1) else null
+                            if (next != null) {
+                                playEpisode(
+                                    entry.providerId, entry.titleId, next,
+                                    details?.title ?: entry.titleName,
+                                    details?.poster ?: entry.poster,
+                                    details?.kind?.name ?: entry.kind,
+                                )
+                                return@launch
+                            }
+                            // unknown next / last episode -> fall through to replay
+                        }
                         val ep = com.dt.streamz.data.Episode(
                             id = entry.episodeId,
                             number = entry.episodeNumber,
                             title = null,
                         )
+                        val resumeMs = resumeStartMs(entry, entry.episodeId)
                         runCatching {
                             registry.get(entry.providerId).streams(entry.titleId, ep)
                         }.onSuccess { sources ->
-                            val label = "${entry.titleName} · Ep ${entry.episodeNumber}"
-                            when {
-                                sources.isEmpty() -> Toast.makeText(
-                                    ctx, "No source — title may be gone",
-                                    Toast.LENGTH_SHORT,
-                                ).show()
-                                sources.size == 1 -> route = playRouteFor(sources.first(), label, sources)
-                                else -> route = Route.SourcePicker(label, sources)
-                            }
+                            route = routeForSources(
+                                "${entry.titleName} · Ep ${entry.episodeNumber}", sources,
+                                entry.providerId, entry.titleId, entry.episodeId, resumeMs,
+                            )
                         }.onFailure {
                             Log.w(TAG, "resume failed", it)
                             Toast.makeText(ctx, "Couldn't resume: ${it.message}", Toast.LENGTH_SHORT).show()
@@ -146,6 +234,9 @@ fun DtApp() {
                     titleId = r.titleId,
                     onPlayEpisode = { titleId, ep, providerId, titleName, poster, kind ->
                         scope.launch {
+                            // Resume if we left this exact episode partway through.
+                            val existing = app.continueWatching.find(providerId, titleId)
+                            val resumeMs = resumeStartMs(existing, ep.id)
                             app.continueWatching.record(
                                 WatchEntry(
                                     providerId = providerId,
@@ -156,19 +247,16 @@ fun DtApp() {
                                     episodeNumber = ep.number,
                                     timestamp = System.currentTimeMillis(),
                                     kind = kind.name,
+                                    positionMs = resumeMs,
+                                    durationMs = if (existing?.episodeId == ep.id) existing.durationMs else 0,
                                 ),
                             )
                             runCatching { registry.get(providerId).streams(titleId, ep) }
                                 .onSuccess { sources ->
-                                    val epLabel = "Ep ${ep.number}"
-                                    when {
-                                        sources.isEmpty() -> {
-                                            Log.w(TAG, "no playable source for $providerId/$titleId ep=${ep.number}")
-                                            Toast.makeText(ctx, "No playable source found", Toast.LENGTH_SHORT).show()
-                                        }
-                                        sources.size == 1 -> route = playRouteFor(sources.first(), epLabel, sources)
-                                        else -> route = Route.SourcePicker(epLabel, sources)
-                                    }
+                                    route = routeForSources(
+                                        "Ep ${ep.number}", sources,
+                                        providerId, titleId, ep.id, resumeMs,
+                                    )
                                 }
                                 .onFailure {
                                     Log.w(TAG, "streams() failed", it)
@@ -183,7 +271,21 @@ fun DtApp() {
                 SourcePickerScreen(
                     title = r.title,
                     sources = r.sources,
-                    onPick = { picked -> route = playRouteFor(picked, r.title, r.sources) },
+                    onPick = { picked ->
+                        // Remember Sub/Dub so we can skip the picker next time.
+                        val lbl = picked.serverLabel ?: ""
+                        when {
+                            lbl.contains("dub", ignoreCase = true) -> setAudioPref("Dub")
+                            lbl.contains("sub", ignoreCase = true) -> setAudioPref("Sub")
+                        }
+                        route = playRouteFor(
+                            picked, r.title, r.sources,
+                            providerId = r.providerId,
+                            titleId = r.titleId,
+                            episodeId = r.episodeId,
+                            startPositionMs = r.startPositionMs,
+                        )
+                    },
                 )
             }
             is Route.Player -> {
@@ -191,11 +293,38 @@ fun DtApp() {
                     Log.i(TAG, "BackHandler fired from PlayerScreen -> Tabs")
                     route = Route.Tabs
                 }
+                // Prefetch the next episode ~8s in (past this stream's startup)
+                // so Next / auto-play land instantly.
+                LaunchedEffect(r.providerId, r.titleId, r.episodeId) {
+                    val pid = r.providerId
+                    val tid = r.titleId
+                    val eid = r.episodeId
+                    if (pid != null && tid != null && eid != null) {
+                        kotlinx.coroutines.delay(8_000)
+                        Binge.prefetchNext(registry.get(pid), tid, eid)
+                    }
+                }
                 PlayerScreen(
                     url = r.url,
                     streamKind = r.kind,
                     title = r.title,
                     twitchChannel = r.twitchChannel,
+                    startPositionMs = r.startPositionMs,
+                    subtitles = r.subtitles,
+                    onProgress = { posMs, durMs ->
+                        val pid = r.providerId
+                        val tid = r.titleId
+                        val eid = r.episodeId
+                        if (pid != null && tid != null && eid != null) {
+                            scope.launch {
+                                app.continueWatching.updatePosition(pid, tid, eid, posMs, durMs)
+                            }
+                        }
+                    },
+                    showNextButton = r.episodeId != null,
+                    onNext = { advanceEpisode(r, delta = 1, manual = true) },
+                    onPrev = { advanceEpisode(r, delta = -1, manual = true) },
+                    onEnded = { advanceEpisode(r, delta = 1, manual = false) },
                     onExit = {
                         Log.i(TAG, "PlayerScreen.onExit() called -> Tabs")
                         route = Route.Tabs
@@ -274,6 +403,7 @@ private fun TabsDestination(
                 onOpenTitle = onOpenTitle,
                 onResume = onResume,
                 onRemoveContinue = onRemoveContinue,
+                showMustWatch = true,
             )
             Section.Anime -> HomeScreen(
                 title = "Anime",
@@ -297,6 +427,7 @@ private fun TabsDestination(
                 onOpenTitle = onOpenTitle,
                 onResume = onResume,
                 onRemoveContinue = onRemoveContinue,
+                showMustWatch = true,
             )
             Section.TV -> HomeScreen(
                 title = "TV Shows",
@@ -309,6 +440,7 @@ private fun TabsDestination(
                 onOpenTitle = onOpenTitle,
                 onResume = onResume,
                 onRemoveContinue = onRemoveContinue,
+                showMustWatch = true,
             )
             Section.YouTube -> YouTubeTabScreen(
                 registry = app.providerRegistry,
@@ -397,10 +529,23 @@ private fun playRouteFor(
     source: StreamSource,
     label: String,
     siblings: List<StreamSource> = emptyList(),
+    providerId: String? = null,
+    titleId: String? = null,
+    episodeId: String? = null,
+    startPositionMs: Long = 0,
 ): Route = when (source.kind) {
     StreamKind.Hls,
     StreamKind.Mp4,
-    StreamKind.Dash -> Route.Player(source.url, label, kind = source.kind)
+    StreamKind.Dash -> Route.Player(
+        url = source.url,
+        title = label,
+        kind = source.kind,
+        providerId = providerId,
+        titleId = titleId,
+        episodeId = episodeId,
+        startPositionMs = startPositionMs,
+        subtitles = source.subtitles,
+    )
     StreamKind.DirectEmbed -> {
         // Auto-fallback list = every other DirectEmbed source we know
         // about, preserving the provider's intent order. Lets WebPlayer
@@ -411,5 +556,23 @@ private fun playRouteFor(
         Route.WebPlayer(source.url, label, source.headers, fallbacks)
     }
 }
+
+// Resume thresholds: ignore a saved position under 10s (barely started),
+// and treat anything within 20s of the end as finished — both start fresh.
+private const val RESUME_MIN_MS = 10_000L
+private const val RESUME_END_GUARD_MS = 20_000L
+
+private fun resumeStartMs(entry: WatchEntry?, episodeId: String): Long {
+    if (entry == null || entry.episodeId != episodeId) return 0
+    val pos = entry.positionMs
+    if (pos < RESUME_MIN_MS) return 0
+    val dur = entry.durationMs
+    if (dur > 0 && pos > dur - RESUME_END_GUARD_MS) return 0
+    return pos
+}
+
+/** True when the saved episode was watched (essentially) to the end. */
+private fun isFinished(entry: WatchEntry): Boolean =
+    entry.durationMs > 0 && entry.positionMs > entry.durationMs - RESUME_END_GUARD_MS
 
 private const val TAG = "DtApp"

@@ -8,6 +8,8 @@ import com.dt.streamz.scraper.Provider
 import com.dt.streamz.scraper.ProviderRegistry
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -66,12 +68,13 @@ class SearchViewModel(
         _state.value = SearchState.Loading
         activeJob = viewModelScope.launch {
             val providers: List<Provider> = registry.all
-            val merged = mutableListOf<SearchResult>()
-            for (p in providers) {
-                runCatching { p.search(q) }
-                    .onSuccess { merged.addAll(it) }
-                    .onFailure { _state.value = SearchState.Error(it.message ?: "search failed") }
-            }
+            // Query every provider in parallel — serial was N round-trips of
+            // latency stacked end to end. A provider that throws contributes
+            // nothing rather than failing the whole search.
+            val merged = providers
+                .map { p -> async { runCatching { p.search(q) }.getOrDefault(emptyList()) } }
+                .awaitAll()
+                .flatten()
             _state.value = SearchState.Loaded(merged)
         }
     }

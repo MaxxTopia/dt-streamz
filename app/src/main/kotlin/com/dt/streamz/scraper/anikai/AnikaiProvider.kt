@@ -41,11 +41,20 @@ class AnikaiProvider(
     override val supportsAnime = true
 
     override suspend fun browse(): List<SearchResult> = withContext(Dispatchers.IO) {
-        // Home-page of anikai is entirely JS-rendered; no server HTML to
-        // scrape. Use the search endpoint with a rotating set of popular
-        // anime keywords and merge the results as a "Latest" feed. Not
-        // truly "latest" but gives the tab something to show without
-        // spinning up the hidden WebView on every tab open.
+        // Preferred: the site's real "recently updated" feed. The homepage is
+        // JS-rendered + Cloudflare-gated so a static GET can't read it — render
+        // it in the hidden WebView and reuse the same .aitem parser the search
+        // endpoint uses. BrowseCache memoizes this for 5 min, so the WebView
+        // only spins up once per window, not on every tab open.
+        resolver?.let { r ->
+            val html = runCatching { r.renderHtml("$SITE/home") }.getOrNull()
+            if (html != null) {
+                val recent = parseSearchHtml(html).take(24)
+                if (recent.isNotEmpty()) return@withContext recent
+            }
+        }
+        // Fallback (no resolver, render failed, or empty): seed-search the
+        // popular keywords — never worse than the prior behavior.
         val seen = mutableSetOf<String>()
         val merged = mutableListOf<SearchResult>()
         for (seed in BROWSE_SEEDS) {
@@ -120,20 +129,34 @@ class AnikaiProvider(
             episode.id.startsWith("/") -> "$SITE${episode.id}"
             else -> "$SITE/watch/$titleId?ep=${episode.number}"
         }
-        val streamUrl = r.captureStreamUrl(watchUrl) ?: return emptyList()
+
+        val out = mutableListOf<StreamSource>()
+        // Sub (default audio) — same single capture as before.
+        val subUrl = r.captureStreamUrl(watchUrl, dub = false)
+        subUrl?.let { out.add(toSource(it, "anikai · Sub")) }
+
+        // Dub — only attempt the extra capture for titles the listing tagged
+        // as dubbed (Aniwave-style audio-type switch). If it resolves to a
+        // different stream than sub, offer it as a second pick. If it fails,
+        // the user simply gets Sub — no regression.
+        if (titleId in dubSlugs) {
+            val dubUrl = r.captureStreamUrl(watchUrl, dub = true)
+            if (dubUrl != null && dubUrl != subUrl) out.add(toSource(dubUrl, "anikai · Dub"))
+        }
+        return out
+    }
+
+    private fun toSource(streamUrl: String, label: String): StreamSource {
         val kind = if (streamUrl.contains(".m3u8", ignoreCase = true)) StreamKind.Hls
         else StreamKind.DirectEmbed
-        return listOf(
-            StreamSource(
-                url = streamUrl,
-                kind = kind,
-                serverLabel = "anikai",
-                // megacloud / megaup embeds reject empty or wrong referers.
-                // For HLS we don't strictly need this (ExoPlayer DataSource
-                // builds its own request), but for DirectEmbed the WebView
-                // will pass it through.
-                headers = mapOf("Referer" to "$SITE/"),
-            ),
+        return StreamSource(
+            url = streamUrl,
+            kind = kind,
+            serverLabel = label,
+            // megacloud / megaup embeds reject empty or wrong referers. For
+            // HLS we don't strictly need this (ExoPlayer builds its own
+            // request), but for DirectEmbed the WebView passes it through.
+            headers = mapOf("Referer" to "$SITE/"),
         )
     }
 
@@ -166,6 +189,7 @@ class AnikaiProvider(
             val title = H_TITLE.find(block)?.groupValues?.get(1)?.let(::decodeEntities) ?: continue
             val year = YEAR.findAll(block).map { it.value.toIntOrNull() }.firstOrNull { it != null && it in 1900..2099 }
             val hasDub = DUB_SPAN.containsMatchIn(block)
+            if (hasDub) dubSlugs.add(slug)
             val result = SearchResult(
                 providerId = id,
                 id = slug,
@@ -214,5 +238,9 @@ class AnikaiProvider(
         )
 
         private val searchCache = mutableMapOf<String, SearchResult>()
+
+        // Slugs the listing flagged with a dub badge (class="dub"). streams()
+        // only spends the extra dub capture on these.
+        private val dubSlugs = mutableSetOf<String>()
     }
 }

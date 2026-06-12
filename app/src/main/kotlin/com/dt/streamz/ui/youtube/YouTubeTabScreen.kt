@@ -36,6 +36,7 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import com.dt.streamz.data.SearchResult
+import com.dt.streamz.scraper.BrowseCache
 import com.dt.streamz.scraper.Provider
 import com.dt.streamz.scraper.ProviderRegistry
 import com.dt.streamz.ui.search.SearchEditorDialog
@@ -82,7 +83,7 @@ fun YouTubeTabScreen(
         // seconds on filtered networks while it retries YouTube's
         // anti-bot endpoints. Fail fast and let the user search instead.
         trending = runCatching {
-            kotlinx.coroutines.withTimeoutOrNull(5_000) { provider.browse() } ?: emptyList()
+            kotlinx.coroutines.withTimeoutOrNull(5_000) { BrowseCache.browse(provider) } ?: emptyList()
         }.getOrDefault(emptyList())
     }
 
