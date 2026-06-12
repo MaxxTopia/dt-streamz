@@ -22,11 +22,6 @@ jobs:
 
       - name: Build release APK
         run: ./gradlew :app:assembleRelease
-        env:
-          # TMDb key for the Must Watch row, injected from repo secrets so it
-          # isn't committed. build.gradle.kts reads TMDB_API_KEY from the env
-          # when local.properties is absent (as it is on CI).
-          TMDB_API_KEY: ${{ secrets.TMDB_API_KEY }}
 
       - name: Rename APK
         run: mv app/build/outputs/apk/release/app-release.apk dt-streamz.apk

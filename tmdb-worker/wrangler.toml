@@ -1,0 +1,7 @@
+name = "dt-streamz-tmdb"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+account_id = "98ca5ae76db3b442988d9bec91a63f04"
+
+# TMDB_API_KEY is set as a secret, not here:
+#   echo <key> | npx wrangler secret put TMDB_API_KEY

@@ -1,20 +1,8 @@
-import java.util.Properties
-
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
-}
-
-// TMDb API key for the "Must Watch / Trending" row. Read from local.properties
-// (gitignored) or the TMDB_API_KEY env var so the key never lands in source
-// control. Absent key -> empty string -> the trending row hides itself.
-val tmdbApiKey: String = run {
-    val props = Properties()
-    val f = rootProject.file("local.properties")
-    if (f.exists()) f.inputStream().use { props.load(it) }
-    props.getProperty("TMDB_API_KEY") ?: System.getenv("TMDB_API_KEY") ?: ""
 }
 
 android {
@@ -30,8 +18,6 @@ android {
         targetSdk = 35
         versionCode = 14
         versionName = "0.4.0"
-
-        buildConfigField("String", "TMDB_API_KEY", "\"$tmdbApiKey\"")
     }
 
     signingConfigs {

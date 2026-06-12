@@ -1,7 +1,6 @@
 package com.dt.streamz.scraper.tmdb
 
 import android.util.Log
-import com.dt.streamz.BuildConfig
 import com.dt.streamz.data.Episode
 import com.dt.streamz.data.MediaKind
 import com.dt.streamz.data.SearchResult
@@ -42,9 +41,7 @@ import okhttp3.Request
  * Title ids are composite: "movie/<tmdbId>" or "tv/<tmdbId>", so details()
  * and streams() know the media type without another lookup.
  */
-class TmdbProvider(
-    private val apiKey: String = BuildConfig.TMDB_API_KEY,
-) : Provider {
+class TmdbProvider : Provider {
 
     override val id = "tmdb"
     override val displayName = "Must Watch"
@@ -54,11 +51,8 @@ class TmdbProvider(
     override val supportsAnime = false
     override val supportsMovies = false
 
-    fun isEnabled(): Boolean = apiKey.isNotBlank()
-
     /** Trending-this-week ∪ now-playing, deduped — the viral/new feed. */
     override suspend fun browse(): List<SearchResult> = withContext(Dispatchers.IO) {
-        if (apiKey.isBlank()) return@withContext emptyList()
         val seen = mutableSetOf<String>()
         val out = mutableListOf<SearchResult>()
         for (path in listOf("trending/all/week", "movie/now_playing", "tv/on_the_air")) {
@@ -77,7 +71,7 @@ class TmdbProvider(
 
     override suspend fun details(titleId: String): TitleDetails = withContext(Dispatchers.IO) {
         val (mediaType, tmdbId) = parseId(titleId)
-        val obj = getJson("$API/$mediaType/$tmdbId?api_key=$apiKey&language=en-US")
+        val obj = getJson("$API/$mediaType/$tmdbId?language=en-US")
             ?: return@withContext stub(titleId, "TMDb lookup failed — try again.")
 
         val isMovie = mediaType == "movie"
@@ -142,7 +136,7 @@ class TmdbProvider(
 
     private fun fetchResults(path: String): List<SearchResult> {
         val sep = if (path.contains("?")) "&" else "?"
-        val obj = getJson("$API/$path$sep" + "api_key=$apiKey&language=en-US&page=1") ?: return emptyList()
+        val obj = getJson("$API/$path$sep" + "language=en-US&page=1") ?: return emptyList()
         val arr = obj["results"] as? JsonArray ?: return emptyList()
         return arr.mapNotNull { el ->
             val o = el as? JsonObject ?: return@mapNotNull null
@@ -180,7 +174,7 @@ class TmdbProvider(
             ?: return@coroutineScope listOf(Episode(id = "s1e1", number = 1, title = null))
         val perSeason = seasons.map { s ->
             async(Dispatchers.IO) {
-                val obj = getJson("$API/tv/$tmdbId/season/$s?api_key=$apiKey&language=en-US")
+                val obj = getJson("$API/tv/$tmdbId/season/$s?language=en-US")
                 val eps = (obj?.get("episodes") as? JsonArray).orEmptyArray()
                 eps.mapNotNull { el ->
                     val e = el as? JsonObject ?: return@mapNotNull null
@@ -233,7 +227,9 @@ class TmdbProvider(
 
     companion object {
         private const val TAG = "TmdbProvider"
-        private const val API = "https://api.themoviedb.org/3"
+        // TMDb is reached through our Cloudflare Worker proxy, which holds
+        // the API key server-side — so no key ships in the APK.
+        private const val API = "https://dt-streamz-tmdb.maxxtopia.workers.dev/3"
         private const val POSTER = "https://image.tmdb.org/t/p/w342"
         private const val BACKDROP = "https://image.tmdb.org/t/p/w780"
         private const val MAX_ROW = 30
