@@ -52,7 +52,10 @@ internal class PipedClient {
     suspend fun search(query: String): List<PipedVideo>? = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext emptyList()
         val q = URLEncoder.encode(query, "UTF-8")
-        val raw = call("/search?q=$q&filter=videos") ?: return@withContext null
+        // filter=all (not videos) so currently-live broadcasts come back too
+        // — the `videos` filter drops them. asPipedVideo() keeps only
+        // type=="stream" items, so channels/playlists are still dropped.
+        val raw = call("/search?q=$q&filter=all") ?: return@withContext null
         val obj = runCatching { Http.json.parseToJsonElement(raw).jsonObject }.getOrNull()
             ?: return@withContext null
         val items = obj["items"] as? JsonArray ?: return@withContext null
@@ -131,12 +134,18 @@ internal class PipedClient {
         val thumb = obj["thumbnail"]?.jsonPrimitive?.contentOrNull
         val uploader = obj["uploaderName"]?.jsonPrimitive?.contentOrNull
         val duration = obj["duration"]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
+        // Piped marks live broadcasts with duration == -1 (and some instances
+        // also set an explicit `livestream`/`isShort` flag). duration < 0 is
+        // the reliable cross-instance signal.
+        val live = (duration != null && duration < 0) ||
+            obj["livestream"]?.jsonPrimitive?.contentOrNull == "true"
         return PipedVideo(
             videoId = videoId,
             title = title,
             thumbnail = thumb,
             uploaderName = uploader,
             durationSeconds = duration,
+            isLive = live,
         )
     }
 
@@ -204,6 +213,7 @@ internal data class PipedVideo(
     val thumbnail: String?,
     val uploaderName: String?,
     val durationSeconds: Long?,
+    val isLive: Boolean = false,
 )
 
 internal data class PipedStreams(

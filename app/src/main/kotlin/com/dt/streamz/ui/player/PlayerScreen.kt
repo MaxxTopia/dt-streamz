@@ -3,6 +3,7 @@
 package com.dt.streamz.ui.player
 
 import android.net.Uri
+import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
 import androidx.compose.foundation.background
@@ -58,6 +59,9 @@ import kotlinx.coroutines.delay
 /** How often we persist the resume position while a stream is playing. */
 private const val PROGRESS_SAVE_INTERVAL_MS = 10_000L
 
+/** Transport-controller (and overlay-chip) auto-hide delay after last input. */
+private const val CONTROLLER_TIMEOUT_MS = 4_000
+
 @Composable
 fun PlayerScreen(
     url: String,
@@ -77,6 +81,13 @@ fun PlayerScreen(
     val monitor = (context.applicationContext as? DtApplication)?.networkMonitor
     var chatOpen by remember(twitchChannel) { mutableStateOf(twitchChannel != null) }
     var speedIdx by remember { mutableStateOf(SPEEDS.indexOf(1f)) }
+
+    // The speed / Next / Prev chips ride along with the player's transport
+    // controls: they appear when the controller is shown (any remote
+    // interaction) and vanish with it after CONTROLLER_TIMEOUT_MS of no
+    // input — instead of sitting on screen the whole time.
+    var controlsVisible by remember { mutableStateOf(false) }
+    var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
 
     // Keep the latest callbacks without restarting the player/effects.
     val onProgressCb by rememberUpdatedState(onProgress)
@@ -175,31 +186,50 @@ fun PlayerScreen(
                         this.player = player
                         useController = true
                         controllerAutoShow = true
+                        controllerShowTimeoutMs = CONTROLLER_TIMEOUT_MS
                         setShowNextButton(false)
                         setShowPreviousButton(false)
                         // Keep subtitles visible if a track is selected.
                         setShowSubtitleButton(subtitles.isNotEmpty())
+                        // Drive the overlay chips off the controller's own
+                        // show/hide so they share its auto-hide timeout.
+                        setControllerVisibilityListener(
+                            PlayerView.ControllerVisibilityListener { visibility ->
+                                controlsVisible = visibility == View.VISIBLE
+                            },
+                        )
+                        playerViewRef = this
                     }
                 },
                 update = { view -> view.player = player },
-                onRelease = { view -> view.player = null },
+                onRelease = { view ->
+                    view.player = null
+                    if (playerViewRef === view) playerViewRef = null
+                },
             )
             // D-pad-reachable controls, top-right under the status indicators.
             // Next/Prev = manual outro skip + go back an episode (episodic only);
-            // speed cycles 0.5x-2x.
-            Column(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 56.dp, end = 16.dp),
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                if (showNextButton) {
-                    PlayerChip("Next ▶|", onClick = onNext)
-                    PlayerChip("⏮ Prev", onClick = onPrev)
-                }
-                PlayerChip(speedLabel(SPEEDS[speedIdx])) {
-                    speedIdx = (speedIdx + 1) % SPEEDS.size
+            // speed cycles 0.5x-2x. Shown only while the transport controller
+            // is up; focusing a chip re-shows the controller so navigating the
+            // chips doesn't let them time out mid-interaction.
+            if (controlsVisible) {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 56.dp, end = 16.dp),
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    val keepAlive: () -> Unit = { playerViewRef?.showController() }
+                    if (showNextButton) {
+                        PlayerChip("Next ▶|", onClick = onNext, onFocused = keepAlive)
+                        PlayerChip("⏮ Prev", onClick = onPrev, onFocused = keepAlive)
+                    }
+                    PlayerChip(
+                        speedLabel(SPEEDS[speedIdx]),
+                        onClick = { speedIdx = (speedIdx + 1) % SPEEDS.size },
+                        onFocused = keepAlive,
+                    )
                 }
             }
         }
@@ -221,11 +251,14 @@ private fun speedLabel(s: Float): String =
     (if (s % 1f == 0f) s.toInt().toString() else s.toString()) + "× speed"
 
 @Composable
-private fun PlayerChip(label: String, onClick: () -> Unit) {
+private fun PlayerChip(label: String, onClick: () -> Unit, onFocused: () -> Unit = {}) {
     var focused by remember { mutableStateOf(false) }
     Surface(
         onClick = onClick,
-        modifier = Modifier.onFocusChanged { focused = it.isFocused },
+        modifier = Modifier.onFocusChanged {
+            focused = it.isFocused
+            if (it.isFocused) onFocused()
+        },
         colors = ClickableSurfaceDefaults.colors(
             containerColor = Color.Black.copy(alpha = 0.55f),
             focusedContainerColor = Color.White.copy(alpha = 0.92f),

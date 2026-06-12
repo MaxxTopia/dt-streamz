@@ -9,6 +9,8 @@ data class SearchResult(
     val poster: String?,
     val year: Int? = null,
     val kind: MediaKind,
+    /** True for an in-progress live broadcast (currently YouTube only). */
+    val isLive: Boolean = false,
 )
 
 data class TitleDetails(

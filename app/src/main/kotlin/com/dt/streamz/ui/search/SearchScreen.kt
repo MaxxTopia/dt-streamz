@@ -203,6 +203,29 @@ private fun RecentChip(label: String, onClick: () -> Unit) {
 }
 
 @Composable
+private fun SuggestionChip(label: String, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.onFocusChanged { focused = it.isFocused },
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            focusedContainerColor = MaterialTheme.colorScheme.primary,
+        ),
+        shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(16.dp)),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 1,
+            color = if (focused) MaterialTheme.colorScheme.onPrimary
+            else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+        )
+    }
+}
+
+@Composable
 private fun SearchBarCard(query: String, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     Surface(
@@ -258,8 +281,12 @@ internal fun SearchEditorDialog(
     onSubmit: (String) -> Unit,
     liveResultCount: Int? = null,
     onLiveQuery: (String) -> Unit = {},
+    // Optional type-ahead source (YouTube tab passes the provider's
+    // autocomplete). When null, no suggestion row renders.
+    suggestionsProvider: (suspend (String) -> List<String>)? = null,
 ) {
     var text by remember { mutableStateOf(initialQuery) }
+    var suggestions by remember { mutableStateOf<List<String>>(emptyList()) }
     val firstKeyFocus = remember { FocusRequester() }
 
     LaunchedEffect(Unit) {
@@ -269,6 +296,19 @@ internal fun SearchEditorDialog(
     // Search-as-you-type: push each change to the VM (which debounces) so
     // results are already warm when the dialog closes.
     LaunchedEffect(text) { onLiveQuery(text) }
+
+    // Debounced autocomplete fetch. Re-keys on every keystroke; the 250ms
+    // delay collapses bursts so we don't fire a request per letter.
+    LaunchedEffect(text, suggestionsProvider) {
+        val provider = suggestionsProvider
+        val q = text.trim()
+        if (provider == null || q.length < 2) {
+            suggestions = emptyList()
+            return@LaunchedEffect
+        }
+        kotlinx.coroutines.delay(250)
+        suggestions = runCatching { provider(q) }.getOrDefault(emptyList())
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -362,6 +402,21 @@ internal fun SearchEditorDialog(
                         onClick = { text = "" },
                         modifier = Modifier.weight(1f),
                     )
+                }
+
+                // Type-ahead suggestions (YouTube tab). OK on a chip runs that
+                // exact query — saves pecking the rest out on the grid keyboard.
+                if (suggestions.isNotEmpty()) {
+                    Text(
+                        text = "Suggestions",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    )
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        lazyRowItems(suggestions) { s ->
+                            SuggestionChip(label = s, onClick = { onSubmit(s) })
+                        }
+                    }
                 }
 
                 if (liveResultCount != null && text.trim().length >= 2) {

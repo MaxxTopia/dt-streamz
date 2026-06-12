@@ -170,6 +170,7 @@ fun YouTubeTabScreen(
                 editorOpen = false
                 runSearch(text)
             },
+            suggestionsProvider = { provider.suggest(it) },
         )
     }
 }
@@ -325,6 +326,22 @@ private fun VideoCard(
                         contentDescription = result.title,
                         modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(8.dp)),
                     )
+                }
+                if (result.isLive) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(6.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xFFFF0000))
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                    ) {
+                        Text(
+                            text = "● LIVE",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White,
+                        )
+                    }
                 }
             }
         }

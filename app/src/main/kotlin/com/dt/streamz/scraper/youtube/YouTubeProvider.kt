@@ -10,6 +10,8 @@ import com.dt.streamz.diag.DebugLog
 import com.dt.streamz.scraper.Provider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
@@ -71,20 +73,57 @@ class YouTubeProvider : Provider {
     override suspend fun search(query: String): List<SearchResult> = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext emptyList()
 
-        // Tier 1: Piped search.
+        // Tier 1: Piped search. Live broadcasts sort to the top so a
+        // currently-live channel you searched for leads the results.
         val piped = runCatching { piped.search(query) }.getOrNull()
         if (!piped.isNullOrEmpty()) {
-            return@withContext piped.map { it.toSearchResult() }
+            return@withContext piped
+                .sortedByDescending { it.isLive }
+                .map { it.toSearchResult() }
         }
         DebugLog.i(TAG, "Piped search($query) empty/null — falling back to NewPipeExtractor")
 
         // Tier 2: NewPipeExtractor search.
         runCatching {
-            val extractor = service.getSearchExtractor(query, listOf("videos"), "")
+            val extractor = service.getSearchExtractor(query, listOf("all"), "")
             extractor.fetchPage()
             val items = extractor.initialPage.items.orEmpty()
-            items.filterIsInstance<StreamInfoItem>().map { it.toSearchResult() }
+            items.filterIsInstance<StreamInfoItem>()
+                .sortedByDescending { it.streamType == org.schabi.newpipe.extractor.stream.StreamType.LIVE_STREAM }
+                .map { it.toSearchResult() }
         }.onFailure { DebugLog.w(TAG, "NewPipe search($query) failed", it) }.getOrDefault(emptyList())
+    }
+
+    /**
+     * Type-ahead suggestions from Google's public YouTube autocomplete
+     * endpoint (the `client=firefox` shape returns clean JSON instead of
+     * JSONP). Returns `["query", ["sug1", "sug2", ...]]`; we surface the
+     * suggestion strings. Best-effort: any failure yields an empty list so
+     * the search box just shows nothing rather than erroring.
+     */
+    override suspend fun suggest(query: String): List<String> = withContext(Dispatchers.IO) {
+        val q = query.trim()
+        if (q.length < 2) return@withContext emptyList()
+        val encoded = java.net.URLEncoder.encode(q, "UTF-8")
+        val url = "https://suggestqueries.google.com/complete/search" +
+            "?client=firefox&ds=yt&q=$encoded"
+        val body = runCatching {
+            val req = okhttp3.Request.Builder()
+                .url(url)
+                .header("User-Agent", com.dt.streamz.scraper.Http.DESKTOP_UA)
+                .build()
+            com.dt.streamz.scraper.Http.client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@use null
+                resp.body?.string()
+            }
+        }.getOrNull() ?: return@withContext emptyList()
+        runCatching {
+            val arr = com.dt.streamz.scraper.Http.json
+                .parseToJsonElement(body) as kotlinx.serialization.json.JsonArray
+            (arr.getOrNull(1) as? kotlinx.serialization.json.JsonArray).orEmpty()
+                .mapNotNull { it.jsonPrimitive.contentOrNull }
+                .take(8)
+        }.getOrDefault(emptyList())
     }
 
     override suspend fun details(titleId: String): TitleDetails = withContext(Dispatchers.IO) {
@@ -248,6 +287,7 @@ class YouTubeProvider : Provider {
             poster = thumbnail,
             year = null,
             kind = MediaKind.Movie,
+            isLive = isLive,
         )
         cache[videoId] = CachedItem(title, thumbnail)
         return r
@@ -263,6 +303,7 @@ class YouTubeProvider : Provider {
             poster = poster,
             year = null,
             kind = MediaKind.Movie,
+            isLive = streamType == org.schabi.newpipe.extractor.stream.StreamType.LIVE_STREAM,
         )
         cache[videoId] = CachedItem(name ?: videoId, poster)
         return r

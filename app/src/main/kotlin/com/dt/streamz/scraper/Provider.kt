@@ -20,4 +20,7 @@ interface Provider {
 
     /** Optional: latest / featured items for the Home browse rows. Default is empty. */
     suspend fun browse(): List<SearchResult> = emptyList()
+
+    /** Optional: type-ahead query suggestions for the search box. Default none. */
+    suspend fun suggest(query: String): List<String> = emptyList()
 }

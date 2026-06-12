@@ -357,7 +357,11 @@ fun DtApp() {
         val update by app.availableUpdate.collectAsState()
         UpdateChip(update = update)
         NetworkIndicator(monitor = app.networkMonitor)
-        DtLogo()
+        // Hide the DT watermark while a video is on screen — it shouldn't
+        // sit over playback. NetworkIndicator stays (it self-hides when the
+        // connection is healthy and is useful mid-stream).
+        val watching = route is Route.Player || route is Route.WebPlayer
+        if (!watching) DtLogo()
     }
     }
 }
