@@ -6,9 +6,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -61,6 +63,30 @@ object Telemetry {
                 Http.client.newCall(req).execute().use { /* fire and forget */ }
             }.onFailure { DebugLog.d(TAG, "telemetry post failed: ${it.message}") }
         }
+    }
+
+    /**
+     * Manually upload the full in-app debug log for remote diagnosis.
+     * Triggered by a Settings button — NOT gated on [enabledFlag], because
+     * the user explicitly asked to send it (the auto-report opt-out only
+     * governs the silent failure pings). Stored as a single `debug_dump`
+     * event the triage endpoint can return. Returns true on a 2xx.
+     */
+    suspend fun sendDebugLog(lines: List<String>): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            val obj = JSONObject()
+            obj.put("kind", "debug_dump")
+            obj.put("app", appVersion)
+            obj.put("count", lines.size)
+            val arr = JSONArray()
+            lines.forEach { arr.put(it) }
+            obj.put("lines", arr)
+            val req = Request.Builder()
+                .url(URL)
+                .post(obj.toString().toRequestBody(jsonMedia))
+                .build()
+            Http.client.newCall(req).execute().use { it.isSuccessful }
+        }.getOrDefault(false)
     }
 
     private const val TAG = "Telemetry"

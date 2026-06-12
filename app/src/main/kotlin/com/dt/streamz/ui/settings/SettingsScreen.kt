@@ -182,6 +182,29 @@ fun SettingsScreen() {
                 actionLabel = "Open",
             ),
         )
+        add(
+            SettingItem(
+                title = "Send debug log to cloud",
+                subtitle = "Upload the last ${DebugLog.snapshot().size} log lines for remote diagnosis. Failure trace only — no viewing data. Do this right after a stream/anime/movie fails.",
+                action = {
+                    val snapshot = DebugLog.snapshot()
+                    if (snapshot.isEmpty()) {
+                        Toast.makeText(ctx, "Log empty — reproduce the failure first", Toast.LENGTH_SHORT).show()
+                    } else {
+                        Toast.makeText(ctx, "Uploading ${snapshot.size} lines…", Toast.LENGTH_SHORT).show()
+                        scope.launch {
+                            val ok = com.dt.streamz.diag.Telemetry.sendDebugLog(snapshot)
+                            Toast.makeText(
+                                ctx,
+                                if (ok) "Log uploaded ✓" else "Upload failed — check the box's connection",
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                    }
+                },
+                actionLabel = "Upload",
+            ),
+        )
     }
 
     Column(
