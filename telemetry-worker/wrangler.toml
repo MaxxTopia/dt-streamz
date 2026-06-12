@@ -1,0 +1,11 @@
+name = "dt-streamz-telemetry"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+account_id = "98ca5ae76db3b442988d9bec91a63f04"
+
+[[kv_namespaces]]
+binding = "TELEMETRY"
+id = "b8ef48d37e4449dda4e8d7ad4580950c"
+
+# REPORT_TOKEN (for the triage GET) is a secret, set via the CF API:
+#   PUT .../workers/scripts/dt-streamz-telemetry/secrets  {name,text,type}

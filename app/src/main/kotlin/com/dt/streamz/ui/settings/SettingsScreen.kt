@@ -50,6 +50,7 @@ fun SettingsScreen() {
     val pinnedChannels by app.pinnedChannels.channels.collectAsState(initial = emptyList())
 
     var blockerEnabled by remember { mutableStateOf(app.hostBlocker.enabled()) }
+    var telemetryEnabled by remember { mutableStateOf(com.dt.streamz.diag.Telemetry.isEnabled()) }
     var debugLogOpen by remember { mutableStateOf(false) }
 
     val items = buildList<SettingItem> {
@@ -151,6 +152,26 @@ fun SettingsScreen() {
                 title = "Scraper providers",
                 subtitle = app.providerRegistry.all.joinToString(", ") { it.displayName },
                 action = null,
+            ),
+        )
+        add(
+            SettingItem(
+                title = "Auto error reports",
+                subtitle = if (telemetryEnabled)
+                    "ON · failed streams are reported automatically so dead sources can be fixed. No viewing data."
+                else
+                    "OFF · nothing is sent. Use 'View debug log' + screenshot to report issues instead.",
+                action = {
+                    val next = !telemetryEnabled
+                    com.dt.streamz.diag.Telemetry.setEnabled(ctx, next)
+                    telemetryEnabled = next
+                    Toast.makeText(
+                        ctx,
+                        if (next) "Auto error reports ON" else "Auto error reports OFF",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                },
+                actionLabel = "Toggle",
             ),
         )
         add(

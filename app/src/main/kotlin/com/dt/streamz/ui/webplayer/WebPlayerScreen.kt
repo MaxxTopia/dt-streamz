@@ -173,6 +173,24 @@ fun WebPlayerScreen(
         mainFrameHost = hostOf(activeUrl)
     }
 
+    // Auto-report a fully-failed playback (all mirrors exhausted) so dead
+    // embeds surface without the user screenshotting the debug log.
+    LaunchedEffect(loadState) {
+        val f = loadState
+        if (f is LoadState.Failed) {
+            com.dt.streamz.diag.Telemetry.report(
+                "playback_failed",
+                mapOf(
+                    "embed" to hostOf(embedUrl),
+                    "mirrors" to totalMirrors,
+                    "code" to f.errorCode,
+                    "reason" to f.reason.take(140),
+                    "blocked" to blockedHosts.joinToString(",").take(200).ifBlank { null },
+                ),
+            )
+        }
+    }
+
     // Pre-flight: if this mirror's host has been marked dead this session
     // (transport err on a prior pick), skip it without waiting for a
     // 20-second timeout to confirm the obvious. Walks forward until we

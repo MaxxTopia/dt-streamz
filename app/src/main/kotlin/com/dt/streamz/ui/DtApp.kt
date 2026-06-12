@@ -90,6 +90,10 @@ fun DtApp() {
     ): Route {
         if (sources.isEmpty()) {
             Toast.makeText(ctx, "No source — title may be gone", Toast.LENGTH_SHORT).show()
+            com.dt.streamz.diag.Telemetry.report(
+                "no_source",
+                mapOf("provider" to pid, "title" to tid, "episode" to eid, "label" to label),
+            )
             return Route.Tabs
         }
         if (sources.size == 1) {

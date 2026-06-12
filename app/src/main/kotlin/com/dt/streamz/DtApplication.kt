@@ -83,6 +83,7 @@ class DtApplication : Application(), SingletonImageLoader.Factory {
 
     override fun onCreate() {
         super.onCreate()
+        com.dt.streamz.diag.Telemetry.init(this, BuildConfig.VERSION_NAME)
         scraperConfig = ScraperConfigLoader(this)
         appScope.launch { scraperConfig.loadCachedThenRefresh() }
 
