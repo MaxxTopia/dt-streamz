@@ -1,21 +1,14 @@
 package com.dt.streamz.scraper.anikai
 
-import android.util.Log
 import com.dt.streamz.data.Episode
 import com.dt.streamz.data.MediaKind
 import com.dt.streamz.data.SearchResult
 import com.dt.streamz.data.StreamKind
 import com.dt.streamz.data.StreamSource
 import com.dt.streamz.data.TitleDetails
-import com.dt.streamz.scraper.Http
 import com.dt.streamz.scraper.Provider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.Request
 
 /**
  * anikai.to / animekai — primary anime source since 2026 after 9animetv
@@ -53,11 +46,13 @@ class AnikaiProvider(
                 if (recent.isNotEmpty()) return@withContext recent
             }
         }
-        // Fallback (no resolver, render failed, or empty): seed-search the
-        // popular keywords — never worse than the prior behavior.
+        // Fallback (no resolver, render failed, or empty): seed-search a
+        // couple popular keywords. Capped tight because search() now spins
+        // up the hidden WebView per call (the ajax endpoint is challenge-
+        // gated), so we can't afford to walk all 8 seeds serially here.
         val seen = mutableSetOf<String>()
         val merged = mutableListOf<SearchResult>()
-        for (seed in BROWSE_SEEDS) {
+        for (seed in BROWSE_SEEDS.take(2)) {
             val hits = runCatching { search(seed) }.getOrDefault(emptyList())
             for (h in hits) {
                 if (seen.add(h.id)) merged.add(h)
@@ -68,16 +63,22 @@ class AnikaiProvider(
     }
 
     override suspend fun search(query: String): List<SearchResult> = withContext(Dispatchers.IO) {
-        val url = "$SITE/ajax/anime/search".toHttpUrl().newBuilder()
-            .addQueryParameter("keyword", query)
-            .build()
-
-        val body = getJson(url.toString()) ?: return@withContext emptyList()
-        val obj = runCatching { body.jsonObject }.getOrNull() ?: return@withContext emptyList()
-        val ok = obj["status"]?.jsonPrimitive?.content == "ok"
-        if (!ok) return@withContext emptyList()
-        val html = obj["result"]?.jsonObject?.get("html")?.jsonPrimitive?.content
-            ?: return@withContext emptyList()
+        // The /ajax/anime/search endpoint is now gated by a JS/JWT anti-bot
+        // challenge: a raw HTTP GET gets back a `window.location.replace(...)`
+        // bootstrap (with a signed `js=` token + `sid`), NOT the JSON it used
+        // to return. A plain OkHttp call can't execute that, so we render the
+        // /browser results page in the hidden WebView — which clears the
+        // challenge transparently — and parse the same `.aitem` markup the
+        // ajax HTML used to carry.
+        //
+        // Bounded by SEARCH_RENDER_BUDGET_MS so a slow/blocked render can't
+        // stall the unified Search tab (which awaits every provider together).
+        val r = resolver ?: return@withContext emptyList()
+        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
+        val url = "$SITE/browser?keyword=$encoded"
+        val html = kotlinx.coroutines.withTimeoutOrNull(SEARCH_RENDER_BUDGET_MS) {
+            r.renderHtml(url, settleMs = 2_500L)
+        } ?: return@withContext emptyList()
         parseSearchHtml(html)
     }
 
@@ -160,24 +161,6 @@ class AnikaiProvider(
         )
     }
 
-    private fun getJson(url: String) = runCatching {
-        val req = Request.Builder()
-            .url(url)
-            .header("User-Agent", Http.DESKTOP_UA)
-            .header("x-requested-with", "XMLHttpRequest")
-            .header("Referer", "$SITE/browser")
-            .header("Accept", "application/json, text/plain, */*")
-            .build()
-        Http.client.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) {
-                Log.w(TAG, "GET $url -> HTTP ${resp.code}")
-                return@use null
-            }
-            val body = resp.body?.string() ?: return@use null
-            Json.parseToJsonElement(body)
-        }
-    }.onFailure { Log.w(TAG, "GET $url failed", it) }.getOrNull()
-
     private fun parseSearchHtml(html: String): List<SearchResult> {
         val out = mutableListOf<SearchResult>()
         val entries = AITEM_BLOCK.findAll(html)
@@ -214,7 +197,13 @@ class AnikaiProvider(
 
     companion object {
         private const val TAG = "AnikaiProvider"
-        private const val SITE = "https://anikai.to"
+        // anikai.to went fully dead (DNS NXDOMAIN) in 2026; animekai.bz is
+        // the live successor for the same AnimeKai backend/markup.
+        private const val SITE = "https://animekai.bz"
+
+        // Upper bound on the hidden-WebView render for search() so a slow or
+        // challenge-stuck load can't gate the unified Search tab.
+        private const val SEARCH_RENDER_BUDGET_MS = 10_000L
 
         private val BROWSE_SEEDS = listOf(
             "naruto", "one piece", "attack on titan", "demon slayer",

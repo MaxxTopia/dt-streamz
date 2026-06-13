@@ -5,6 +5,13 @@ on:
     tags:
       - 'v*'
 
+# The pinned actions below (checkout@v4, setup-java@v4, setup-gradle@v4,
+# action-gh-release@v2) still bundle the Node 20 runtime, which GitHub
+# force-retires on 2026-06-16. Opt every JS action onto Node 24 now so
+# releases keep building past the cutoff instead of breaking silently.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   build:
     runs-on: ubuntu-latest
