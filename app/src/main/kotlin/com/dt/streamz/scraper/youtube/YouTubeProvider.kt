@@ -73,13 +73,17 @@ class YouTubeProvider : Provider {
     override suspend fun search(query: String): List<SearchResult> = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext emptyList()
 
-        // Tier 1: Piped search. Live broadcasts sort to the top so a
-        // currently-live channel you searched for leads the results.
+        // Tier 1: Piped search. We DON'T blanket-promote every live stream —
+        // that buries the relevant video under random live results. Instead we
+        // only float a live broadcast to the top when its CHANNEL matches what
+        // you searched (i.e. you looked up a creator and they happen to be
+        // live). Everything else keeps YouTube's own relevance order.
         val piped = runCatching { piped.search(query) }.getOrNull()
         if (!piped.isNullOrEmpty()) {
-            return@withContext piped
-                .sortedByDescending { it.isLive }
-                .map { it.toSearchResult() }
+            val (searchedLive, rest) = piped.partition {
+                it.isLive && channelMatchesQuery(query, it.uploaderName)
+            }
+            return@withContext (searchedLive + rest).map { it.toSearchResult() }
         }
         DebugLog.i(TAG, "Piped search($query) empty/null — falling back to NewPipeExtractor")
 
@@ -88,10 +92,27 @@ class YouTubeProvider : Provider {
             val extractor = service.getSearchExtractor(query, listOf("all"), "")
             extractor.fetchPage()
             val items = extractor.initialPage.items.orEmpty()
-            items.filterIsInstance<StreamInfoItem>()
-                .sortedByDescending { it.streamType == org.schabi.newpipe.extractor.stream.StreamType.LIVE_STREAM }
-                .map { it.toSearchResult() }
+                .filterIsInstance<StreamInfoItem>()
+            val (searchedLive, rest) = items.partition {
+                it.streamType == org.schabi.newpipe.extractor.stream.StreamType.LIVE_STREAM &&
+                    channelMatchesQuery(query, it.uploaderName)
+            }
+            (searchedLive + rest).map { it.toSearchResult() }
         }.onFailure { DebugLog.w(TAG, "NewPipe search($query) failed", it) }.getOrDefault(emptyList())
+    }
+
+    /**
+     * True when [uploader] looks like the thing the user typed — used to
+     * decide whether a live broadcast should jump to the top of search
+     * results. Strips case + non-alphanumerics and checks containment either
+     * way, so "xqc" matches "xQc" and "ludwig" matches "Ludwig Ahgren".
+     */
+    private fun channelMatchesQuery(query: String, uploader: String?): Boolean {
+        if (uploader.isNullOrBlank()) return false
+        val q = query.lowercase().filter { it.isLetterOrDigit() }
+        val u = uploader.lowercase().filter { it.isLetterOrDigit() }
+        if (q.length < 2 || u.isEmpty()) return false
+        return u.contains(q) || q.contains(u)
     }
 
     /**

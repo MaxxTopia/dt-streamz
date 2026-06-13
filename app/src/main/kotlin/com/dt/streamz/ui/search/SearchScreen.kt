@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items as lazyRowItems
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -320,32 +321,73 @@ internal fun SearchEditorDialog(
     ) {
         Box(
             modifier = Modifier
-                .fillMaxWidth(0.7f)
-                .padding(24.dp)
+                .fillMaxWidth(0.82f)
+                .padding(16.dp)
                 .clip(RoundedCornerShape(10.dp))
                 .background(MaterialTheme.colorScheme.surface),
         ) {
             Column(
-                modifier = Modifier.padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                // Live query display + cursor. No system text field, so
-                // there's nothing for the IME to attach to.
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(
-                            MaterialTheme.colorScheme.surfaceVariant,
-                            RoundedCornerShape(6.dp),
-                        )
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                // Query + Search/Close on ONE top row so the confirm button is
+                // always visible without scrolling past the keyboard on a TV.
+                androidx.compose.foundation.layout.Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(50.dp)
+                            .background(
+                                MaterialTheme.colorScheme.surfaceVariant,
+                                RoundedCornerShape(6.dp),
+                            )
+                            .padding(horizontal = 14.dp),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        Text(
+                            text = if (text.isEmpty()) "type below…" else "$text|",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = if (text.isEmpty())
+                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                            else MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                    PrimaryActionCell(
+                        label = "🔍  Search",
+                        enabled = text.isNotBlank(),
+                        onClick = { onSubmit(text.trim()) },
+                        modifier = Modifier.width(132.dp),
+                    )
+                    PrimaryActionCell(
+                        label = "Close",
+                        enabled = true,
+                        onClick = onDismiss,
+                        modifier = Modifier.width(96.dp),
+                    )
+                }
+
+                // Suggestions / live count sit directly under the query — near
+                // the top so they stay on-screen (they were getting pushed below
+                // the fold under the keyboard before).
+                if (suggestions.isNotEmpty()) {
                     Text(
-                        text = if (text.isEmpty()) "type below…" else "$text|",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = if (text.isEmpty())
-                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                        else MaterialTheme.colorScheme.onSurface,
+                        text = "Suggestions · OK to search",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    )
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        lazyRowItems(suggestions) { s ->
+                            SuggestionChip(label = s, onClick = { onSubmit(s) })
+                        }
+                    }
+                } else if (liveResultCount != null && text.trim().length >= 2) {
+                    Text(
+                        text = "🔎 $liveResultCount result${if (liveResultCount == 1) "" else "s"} so far",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
                     )
                 }
 
@@ -404,47 +446,8 @@ internal fun SearchEditorDialog(
                     )
                 }
 
-                // Type-ahead suggestions (YouTube tab). OK on a chip runs that
-                // exact query — saves pecking the rest out on the grid keyboard.
-                if (suggestions.isNotEmpty()) {
-                    Text(
-                        text = "Suggestions",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    )
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        lazyRowItems(suggestions) { s ->
-                            SuggestionChip(label = s, onClick = { onSubmit(s) })
-                        }
-                    }
-                }
-
-                if (liveResultCount != null && text.trim().length >= 2) {
-                    Text(
-                        text = "🔎 $liveResultCount result${if (liveResultCount == 1) "" else "s"} so far",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                }
-                // Submit / cancel row.
-                androidx.compose.foundation.layout.Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    PrimaryActionCell(
-                        label = if (text.isBlank()) "type a query" else "🔍  Search",
-                        enabled = text.isNotBlank(),
-                        onClick = { onSubmit(text.trim()) },
-                        modifier = Modifier.weight(1f),
-                    )
-                    PrimaryActionCell(
-                        label = "Close",
-                        enabled = true,
-                        onClick = onDismiss,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
                 Text(
-                    text = "D-pad to move · OK to type · BACK to close",
+                    text = "D-pad to move · OK to type · BACK to close · Search/Close are up top",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 )

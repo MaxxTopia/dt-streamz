@@ -260,7 +260,13 @@ fun WebPlayerScreen(
             DebugLog.w(TAG, "exhausted ${totalMirrors} mirrors — last signal=$lastSignal")
             DeadHostRegistry.markIfHost(activeUrl)
             loadState = LoadState.Failed(
-                "Embed loaded but never started playing (no media traffic). Likely cause: an adblocker on the box / network is blocking the player CDN (cloudnestra etc.). Try: Settings → 'Block ads in player' OFF, or pause your system adblocker / VPN.",
+                "Couldn't play this title — none of the mirrors delivered video. " +
+                    "On this box that's almost always the network's DNS blocking the " +
+                    "streaming domains (mirrors fail to resolve, and the one that loads " +
+                    "can't reach its player CDN). Fix on the box: Settings → Network → " +
+                    "Private DNS → Off, or point DNS at an unfiltered resolver (1.1.1.1 / " +
+                    "8.8.8.8). The app can't override system DNS, and in-app 'Block ads in " +
+                    "player' is NOT the cause.",
                 0,
             )
         }
