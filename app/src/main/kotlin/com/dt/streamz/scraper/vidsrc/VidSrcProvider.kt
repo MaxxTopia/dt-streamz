@@ -250,15 +250,18 @@ class VidSrcProvider(
             }
         }
         // Order matters — the WebPlayer walks top-to-bottom on transport
-        // failures or no-media-traffic timeouts. Front-load the
-        // independent-infrastructure embeds (autoembed, embed.su,
-        // moviesapi, multiembed) since the four vidsrc.* aliases all
-        // funnel into the same vsembed.ru / cloudnestra player chain
-        // and tend to fail or succeed together. Diversity > redundancy.
+        // failures or no-media-traffic timeouts.
+        //
+        // 2026-06-13 mirror refresh: the previous list was dominated by
+        // hosts that have since gone fully dead (DNS NXDOMAIN, not just
+        // network-blocked) — embed.su, autoembed.cc, moviesapi.club,
+        // vidsrc.net, vidsrc.xyz, vidsrc.icu, vidsrc.mov. The box's debug
+        // log showed EVERY mirror failing (ERR_NAME_NOT_RESOLVED / SSL /
+        // timeout) which is why nothing would play. Rebuilt from hosts
+        // verified reachable on 2026-06-13, front-loading the clean modern
+        // players (vidlink) and keeping infra diverse so a single CDN ban
+        // doesn't take them all down together.
         return paths.flatMap { path ->
-            // 2embed and vidsrc both publish movie/<id> + tv/<id>/<season>/<ep>
-            // on a single path; we forward `path` as-is. The alt embeds
-            // each take a per-host URL shape, so we destructure once.
             val pathKindIsTv = path.startsWith("tv/")
             val (imdb, season, ep) = if (pathKindIsTv) {
                 val parts = path.removePrefix("tv/").split("/")
@@ -266,93 +269,69 @@ class VidSrcProvider(
             } else {
                 Triple(path.removePrefix("movie/"), "", "")
             }
-            // vidsrc.cc uses a different path shape (Movie capital M, /v2/embed)
-            // than the rest of the family. Keep it on its own to avoid
-            // accidental URL malformation.
-            val ccMovieOrTv = if (pathKindIsTv) "tv/$imdb/$season/$ep" else "Movie/$imdb"
 
             listOf(
-                // --- non-vidsrc embeds first (different infra) ---
+                // vidlink.pro — modern, single-iframe player, minimal popups;
+                // best UX inside the box's WebView. Accepts IMDB ids directly.
                 StreamSource(
-                    url = if (pathKindIsTv) "https://embed.su/embed/tv/$imdb/$season/$ep"
-                          else "https://embed.su/embed/movie/$imdb",
+                    url = if (pathKindIsTv) "https://vidlink.pro/tv/$imdb/$season/$ep"
+                          else "https://vidlink.pro/movie/$imdb",
                     kind = StreamKind.DirectEmbed,
-                    serverLabel = "embed.su",
-                    headers = mapOf("Referer" to "https://embed.su/"),
+                    serverLabel = "vidlink",
+                    headers = mapOf("Referer" to "https://vidlink.pro/"),
                 ),
-                StreamSource(
-                    url = if (pathKindIsTv) "https://autoembed.cc/embed/player.php?id=$imdb&s=$season&e=$ep"
-                          else "https://autoembed.cc/embed/player.php?id=$imdb",
-                    kind = StreamKind.DirectEmbed,
-                    serverLabel = "autoembed",
-                    headers = mapOf("Referer" to "https://autoembed.cc/"),
-                ),
-                StreamSource(
-                    url = if (pathKindIsTv) "https://multiembed.mov/?video_id=$imdb&tmdb=0&s=$season&e=$ep"
-                          else "https://multiembed.mov/?video_id=$imdb&tmdb=0",
-                    kind = StreamKind.DirectEmbed,
-                    serverLabel = "multiembed",
-                    headers = mapOf("Referer" to "https://multiembed.mov/"),
-                ),
-                StreamSource(
-                    url = if (pathKindIsTv) "https://moviesapi.club/tv/$imdb-$season-$ep"
-                          else "https://moviesapi.club/movie/$imdb",
-                    kind = StreamKind.DirectEmbed,
-                    serverLabel = "moviesapi",
-                    headers = mapOf("Referer" to "https://moviesapi.club/"),
-                ),
-                StreamSource(
-                    url = "https://www.2embed.cc/embed/$path",
-                    kind = StreamKind.DirectEmbed,
-                    serverLabel = "2embed",
-                    headers = mapOf("Referer" to "https://www.2embed.cc/"),
-                ),
-
-                // --- 2026-additions: independent infra, IMDB-compatible.
-                //     vidsrc.cc uses /v2/embed/Movie/<id> (capital M) and
-                //     /v2/embed/tv/<id>/<s>/<e>. vidsrc.icu and vidsrc.mov
-                //     stick to lowercase movie/tv. ---
-                StreamSource(
-                    url = "https://vidsrc.cc/v2/embed/$ccMovieOrTv",
-                    kind = StreamKind.DirectEmbed,
-                    serverLabel = "vidsrc.cc",
-                    headers = mapOf("Referer" to "https://vidsrc.cc/"),
-                ),
-                StreamSource(
-                    url = if (pathKindIsTv) "https://vidsrc.icu/embed/tv/$imdb/$season/$ep"
-                          else "https://vidsrc.icu/embed/movie/$imdb",
-                    kind = StreamKind.DirectEmbed,
-                    serverLabel = "vidsrc.icu",
-                    headers = mapOf("Referer" to "https://vidsrc.icu/"),
-                ),
-                StreamSource(
-                    url = if (pathKindIsTv) "https://vidsrc.mov/embed/tv/$imdb/$season/$ep"
-                          else "https://vidsrc.mov/embed/movie/$imdb",
-                    kind = StreamKind.DirectEmbed,
-                    serverLabel = "vidsrc.mov",
-                    headers = mapOf("Referer" to "https://vidsrc.mov/"),
-                ),
-
-                // --- vidsrc.to family last; same player chain so they
-                //     succeed or fail together. Keep them so the user
-                //     still has a path when the alt embeds are down. ---
+                // vidsrc.to — long-lived, reliable, IMDB path shape.
                 StreamSource(
                     url = "https://vidsrc.to/embed/$path",
                     kind = StreamKind.DirectEmbed,
                     serverLabel = "VidSrc · .to",
                     headers = mapOf("Referer" to "https://vidsrc.to/"),
                 ),
+                // 2embed — independent infra. NOTE: TV uses /embedtv/<id>&s=&e=,
+                // NOT /embed/tv/... (the old code malformed this and it always
+                // 404'd). Movie uses /embed/<id>.
                 StreamSource(
-                    url = "https://vidsrc.net/embed/$path",
+                    url = if (pathKindIsTv) "https://www.2embed.cc/embedtv/$imdb&s=$season&e=$ep"
+                          else "https://www.2embed.cc/embed/$imdb",
                     kind = StreamKind.DirectEmbed,
-                    serverLabel = "VidSrc · .net",
-                    headers = mapOf("Referer" to "https://vidsrc.net/"),
+                    serverLabel = "2embed",
+                    headers = mapOf("Referer" to "https://www.2embed.cc/"),
+                ),
+                // vidsrc.cc v2 — lowercase movie/tv (the old capital-M "Movie"
+                // shape is dead). Different player chain than vidsrc.to.
+                StreamSource(
+                    url = if (pathKindIsTv) "https://vidsrc.cc/v2/embed/tv/$imdb/$season/$ep"
+                          else "https://vidsrc.cc/v2/embed/movie/$imdb",
+                    kind = StreamKind.DirectEmbed,
+                    serverLabel = "vidsrc.cc",
+                    headers = mapOf("Referer" to "https://vidsrc.cc/"),
+                ),
+                // vidsrc.in / vidsrc.pm — vidsrc.xyz-family aliases that are
+                // currently resolving (the .xyz/.net apex are not). Same
+                // /embed/movie|tv path shape.
+                StreamSource(
+                    url = if (pathKindIsTv) "https://vidsrc.in/embed/tv/$imdb/$season/$ep"
+                          else "https://vidsrc.in/embed/movie/$imdb",
+                    kind = StreamKind.DirectEmbed,
+                    serverLabel = "VidSrc · .in",
+                    headers = mapOf("Referer" to "https://vidsrc.in/"),
                 ),
                 StreamSource(
-                    url = "https://vidsrc.xyz/embed/$path",
+                    url = if (pathKindIsTv) "https://vidsrc.pm/embed/tv/$imdb/$season/$ep"
+                          else "https://vidsrc.pm/embed/movie/$imdb",
                     kind = StreamKind.DirectEmbed,
-                    serverLabel = "VidSrc · .xyz",
-                    headers = mapOf("Referer" to "https://vidsrc.xyz/"),
+                    serverLabel = "VidSrc · .pm",
+                    headers = mapOf("Referer" to "https://vidsrc.pm/"),
+                ),
+                // multiembed — last resort. Reachable but the box has shown
+                // intermittent SSL handshake trouble against it; keep it as a
+                // tail mirror rather than dropping a working-elsewhere source.
+                StreamSource(
+                    url = if (pathKindIsTv) "https://multiembed.mov/?video_id=$imdb&tmdb=0&s=$season&e=$ep"
+                          else "https://multiembed.mov/?video_id=$imdb&tmdb=0",
+                    kind = StreamKind.DirectEmbed,
+                    serverLabel = "multiembed",
+                    headers = mapOf("Referer" to "https://multiembed.mov/"),
                 ),
             )
         }

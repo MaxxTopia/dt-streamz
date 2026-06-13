@@ -50,10 +50,19 @@ class YouTubeProvider : Provider {
     private val cache = mutableMapOf<String, CachedItem>()
 
     override suspend fun browse(): List<SearchResult> = withContext(Dispatchers.IO) {
-        // Tier 1: Piped trending.
+        // The home feed is a "recommended" page — it should look like normal
+        // YouTube recommendations, NOT a wall of live broadcasts in random
+        // languages. So we drop live streams and non-English titles before
+        // taking the first 24. (Live channels you actually want are still
+        // reachable via search, where a searched creator's live stream is
+        // floated to the top.)
         val piped = runCatching { piped.trending() }.getOrNull()
         if (!piped.isNullOrEmpty()) {
-            return@withContext piped.take(24).map { it.toSearchResult() }
+            return@withContext piped
+                .filterNot { it.isLive }
+                .filter { isLikelyEnglish(it.title) }
+                .take(24)
+                .map { it.toSearchResult() }
         }
         DebugLog.i(TAG, "Piped trending empty/null — falling back to NewPipeExtractor")
 
@@ -65,6 +74,8 @@ class YouTubeProvider : Provider {
             extractor.fetchPage()
             val items = extractor.initialPage.items.orEmpty()
             items.filterIsInstance<StreamInfoItem>()
+                .filterNot { it.streamType == org.schabi.newpipe.extractor.stream.StreamType.LIVE_STREAM }
+                .filter { isLikelyEnglish(it.name ?: "") }
                 .take(24)
                 .map { it.toSearchResult() }
         }.onFailure { DebugLog.w(TAG, "NewPipe browse() failed", it) }.getOrDefault(emptyList())
@@ -80,7 +91,8 @@ class YouTubeProvider : Provider {
         // live). Everything else keeps YouTube's own relevance order.
         val piped = runCatching { piped.search(query) }.getOrNull()
         if (!piped.isNullOrEmpty()) {
-            val (searchedLive, rest) = piped.partition {
+            val english = piped.filter { isLikelyEnglish(it.title) }
+            val (searchedLive, rest) = english.partition {
                 it.isLive && channelMatchesQuery(query, it.uploaderName)
             }
             return@withContext (searchedLive + rest).map { it.toSearchResult() }
@@ -93,6 +105,7 @@ class YouTubeProvider : Provider {
             extractor.fetchPage()
             val items = extractor.initialPage.items.orEmpty()
                 .filterIsInstance<StreamInfoItem>()
+                .filter { isLikelyEnglish(it.name ?: "") }
             val (searchedLive, rest) = items.partition {
                 it.streamType == org.schabi.newpipe.extractor.stream.StreamType.LIVE_STREAM &&
                     channelMatchesQuery(query, it.uploaderName)
@@ -107,6 +120,41 @@ class YouTubeProvider : Provider {
      * results. Strips case + non-alphanumerics and checks containment either
      * way, so "xqc" matches "xQc" and "ludwig" matches "Ludwig Ahgren".
      */
+    /**
+     * Heuristic "is this title English?" used to keep foreign-language
+     * videos off the recommended feed and out of search results. We don't
+     * try to distinguish English from other Latin-script languages
+     * (Spanish/French/etc.) — that's error-prone and would wrongly drop
+     * lots of legitimately-English titles. Instead we drop titles whose
+     * letters are *mostly* non-Latin scripts (CJK, Cyrillic, Arabic,
+     * Devanagari, Hangul, Thai, Hebrew, Greek, …), which is what actually
+     * "pops up in a different language" on the box.
+     *
+     * A title with only digits/symbols/emoji (no letters at all) is kept —
+     * better a false keep than dropping a legit clip with a stylised name.
+     */
+    internal fun isLikelyEnglish(title: String): Boolean {
+        var latin = 0
+        var nonLatin = 0
+        for (ch in title) {
+            if (!Character.isLetter(ch)) continue
+            when (Character.UnicodeBlock.of(ch)) {
+                Character.UnicodeBlock.BASIC_LATIN,
+                Character.UnicodeBlock.LATIN_1_SUPPLEMENT,
+                Character.UnicodeBlock.LATIN_EXTENDED_A,
+                Character.UnicodeBlock.LATIN_EXTENDED_B,
+                Character.UnicodeBlock.LATIN_EXTENDED_ADDITIONAL,
+                -> latin++
+                else -> nonLatin++
+            }
+        }
+        val total = latin + nonLatin
+        if (total == 0) return true
+        // Keep when non-Latin letters are a minority. 0.30 tolerates the
+        // odd accented/foreign word in an otherwise-English title.
+        return nonLatin.toDouble() / total < 0.30
+    }
+
     private fun channelMatchesQuery(query: String, uploader: String?): Boolean {
         if (uploader.isNullOrBlank()) return false
         val q = query.lowercase().filter { it.isLetterOrDigit() }
@@ -339,7 +387,15 @@ class YouTubeProvider : Provider {
         fun initOnce() {
             if (initialized) return
             initialized = true
-            NewPipe.init(NewPipeOkHttpDownloader())
+            // Pin localization + content country to US English so the
+            // trending kiosk and search results come back in English
+            // instead of whatever the box's system locale / instance
+            // region defaults to.
+            NewPipe.init(
+                NewPipeOkHttpDownloader(),
+                org.schabi.newpipe.extractor.localization.Localization("en", "US"),
+                org.schabi.newpipe.extractor.localization.ContentCountry("US"),
+            )
         }
 
         @Volatile
