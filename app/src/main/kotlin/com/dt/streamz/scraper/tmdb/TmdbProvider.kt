@@ -111,24 +111,29 @@ class TmdbProvider : Provider {
             val m = Regex("s(\\d+)e(\\d+)").find(episode.id)
             (m?.groupValues?.get(1) ?: "1") to (m?.groupValues?.get(2) ?: episode.number.toString())
         }
-        // Same embed families as VidSrc — they all take TMDb ids. Order by
-        // independent infrastructure first; WebPlayer walks the list on
-        // failure. Diversity > redundancy.
+        // Embed families that accept TMDb ids natively. WebPlayer walks the
+        // list on failure, so order by reliability + infra diversity.
+        //
+        // 2026-06-13 mirror refresh: the old list (embed.su / autoembed.cc /
+        // old vidsrc.cc) was fully dead — the box debug log showed every one
+        // failing with ERR_NAME_NOT_RESOLVED / SSL. Rebuilt from hosts
+        // verified reachable, front-loading vidlink (clean TMDb-native
+        // player) the same way VidSrcProvider was fixed.
         fun src(label: String, url: String, referer: String) =
             StreamSource(url = url, kind = StreamKind.DirectEmbed, serverLabel = label,
                 headers = mapOf("Referer" to referer))
         return if (isMovie) listOf(
-            src("vidsrc.cc", "https://vidsrc.cc/v2/embed/movie/$tmdbId", "https://vidsrc.cc/"),
-            src("embed.su", "https://embed.su/embed/movie/$tmdbId", "https://embed.su/"),
-            src("autoembed", "https://player.autoembed.cc/embed/movie/$tmdbId", "https://player.autoembed.cc/"),
-            src("multiembed", "https://multiembed.mov/?video_id=$tmdbId&tmdb=1", "https://multiembed.mov/"),
+            src("vidlink", "https://vidlink.pro/movie/$tmdbId", "https://vidlink.pro/"),
             src("vidsrc.to", "https://vidsrc.to/embed/movie/$tmdbId", "https://vidsrc.to/"),
+            src("vidsrc.cc", "https://vidsrc.cc/v2/embed/movie/$tmdbId", "https://vidsrc.cc/"),
+            src("VidSrc · .in", "https://vidsrc.in/embed/movie?tmdb=$tmdbId", "https://vidsrc.in/"),
+            src("multiembed", "https://multiembed.mov/?video_id=$tmdbId&tmdb=1", "https://multiembed.mov/"),
         ) else listOf(
-            src("vidsrc.cc", "https://vidsrc.cc/v2/embed/tv/$tmdbId/$season/$ep", "https://vidsrc.cc/"),
-            src("embed.su", "https://embed.su/embed/tv/$tmdbId/$season/$ep", "https://embed.su/"),
-            src("autoembed", "https://player.autoembed.cc/embed/tv/$tmdbId/$season/$ep", "https://player.autoembed.cc/"),
-            src("multiembed", "https://multiembed.mov/?video_id=$tmdbId&tmdb=1&s=$season&e=$ep", "https://multiembed.mov/"),
+            src("vidlink", "https://vidlink.pro/tv/$tmdbId/$season/$ep", "https://vidlink.pro/"),
             src("vidsrc.to", "https://vidsrc.to/embed/tv/$tmdbId/$season/$ep", "https://vidsrc.to/"),
+            src("vidsrc.cc", "https://vidsrc.cc/v2/embed/tv/$tmdbId/$season/$ep", "https://vidsrc.cc/"),
+            src("VidSrc · .in", "https://vidsrc.in/embed/tv?tmdb=$tmdbId&season=$season&episode=$ep", "https://vidsrc.in/"),
+            src("multiembed", "https://multiembed.mov/?video_id=$tmdbId&tmdb=1&s=$season&e=$ep", "https://multiembed.mov/"),
         )
     }
 

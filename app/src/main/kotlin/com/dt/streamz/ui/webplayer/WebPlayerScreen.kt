@@ -74,7 +74,7 @@ private const val LOAD_TIMEOUT_MS = 20_000L
  * we walk to the next mirror — no more 20s sit-and-wait for a
  * cross-origin iframe wrapper that's actually empty inside.
  */
-private const val MEDIA_CHECK_MS = 12_000L
+private const val MEDIA_CHECK_MS = 18_000L
 
 /**
  * WebView error codes that indicate the embed host itself is unreachable
@@ -249,12 +249,23 @@ fun WebPlayerScreen(
                 return@LaunchedEffect
             }
         }
-        // No media traffic and no DOM-side video. The embed loaded but
-        // isn't actually streaming. Most likely cause: ISP / system
-        // adblock blocking the player CDN (cloudnestra etc.) or the
-        // embed is geo-blocked.
+        // Timed out without confirmed media traffic. IMPORTANT: a lot of
+        // modern players (vidlink, vidsrc.cc, cloudnestra) either (a) proxy
+        // the stream through their own domain with no .m3u8/.ts extension so
+        // Resource Timing can't see it, or (b) wait for a tap before they
+        // fetch anything. In both cases a *player iframe is present* even
+        // though we saw no media bytes. Auto-walking away from those (the old
+        // behavior) is exactly why nothing played. So:
+        //   - player iframe present (iframe-cross-origin) -> KEEP it; the user
+        //     can press play. Don't walk, don't error.
+        //   - genuinely blank (none) -> walk to the next mirror; only error
+        //     once every mirror came back blank.
+        if (lastSignal == "iframe-cross-origin") {
+            DebugLog.i(TAG, "keeping mirror=$mirrorIndex — player present, no autostart traffic (press play)")
+            return@LaunchedEffect
+        }
         if (mirrorIndex + 1 < totalMirrors) {
-            DebugLog.i(TAG, "no media after ${MEDIA_CHECK_MS}ms (signal=$lastSignal) mirror=$mirrorIndex; advancing")
+            DebugLog.i(TAG, "blank after ${MEDIA_CHECK_MS}ms (signal=$lastSignal) mirror=$mirrorIndex; advancing")
             mirrorIndex += 1
         } else {
             DebugLog.w(TAG, "exhausted ${totalMirrors} mirrors — last signal=$lastSignal")

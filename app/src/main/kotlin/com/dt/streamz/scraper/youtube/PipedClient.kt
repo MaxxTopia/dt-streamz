@@ -55,7 +55,10 @@ internal class PipedClient {
         // filter=all (not videos) so currently-live broadcasts come back too
         // — the `videos` filter drops them. asPipedVideo() keeps only
         // type=="stream" items, so channels/playlists are still dropped.
-        val raw = call("/search?q=$q&filter=all") ?: return@withContext null
+        // region=US matters: without it the (often EU-hosted) instance returns
+        // German/Spanish-localized titles for English creators. Verified that
+        // region=US flips most results back to their English titles.
+        val raw = call("/search?q=$q&filter=all&region=US") ?: return@withContext null
         val obj = runCatching { Http.json.parseToJsonElement(raw).jsonObject }.getOrNull()
             ?: return@withContext null
         val items = obj["items"] as? JsonArray ?: return@withContext null
@@ -194,15 +197,20 @@ internal class PipedClient {
          * names in the list because they tend to come back, and the
          * cost of trying a dead one is bounded by [PER_INSTANCE_TIMEOUT_MS].
          */
+        // Probed 2026-06-13: api.piped.private.coffee was the only instance
+        // returning a usable 200 — the rest 5xx/timeout (the Piped ecosystem
+        // has thinned badly). Keep the dead ones as longer-shot fallbacks
+        // since they rotate back occasionally; cost of a dead try is capped
+        // by PER_INSTANCE_TIMEOUT_MS.
         private val INSTANCES = listOf(
             "https://api.piped.private.coffee",
+            "https://pipedapi.adminforge.de",
             "https://pipedapi.kavin.rocks",
+            "https://pipedapi.reallyaweso.me",
+            "https://pipedapi.ducks.party",
             "https://pipedapi.leptons.xyz",
             "https://piped-api.privacy.com.de",
-            "https://pipedapi.adminforge.de",
             "https://pipedapi.r4fo.com",
-            "https://pipedapi.drgns.space",
-            "https://pipedapi.smnz.de",
         )
     }
 }
