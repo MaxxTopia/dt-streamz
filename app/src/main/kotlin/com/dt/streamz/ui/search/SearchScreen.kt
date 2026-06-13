@@ -129,6 +129,10 @@ fun SearchScreen(
     }
 
     if (editorOpen) {
+        // Type-ahead suggestions from the movie/show provider (IMDB titles),
+        // so the unified search bar behaves like YouTube's — a live dropdown
+        // of real titles as you type.
+        val suggestProvider = remember { registry.all.firstOrNull { it.supportsMovies } }
         SearchEditorDialog(
             initialQuery = query,
             liveResultCount = liveCount,
@@ -138,6 +142,7 @@ fun SearchScreen(
                 runQuery(text)
                 editorOpen = false
             },
+            suggestionsProvider = suggestProvider?.let { p -> { q -> p.suggest(q) } },
         )
     }
 }

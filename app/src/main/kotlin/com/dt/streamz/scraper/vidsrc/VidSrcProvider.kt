@@ -105,6 +105,29 @@ class VidSrcProvider(
         }
     }
 
+    /**
+     * Type-ahead title suggestions for the unified Search bar — powered by
+     * IMDB's suggestion API (same source as [search]), so the dropdown shows
+     * real movie/show/anime titles as you type, the way YouTube's search bar
+     * does. Movies + series only (drops people/companies). Best-effort: any
+     * failure yields an empty list.
+     */
+    override suspend fun suggest(query: String): List<String> = withContext(Dispatchers.IO) {
+        val q = query.trim().replace(Regex("[^A-Za-z0-9 ]"), "").replace(' ', '_')
+        if (q.length < 2) return@withContext emptyList()
+        val url = "$IMDB_SUGGEST/${q.first().lowercaseChar()}/${q}.json?includeVideos=0"
+        val body = fetch(url) ?: return@withContext emptyList()
+        val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
+            ?: return@withContext emptyList()
+        val items = root["d"] as? JsonArray ?: return@withContext emptyList()
+        items.mapNotNull { el ->
+            val obj = el as? JsonObject ?: return@mapNotNull null
+            val qType = obj["q"]?.jsonPrimitive?.contentOrNull
+            if (qType !in TITLE_TYPES) return@mapNotNull null
+            obj["l"]?.jsonPrimitive?.contentOrNull
+        }.distinct().take(8)
+    }
+
     override suspend fun details(titleId: String): TitleDetails = withContext(Dispatchers.IO) {
         val cached = cache[titleId]?.result
         val title = cached?.title ?: titleId
@@ -359,6 +382,11 @@ class VidSrcProvider(
         private const val IMDB_SUGGEST = "https://v3.sg.media-imdb.com/suggestion/x"
         private const val TVMAZE = "https://api.tvmaze.com"
         private const val SYNTHETIC_EPISODE_COUNT = 50
+        // IMDB suggestion `q` values that are watchable titles (vs people /
+        // companies) — used to filter type-ahead suggestions.
+        private val TITLE_TYPES = setOf(
+            "feature", "video", "TV series", "TV mini-series", "TV short", "TV movie",
+        )
 
         // Hand-curated for the Movies tab home row. Kind + poster URL are
         // static so browse() stays network-free; IMDB's CDN serves these

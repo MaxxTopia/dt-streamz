@@ -46,6 +46,7 @@ class YouTubeProvider : Provider {
     override val supportsYouTube = true
 
     private val piped = PipedClient()
+    private val innertube = InnerTubeClient()
     private val service = ServiceList.YouTube
     private val cache = mutableMapOf<String, CachedItem>()
 
@@ -83,6 +84,26 @@ class YouTubeProvider : Provider {
 
     override suspend fun search(query: String): List<SearchResult> = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext emptyList()
+
+        // Tier 0: InnerTube (direct YouTube, hl=en/gl=US). English titles,
+        // and it returns CHANNELS too. If a channel matches what you typed,
+        // we lead with that creator's newest uploads (newest -> oldest, from
+        // the public RSS feed) so "search a creator -> see their latest" just
+        // works, then append the general video results.
+        val itResult = runCatching { innertube.search(query) }.getOrNull()
+        if (itResult != null && (itResult.videos.isNotEmpty() || itResult.channels.isNotEmpty())) {
+            val out = mutableListOf<SearchResult>()
+            val seen = mutableSetOf<String>()
+            val matched = itResult.channels.firstOrNull { channelMatchesQuery(query, it.name) }
+            if (matched != null) {
+                val newest = runCatching { innertube.channelNewest(matched.channelId) }
+                    .getOrDefault(emptyList())
+                for (v in newest) if (seen.add(v.videoId)) out.add(v.toSearchResult())
+            }
+            for (v in itResult.videos) if (seen.add(v.videoId)) out.add(v.toSearchResult())
+            if (out.isNotEmpty()) return@withContext out
+        }
+        DebugLog.i(TAG, "InnerTube search($query) empty/null — falling back to Piped")
 
         // Tier 1: Piped search. We DON'T blanket-promote every live stream —
         // that buries the relevant video under random live results. Instead we
@@ -250,102 +271,38 @@ class YouTubeProvider : Provider {
         withContext(Dispatchers.IO) {
             val videoId = videoIdOf(titleId)
 
-            // Tier 1: Piped streams.
-            val piped = runCatching { piped.streams(videoId) }.getOrNull()
-            if (piped != null) {
-                val tier1 = piped.toStreamSources()
-                if (tier1.isNotEmpty()) return@withContext tier1
-                DebugLog.i(TAG, "Piped returned no playable streams for $videoId — trying NewPipe")
-            }
-
-            // Tier 2: NewPipeExtractor.
-            runCatching {
-                val ext = service.getStreamExtractor(watchUrl(videoId))
-                ext.fetchPage()
-                val out = mutableListOf<StreamSource>()
-
-                // Progressive (audio + video muxed) — simplest for ExoPlayer,
-                // no MergingMediaSource needed. YT only exposes these up to
-                // 720p (itag 18 = 360p, itag 22 = 720p).
-                ext.videoStreams.orEmpty().forEach { vs ->
-                    val url = vs.content ?: return@forEach
-                    if (url.isBlank()) return@forEach
-                    out += StreamSource(
-                        url = url,
-                        kind = StreamKind.Mp4,
-                        quality = vs.resolution,
-                        serverLabel = "YouTube progressive · ${vs.resolution}",
-                    )
-                }
-                val hls = runCatching { ext.hlsUrl }.getOrNull()
-                if (!hls.isNullOrBlank()) {
-                    out += StreamSource(
-                        url = hls,
-                        kind = StreamKind.Hls,
-                        serverLabel = "YouTube HLS",
-                    )
-                }
-                val dash = runCatching { ext.dashMpdUrl }.getOrNull()
-                if (!dash.isNullOrBlank()) {
-                    out += StreamSource(
-                        url = dash,
-                        kind = StreamKind.Dash,
-                        serverLabel = "YouTube DASH manifest",
-                    )
-                }
-                out
-            }.onFailure { DebugLog.w(TAG, "streams($videoId) NewPipe failed", it) }
-                .getOrDefault(emptyList())
-        }
-
-    /**
-     * Build [StreamSource]s from a Piped streams response. Order: HLS for
-     * livestreams, then progressive muxed MP4 (highest quality first),
-     * then DASH manifest. We deliberately skip videoOnly streams because
-     * those need MergingMediaSource (sync'd separate audio track) which
-     * the player path doesn't currently set up — surfacing a videoOnly
-     * URL would play silent footage.
-     */
-    private fun PipedStreams.toStreamSources(): List<StreamSource> {
-        val out = mutableListOf<StreamSource>()
-
-        if (livestream && !hls.isNullOrBlank()) {
-            out += StreamSource(
-                url = hls,
-                kind = StreamKind.Hls,
-                serverLabel = "YouTube HLS (live)",
+            // Play YouTube through its OWN embedded player inside the WebView,
+            // with the in-app adblock stripping ad domains. This is the robust
+            // path: YouTube handles its own signature cipher + bot tokens, so
+            // we no longer depend on
+            //   - Piped (its one surviving instance returns junk LBRY-proxied
+            //     URLs, not real YouTube streams), or
+            //   - NewPipeExtractor (its extract path calls a 33+ URLEncoder
+            //     overload that crashes on this box's Android).
+            // Single source -> one tap, no picker.
+            listOf(
+                StreamSource(
+                    url = "https://www.youtube.com/embed/$videoId" +
+                        "?autoplay=1&playsinline=1&rel=0&modestbranding=1&fs=1",
+                    kind = StreamKind.DirectEmbed,
+                    serverLabel = "YouTube",
+                    headers = mapOf("Referer" to "https://www.youtube.com/"),
+                ),
             )
         }
 
-        // Highest-quality muxed (progressive) MP4 first. Piped's quality
-        // strings are like "720p" / "360p"; sort numerically descending.
-        val muxed = videoStreams
-            .filter { !it.videoOnly && !it.url.isBlank() }
-            .sortedByDescending { it.quality?.removeSuffix("p")?.toIntOrNull() ?: 0 }
-        muxed.forEach { stream ->
-            out += StreamSource(
-                url = stream.url,
-                kind = StreamKind.Mp4,
-                quality = stream.quality,
-                serverLabel = "YouTube progressive · ${stream.quality ?: "auto"}",
-            )
-        }
-
-        if (!dash.isNullOrBlank()) {
-            out += StreamSource(
-                url = dash,
-                kind = StreamKind.Dash,
-                serverLabel = "YouTube DASH",
-            )
-        }
-        if (!hls.isNullOrBlank() && !livestream) {
-            out += StreamSource(
-                url = hls,
-                kind = StreamKind.Hls,
-                serverLabel = "YouTube HLS",
-            )
-        }
-        return out
+    private fun YtVideo.toSearchResult(): SearchResult {
+        val r = SearchResult(
+            providerId = id,
+            id = videoId,
+            title = title,
+            poster = thumbnail,
+            year = null,
+            kind = MediaKind.Movie,
+            isLive = isLive,
+        )
+        cache[videoId] = CachedItem(title, thumbnail)
+        return r
     }
 
     private fun PipedVideo.toSearchResult(): SearchResult {
