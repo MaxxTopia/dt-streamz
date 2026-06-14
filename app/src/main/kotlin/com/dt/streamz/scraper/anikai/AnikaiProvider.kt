@@ -6,6 +6,7 @@ import com.dt.streamz.data.SearchResult
 import com.dt.streamz.data.StreamKind
 import com.dt.streamz.data.StreamSource
 import com.dt.streamz.data.TitleDetails
+import com.dt.streamz.diag.DebugLog
 import com.dt.streamz.scraper.Provider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -39,13 +40,18 @@ class AnikaiProvider(
         // it in the hidden WebView and reuse the same .aitem parser the search
         // endpoint uses. BrowseCache memoizes this for 5 min, so the WebView
         // only spins up once per window, not on every tab open.
+        DebugLog.i(TAG, "browse() rendering $SITE/home")
         resolver?.let { r ->
             val html = runCatching { r.renderHtml("$SITE/home") }.getOrNull()
-            if (html != null) {
+            if (html == null) {
+                DebugLog.w(TAG, "browse() render returned null (timeout / CF challenge / dead host)")
+            } else {
                 val recent = parseSearchHtml(html).take(24)
+                DebugLog.i(TAG, "browse() rendered ${html.length}B -> ${recent.size} items parsed")
                 if (recent.isNotEmpty()) return@withContext recent
+                DebugLog.w(TAG, "browse() 0 items — markup may have changed (.aitem/.title selectors stale)")
             }
-        }
+        } ?: DebugLog.w(TAG, "browse() no resolver wired")
         // Fallback (no resolver, render failed, or empty): seed-search a
         // couple popular keywords. Capped tight because search() now spins
         // up the hidden WebView per call (the ajax endpoint is challenge-
@@ -73,13 +79,24 @@ class AnikaiProvider(
         //
         // Bounded by SEARCH_RENDER_BUDGET_MS so a slow/blocked render can't
         // stall the unified Search tab (which awaits every provider together).
-        val r = resolver ?: return@withContext emptyList()
+        val r = resolver ?: run {
+            DebugLog.w(TAG, "search($query) no resolver wired")
+            return@withContext emptyList()
+        }
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
         val url = "$SITE/browser?keyword=$encoded"
+        DebugLog.i(TAG, "search($query) rendering $url")
         val html = kotlinx.coroutines.withTimeoutOrNull(SEARCH_RENDER_BUDGET_MS) {
             r.renderHtml(url, settleMs = 2_500L)
-        } ?: return@withContext emptyList()
-        parseSearchHtml(html)
+        }
+        if (html == null) {
+            DebugLog.w(TAG, "search($query) render null (>${SEARCH_RENDER_BUDGET_MS}ms / CF / dead host)")
+            return@withContext emptyList()
+        }
+        val parsed = parseSearchHtml(html)
+        DebugLog.i(TAG, "search($query) rendered ${html.length}B -> ${parsed.size} items")
+        if (parsed.isEmpty()) DebugLog.w(TAG, "search($query) 0 items — .aitem markup likely changed")
+        parsed
     }
 
     override suspend fun details(titleId: String): TitleDetails {
@@ -99,6 +116,7 @@ class AnikaiProvider(
             synopsis = "anikai.to resolver not wired — episodes unavailable.",
         )
         val watchUrl = "$SITE/watch/$titleId"
+        DebugLog.i(TAG, "details() rendering $watchUrl")
         val html = r.renderHtml(watchUrl)
             ?: return shell.copy(synopsis = "anikai.to render timed out — try again.")
         val episodes = EP_LINK.findAll(html)
@@ -113,6 +131,7 @@ class AnikaiProvider(
             .distinctBy { it.number }
             .sortedBy { it.number }
             .toList()
+        DebugLog.i(TAG, "details() rendered ${html.length}B -> ${episodes.size} episodes")
         return shell.copy(
             episodes = episodes,
             synopsis = if (episodes.isEmpty())
@@ -131,9 +150,12 @@ class AnikaiProvider(
             else -> "$SITE/watch/$titleId?ep=${episode.number}"
         }
 
+        DebugLog.i(TAG, "streams() capturing m3u8 from $watchUrl")
         val out = mutableListOf<StreamSource>()
         // Sub (default audio) — same single capture as before.
         val subUrl = r.captureStreamUrl(watchUrl, dub = false)
+        if (subUrl == null) DebugLog.w(TAG, "streams() no m3u8 captured (player JS changed / CF / timeout)")
+        else DebugLog.i(TAG, "streams() captured ${subUrl.take(60)}")
         subUrl?.let { out.add(toSource(it, "anikai · Sub")) }
 
         // Dub — only attempt the extra capture for titles the listing tagged
