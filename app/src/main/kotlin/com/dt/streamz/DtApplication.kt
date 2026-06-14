@@ -15,9 +15,8 @@ import com.dt.streamz.data.ContinueWatchingStore
 import com.dt.streamz.data.FavoritesStore
 import com.dt.streamz.networkmonitor.NetworkMonitor
 import com.dt.streamz.scraper.ProviderRegistry
+import com.dt.streamz.scraper.allanime.AllAnimeProvider
 import com.dt.streamz.scraper.anicrush.AnicrushProvider
-import com.dt.streamz.scraper.anikai.AnikaiProvider
-import com.dt.streamz.scraper.anikai.AnikaiResolver
 import com.dt.streamz.scraper.fixtures.FixturesProvider
 import com.dt.streamz.scraper.tmdb.TmdbProvider
 import com.dt.streamz.scraper.vidsrc.VidSrcProvider
@@ -87,7 +86,6 @@ class DtApplication : Application(), SingletonImageLoader.Factory {
         scraperConfig = ScraperConfigLoader(this)
         appScope.launch { scraperConfig.loadCachedThenRefresh() }
 
-        val anikaiResolver = AnikaiResolver(this)
         // YouTube provider boots NewPipeExtractor lazily on first call,
         // but doing it here avoids the cold-start tax on first browse.
         YouTubeProvider.initOnce()
@@ -99,7 +97,10 @@ class DtApplication : Application(), SingletonImageLoader.Factory {
             providers = listOf(
                 FixturesProvider(),
                 TmdbProvider(),
-                AnikaiProvider(resolver = anikaiResolver),
+                // AllAnime (ani-cli backend) replaces the animekai/anikai
+                // WebView resolver: plain JSON API, no Cloudflare-JS challenge
+                // to clear, returns direct m3u8 -> ExoPlayer with real controls.
+                AllAnimeProvider(),
                 VidSrcProvider(),
                 AnicrushProvider(),
                 YouTubeProvider(),

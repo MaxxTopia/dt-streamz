@@ -47,6 +47,9 @@ class VidSrcProvider(
 
     private val cache = mutableMapOf<String, CachedResult>()
 
+    /** IMDB id -> resolved (mediaType, tmdbId), or null for a cached miss. */
+    private val tmdbCache = mutableMapOf<String, Pair<String, String>?>()
+
     override suspend fun browse(): List<SearchResult> = withContext(Dispatchers.IO) {
         // Curated list of IMDB IDs for the Movies tab home row. No network —
         // IMDB poster URLs are built from the ID so the tab can paint
@@ -260,104 +263,79 @@ class VidSrcProvider(
     private fun String.urlEncoded(): String =
         java.net.URLEncoder.encode(this, "UTF-8").replace("+", "%20")
 
-    override suspend fun streams(titleId: String, episode: Episode): List<StreamSource> {
+    override suspend fun streams(titleId: String, episode: Episode): List<StreamSource> = withContext(Dispatchers.IO) {
         val kind = cache[titleId]?.result?.kind ?: MediaKind.Movie
-        val paths = when (kind) {
-            MediaKind.Movie -> listOf("movie/$titleId")
-            else -> {
-                val ep = episode.id.takeIf { it.matches(Regex("s\\d+e\\d+")) }
-                    ?: "s1e${episode.number}"
-                val rawSeason = ep.substringAfter('s').substringBefore('e').toIntOrNull() ?: 1
-                // Guard: a value that looks like a year (e.g. 2007) is a
-                // release-year that leaked into the season slot, not a real
-                // season — embeds 404 on tv/<id>/2007/1. Fall back to S1.
-                val season = if (rawSeason in 1..99) rawSeason else 1
-                val number = ep.substringAfter('e').toIntOrNull() ?: episode.number
-                listOf("tv/$titleId/$season/$number")
-            }
-        }
-        // Order matters — the WebPlayer walks top-to-bottom on failures.
-        //
-        // 2026-06-14: VidSrc content is keyed by IMDB id, and the box's 0.4.7
-        // log showed vidlink returning a blank player for IMDB TV ids (vidlink
-        // really wants TMDb ids — it's great for the TMDb-based Must-Watch row,
-        // but a bad first pick here). So the IMDB-native vidsrc.* family +
-        // 2embed lead, and vidlink drops to the tail as a long shot.
-        return paths.flatMap { path ->
-            val pathKindIsTv = path.startsWith("tv/")
-            val (imdb, season, ep) = if (pathKindIsTv) {
-                val parts = path.removePrefix("tv/").split("/")
-                Triple(parts.getOrNull(0).orEmpty(), parts.getOrNull(1).orEmpty(), parts.getOrNull(2).orEmpty())
-            } else {
-                Triple(path.removePrefix("movie/"), "", "")
-            }
+        val isTv = kind != MediaKind.Movie
+        val imdb = titleId
+        val (season, number) = if (isTv) {
+            val ep = episode.id.takeIf { it.matches(Regex("s\\d+e\\d+")) } ?: "s1e${episode.number}"
+            val rawSeason = ep.substringAfter('s').substringBefore('e').toIntOrNull() ?: 1
+            // Guard: a release-year that leaked into the season slot (e.g. 2007)
+            // would 404 the embed (tv/<id>/2007/1). Fall back to S1.
+            val s = if (rawSeason in 1..99) rawSeason else 1
+            s to (ep.substringAfter('e').toIntOrNull() ?: episode.number)
+        } else 1 to 1
 
-            listOf(
-                // vidsrc.to — long-lived, reliable, IMDB path shape.
-                StreamSource(
-                    url = "https://vidsrc.to/embed/$path",
-                    kind = StreamKind.DirectEmbed,
-                    serverLabel = "VidSrc · .to",
-                    headers = mapOf("Referer" to "https://vidsrc.to/"),
-                ),
-                // 2embed — independent infra. NOTE: TV uses /embedtv/<id>&s=&e=,
-                // NOT /embed/tv/... (the old code malformed this and it always
-                // 404'd). Movie uses /embed/<id>.
-                StreamSource(
-                    url = if (pathKindIsTv) "https://www.2embed.cc/embedtv/$imdb&s=$season&e=$ep"
-                          else "https://www.2embed.cc/embed/$imdb",
-                    kind = StreamKind.DirectEmbed,
-                    serverLabel = "2embed",
-                    headers = mapOf("Referer" to "https://www.2embed.cc/"),
-                ),
-                // vidsrc.cc v2 — lowercase movie/tv (the old capital-M "Movie"
-                // shape is dead). Different player chain than vidsrc.to.
-                StreamSource(
-                    url = if (pathKindIsTv) "https://vidsrc.cc/v2/embed/tv/$imdb/$season/$ep"
-                          else "https://vidsrc.cc/v2/embed/movie/$imdb",
-                    kind = StreamKind.DirectEmbed,
-                    serverLabel = "vidsrc.cc",
-                    headers = mapOf("Referer" to "https://vidsrc.cc/"),
-                ),
-                // vidsrc.in / vidsrc.pm — vidsrc.xyz-family aliases that are
-                // currently resolving (the .xyz/.net apex are not). Same
-                // /embed/movie|tv path shape.
-                StreamSource(
-                    url = if (pathKindIsTv) "https://vidsrc.in/embed/tv/$imdb/$season/$ep"
-                          else "https://vidsrc.in/embed/movie/$imdb",
-                    kind = StreamKind.DirectEmbed,
-                    serverLabel = "VidSrc · .in",
-                    headers = mapOf("Referer" to "https://vidsrc.in/"),
-                ),
-                StreamSource(
-                    url = if (pathKindIsTv) "https://vidsrc.pm/embed/tv/$imdb/$season/$ep"
-                          else "https://vidsrc.pm/embed/movie/$imdb",
-                    kind = StreamKind.DirectEmbed,
-                    serverLabel = "VidSrc · .pm",
-                    headers = mapOf("Referer" to "https://vidsrc.pm/"),
-                ),
-                // vidlink — tail long shot for IMDB content (it prefers TMDb
-                // ids; blank for IMDB TV on the box, but occasionally resolves
-                // movies, so keep it late rather than dropping it).
-                StreamSource(
-                    url = if (pathKindIsTv) "https://vidlink.pro/tv/$imdb/$season/$ep"
-                          else "https://vidlink.pro/movie/$imdb",
-                    kind = StreamKind.DirectEmbed,
-                    serverLabel = "vidlink",
-                    headers = mapOf("Referer" to "https://vidlink.pro/"),
-                ),
-                // multiembed — last resort. Reachable but the box has shown
-                // intermittent SSL handshake trouble against it; keep it as a
-                // tail mirror rather than dropping a working-elsewhere source.
-                StreamSource(
-                    url = if (pathKindIsTv) "https://multiembed.mov/?video_id=$imdb&tmdb=0&s=$season&e=$ep"
-                          else "https://multiembed.mov/?video_id=$imdb&tmdb=0",
-                    kind = StreamKind.DirectEmbed,
-                    serverLabel = "multiembed",
-                    headers = mapOf("Referer" to "https://multiembed.mov/"),
-                ),
-            )
+        // The box can only actually PLAY vidlink so far, and vidlink (plus the
+        // whole modern embed crowd) wants a TMDb id, not IMDB. vidsrc.to is
+        // dead post-injunction. So: resolve IMDB -> TMDb once and lead with the
+        // TMDb-native players that work on the box; keep IMDB-accepting live
+        // mirrors as fallbacks for when the lookup misses.
+        val tmdb = findTmdb(imdb)
+        Log.i(TAG, "streams imdb=$imdb tv=$isTv s=$season e=$number tmdb=$tmdb")
+
+        fun src(label: String, url: String) = StreamSource(
+            url = url, kind = StreamKind.DirectEmbed, serverLabel = label,
+            headers = mapOf("Referer" to "https://${runCatching { java.net.URI(url).host }.getOrNull().orEmpty()}/"),
+        )
+
+        val out = mutableListOf<StreamSource>()
+        if (tmdb != null) {
+            val tid = tmdb.second
+            if (isTv) {
+                out += src("vidlink", "https://vidlink.pro/tv/$tid/$season/$number")
+                out += src("vidsrc.cc", "https://vidsrc.cc/v2/embed/tv/$tid/$season/$number")
+            } else {
+                out += src("vidlink", "https://vidlink.pro/movie/$tid")
+                out += src("vidsrc.cc", "https://vidsrc.cc/v2/embed/movie/$tid")
+            }
         }
+        // IMDB-accepting live mirrors (vidsrc.mov is the current live VidSrc
+        // mirror; multiembed independent). vidsrc.cc also accepts IMDB, so add
+        // it here too in case the TMDb lookup missed.
+        if (isTv) {
+            out += src("vidsrc.mov", "https://vidsrc.mov/embed/tv/$imdb/$season/$number")
+            if (tmdb == null) out += src("vidsrc.cc", "https://vidsrc.cc/v2/embed/tv/$imdb/$season/$number")
+            out += src("multiembed", "https://multiembed.mov/?video_id=$imdb&tmdb=0&s=$season&e=$number")
+        } else {
+            out += src("vidsrc.mov", "https://vidsrc.mov/embed/movie/$imdb")
+            if (tmdb == null) out += src("vidsrc.cc", "https://vidsrc.cc/v2/embed/movie/$imdb")
+            out += src("multiembed", "https://multiembed.mov/?video_id=$imdb&tmdb=0")
+        }
+        out
+    }
+
+    /**
+     * IMDB id -> (mediaType, tmdbId) via the TMDb "find" endpoint (through our
+     * Worker proxy so no key ships). Cached per id (including misses). Null if
+     * the lookup fails or returns neither a movie nor a tv match.
+     */
+    private suspend fun findTmdb(imdbId: String): Pair<String, String>? {
+        if (!imdbId.startsWith("tt")) return null
+        if (tmdbCache.containsKey(imdbId)) return tmdbCache[imdbId]
+        val body = fetch("$TMDB_FIND/find/$imdbId?external_source=imdb_id&language=en-US")
+        val result = body?.let {
+            val obj = runCatching { json.parseToJsonElement(it).jsonObject }.getOrNull()
+            val movie = (obj?.get("movie_results") as? JsonArray)?.firstOrNull() as? JsonObject
+            val tv = (obj?.get("tv_results") as? JsonArray)?.firstOrNull() as? JsonObject
+            when {
+                movie != null -> movie["id"]?.jsonPrimitive?.contentOrNull?.let { id -> "movie" to id }
+                tv != null -> tv["id"]?.jsonPrimitive?.contentOrNull?.let { id -> "tv" to id }
+                else -> null
+            }
+        }
+        tmdbCache[imdbId] = result
+        return result
     }
 
     private fun fetch(url: String): String? = runCatching {
@@ -381,6 +359,8 @@ class VidSrcProvider(
         private const val TAG = "VidSrcProvider"
         private const val IMDB_SUGGEST = "https://v3.sg.media-imdb.com/suggestion/x"
         private const val TVMAZE = "https://api.tvmaze.com"
+        // TMDb reached through our Worker proxy (holds the key server-side).
+        private const val TMDB_FIND = "https://dt-streamz-tmdb.maxxtopia.workers.dev/3"
         private const val SYNTHETIC_EPISODE_COUNT = 50
         // IMDB suggestion `q` values that are watchable titles (vs people /
         // companies) — used to filter type-ahead suggestions.

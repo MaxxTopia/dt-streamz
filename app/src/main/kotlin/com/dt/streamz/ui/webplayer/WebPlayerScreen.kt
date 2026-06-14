@@ -332,11 +332,14 @@ fun WebPlayerScreen(
                             hostOf(url)?.let { mainFrameHost = it }
                         },
                         onMainFrameFinished = { loadState = LoadState.Loaded },
-                        onMainFrameError = { code, reason ->
+                        onMainFrameError = { code, reason, failedUrl ->
                             val transport = code in TRANSPORT_ERROR_CODES
                             DebugLog.w(TAG, "main-frame err code=$code reason=$reason mirror=$mirrorIndex")
                             if (transport) {
-                                DeadHostRegistry.markIfHost(activeUrl)
+                                // Mark the URL that ACTUALLY failed, not the
+                                // factory-captured (stale) activeUrl — otherwise
+                                // an error on mirror N poisons mirror 0's host.
+                                DeadHostRegistry.markIfHost(failedUrl ?: activeUrl)
                             }
                             if (transport && mirrorIndex + 1 < totalMirrors) {
                                 DebugLog.i(TAG, "advance ${mirrorIndex} -> ${mirrorIndex + 1} (transport err $code)")
@@ -637,7 +640,7 @@ private class EmbedWebViewClient(
     private val mainFrameHost: () -> String?,
     private val onMainFrameStarted: (String) -> Unit,
     private val onMainFrameFinished: () -> Unit,
-    private val onMainFrameError: (Int, String) -> Unit,
+    private val onMainFrameError: (Int, String, String?) -> Unit,
     private val onResourceBlocked: (String) -> Unit,
 ) : WebViewClient() {
 
@@ -656,6 +659,12 @@ private class EmbedWebViewClient(
             DebugLog.i(TAG, "page-finish ${truncUrl(url)}")
             onMainFrameFinished()
         }
+        // D-pad play/pause: the box remote's OK/center (and the media
+        // play/pause key) toggle the same-origin <video> — the vidlink and
+        // YouTube embed players that actually work on the box both expose one.
+        // Capture-phase + preventDefault so a working player doesn't also seek.
+        view.evaluateJavascript(PLAY_PAUSE_JS, null)
+
         if (cosmeticCss.isBlank()) return
         val jsLiteral = JSONObject.quote(cosmeticCss)
         val script = """
@@ -677,7 +686,7 @@ private class EmbedWebViewClient(
         super.onReceivedError(view, request, error)
         if (!request.isForMainFrame) return
         DebugLog.w(TAG, "main-frame err code=${error.errorCode} desc=${error.description} url=${truncUrl(request.url?.toString().orEmpty())}")
-        onMainFrameError(error.errorCode, "Embed failed to load: ${error.description}")
+        onMainFrameError(error.errorCode, "Embed failed to load: ${error.description}", request.url?.toString())
     }
 
     override fun shouldOverrideUrlLoading(
@@ -900,6 +909,31 @@ private val CDN_ALLOWLIST_SUFFIXES = setOf(
     "mixdrop.co",
     "upcloud.to",
 )
+
+/**
+ * Injected into every loaded embed: maps the TV remote's OK/center + the
+ * media play/pause key to toggling the page's same-origin <video>. Runs in
+ * capture phase and stops the event so a player that would otherwise treat
+ * OK as "seek" doesn't double-act. No-op on cross-origin iframe players
+ * (we can't reach their video), which don't play on the box anyway.
+ */
+private const val PLAY_PAUSE_JS = """
+    (function(){
+      if (window.__dtPlayPause) return; window.__dtPlayPause = true;
+      function toggle(){
+        var v = document.querySelector('video');
+        if (!v) return false;
+        try { if (v.paused) v.play(); else v.pause(); return true; } catch(e){ return false; }
+      }
+      document.addEventListener('keydown', function(e){
+        var k = e.keyCode;
+        // 13=Enter/OK, 32=Space, 179=MediaPlayPause, 85=KEYCODE_MEDIA_PLAY_PAUSE
+        if (k===13 || k===32 || k===179 || k===85 || e.key==='Enter' || e.key==='MediaPlayPause'){
+          if (toggle()){ e.preventDefault(); e.stopPropagation(); }
+        }
+      }, true);
+    })();
+"""
 
 private const val TAG = "WebPlayer"
 private const val DESKTOP_UA =
