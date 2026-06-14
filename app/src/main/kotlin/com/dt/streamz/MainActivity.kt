@@ -1,6 +1,7 @@
 package com.dt.streamz
 
 import android.content.Context
+import android.media.MediaPlayer
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -35,8 +36,23 @@ class MainActivity : ComponentActivity() {
         networkMonitor.stop()
     }
 
+    private fun playOpenSound() {
+        runCatching {
+            MediaPlayer.create(this, R.raw.app_open)?.apply {
+                setVolume(0.85f, 0.85f)
+                setOnCompletionListener { it.release() }
+                setOnErrorListener { mp, _, _ -> mp.release(); true }
+                start()
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // App-open sound: a soft guitar pluck-up, on a real cold launch only
+        // (savedInstanceState == null skips config-change recreations). The
+        // file is pre-mixed quiet (~-14 dB); fire-and-forget, self-releasing.
+        if (savedInstanceState == null) playOpenSound()
         setContent {
             DtTheme {
                 val ctx = LocalContext.current
