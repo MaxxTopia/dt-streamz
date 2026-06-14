@@ -45,27 +45,41 @@ internal class InnerTubeClient {
         """.trimIndent()
         val root = post("search", payload) ?: return@withContext null
 
-        val sections = root["contents"]?.jsonObject
-            ?.get("twoColumnSearchResultsRenderer")?.jsonObject
-            ?.get("primaryContents")?.jsonObject
-            ?.get("sectionListRenderer")?.jsonObject
-            ?.get("contents")?.jsonArrayOrNull
-            ?: return@withContext null
-
+        // Results aren't flat: YouTube buries most of them inside shelves
+        // (shelfRenderer -> vertical/horizontalListRenderer) as videoRenderer
+        // AND gridVideoRenderer, e.g. "Latest from X", "<query> edits". A
+        // flat top-level scan finds only 1-2. So walk the whole response tree
+        // and collect every video/channel renderer wherever it sits, deduped
+        // in document (relevance) order.
         val channels = mutableListOf<YtChannel>()
         val videos = mutableListOf<YtVideo>()
-        for (section in sections) {
-            val items = section.jsonObjectOrNull
-                ?.get("itemSectionRenderer")?.jsonObject
-                ?.get("contents")?.jsonArrayOrNull ?: continue
-            for (item in items) {
-                val obj = item.jsonObjectOrNull ?: continue
-                obj["videoRenderer"]?.jsonObjectOrNull?.let { parseVideo(it)?.let(videos::add) }
-                obj["channelRenderer"]?.jsonObjectOrNull?.let { parseChannel(it)?.let(channels::add) }
-            }
-        }
+        val seen = mutableSetOf<String>()
+        collectRenderers(root, videos, channels, seen)
         YtSearch(channels = channels, videos = videos)
             .takeIf { it.channels.isNotEmpty() || it.videos.isNotEmpty() }
+    }
+
+    /** Depth-first collect of videoRenderer/gridVideoRenderer/channelRenderer. */
+    private fun collectRenderers(
+        el: JsonElement,
+        videos: MutableList<YtVideo>,
+        channels: MutableList<YtChannel>,
+        seen: MutableSet<String>,
+    ) {
+        when (el) {
+            is JsonObject -> {
+                (el["videoRenderer"]?.jsonObjectOrNull ?: el["gridVideoRenderer"]?.jsonObjectOrNull)
+                    ?.let { parseVideo(it)?.let { v -> if (seen.add(v.videoId)) videos.add(v) } }
+                el["channelRenderer"]?.jsonObjectOrNull
+                    ?.let { parseChannel(it)?.let { c -> if (seen.add("ch:" + c.channelId)) channels.add(c) } }
+                for ((k, v) in el) {
+                    if (k == "videoRenderer" || k == "gridVideoRenderer" || k == "channelRenderer") continue
+                    collectRenderers(v, videos, channels, seen)
+                }
+            }
+            is JsonArray -> el.forEach { collectRenderers(it, videos, channels, seen) }
+            else -> {}
+        }
     }
 
     /**
@@ -104,8 +118,12 @@ internal class InnerTubeClient {
 
     private fun parseVideo(v: JsonObject): YtVideo? {
         val videoId = v["videoId"]?.jsonPrimitive?.contentOrNull ?: return null
-        val title = v["title"]?.runsText() ?: return null
-        val uploader = v["ownerText"]?.runsText() ?: v["longBylineText"]?.runsText()
+        // gridVideoRenderer uses headline+shortBylineText; videoRenderer uses
+        // title+ownerText. Accept either so shelf results aren't dropped.
+        val title = v["title"]?.runsText() ?: v["headline"]?.runsText() ?: return null
+        val uploader = v["ownerText"]?.runsText()
+            ?: v["longBylineText"]?.runsText()
+            ?: v["shortBylineText"]?.runsText()
         val channelId = v["ownerText"]?.jsonObjectOrNull
             ?.get("runs")?.jsonArrayOrNull?.firstOrNull()?.jsonObjectOrNull
             ?.get("navigationEndpoint")?.jsonObjectOrNull

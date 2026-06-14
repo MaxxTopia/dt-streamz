@@ -14,3 +14,4 @@ local.properties
 
 # Local Claude Code state
 .claude/
+_sfx_work/
