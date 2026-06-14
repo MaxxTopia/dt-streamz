@@ -52,6 +52,7 @@ import com.dt.streamz.data.FavoritesStore
 import com.dt.streamz.data.SearchResult
 import com.dt.streamz.scraper.ProviderRegistry
 import kotlinx.coroutines.flow.flowOf
+import com.dt.streamz.ui.theme.focusGlow
 import kotlinx.coroutines.launch
 
 @Composable
@@ -143,6 +144,7 @@ fun SearchScreen(
                 editorOpen = false
             },
             suggestionsProvider = suggestProvider?.let { p -> { q -> p.suggest(q) } },
+            recentSearches = recentSearches,
         )
     }
 }
@@ -290,6 +292,9 @@ internal fun SearchEditorDialog(
     // Optional type-ahead source (YouTube tab passes the provider's
     // autocomplete). When null, no suggestion row renders.
     suggestionsProvider: (suspend (String) -> List<String>)? = null,
+    // Previously-searched queries — shown as tappable chips before you start
+    // typing so you don't have to peck the same thing out again on the TV.
+    recentSearches: List<String> = emptyList(),
 ) {
     var text by remember { mutableStateOf(initialQuery) }
     var suggestions by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -385,6 +390,17 @@ internal fun SearchEditorDialog(
                     )
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         lazyRowItems(suggestions) { s ->
+                            SuggestionChip(label = s, onClick = { onSubmit(s) })
+                        }
+                    }
+                } else if (text.isBlank() && recentSearches.isNotEmpty()) {
+                    Text(
+                        text = "Recent · OK to search",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    )
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        lazyRowItems(recentSearches) { s ->
                             SuggestionChip(label = s, onClick = { onSubmit(s) })
                         }
                     }
@@ -606,7 +622,8 @@ private fun PosterCard(
             onClick = onClick,
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(2f / 3f),
+                .aspectRatio(2f / 3f)
+                .focusGlow(focused),
             colors = ClickableSurfaceDefaults.colors(
                 containerColor = MaterialTheme.colorScheme.surface,
                 focusedContainerColor = MaterialTheme.colorScheme.surface,

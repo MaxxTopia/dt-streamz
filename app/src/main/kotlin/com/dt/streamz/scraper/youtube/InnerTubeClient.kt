@@ -149,7 +149,6 @@ internal class InnerTubeClient {
             .header("Content-Type", "application/json")
             .header("User-Agent", Http.DESKTOP_UA)
             .header("Accept-Language", "en-US,en;q=0.9")
-            .header("X-Goog-Visitor-Id", "")
             .post(jsonBody.toRequestBody(JSON_MEDIA))
             .build()
         Http.client.newCall(req).execute().use { resp ->

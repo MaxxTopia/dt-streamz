@@ -9,6 +9,8 @@ import com.dt.streamz.data.TitleDetails
 import com.dt.streamz.diag.DebugLog
 import com.dt.streamz.scraper.Provider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
@@ -50,56 +52,58 @@ class YouTubeProvider : Provider {
     private val service = ServiceList.YouTube
     private val cache = mutableMapOf<String, CachedItem>()
 
-    override suspend fun browse(): List<SearchResult> = withContext(Dispatchers.IO) {
-        // The home feed is a "recommended" page — it should look like normal
-        // YouTube recommendations, NOT a wall of live broadcasts in random
-        // languages. So we drop live streams and non-English titles before
-        // taking the first 24. (Live channels you actually want are still
-        // reachable via search, where a searched creator's live stream is
-        // floated to the top.)
-        val piped = runCatching { piped.trending() }.getOrNull()
-        if (!piped.isNullOrEmpty()) {
-            return@withContext piped
-                .filterNot { it.isLive }
-                .filter { isLikelyEnglish(it.title) }
-                .take(24)
-                .map { it.toSearchResult() }
-        }
-        DebugLog.i(TAG, "Piped trending empty/null — falling back to NewPipeExtractor")
+    override suspend fun browse(): List<SearchResult> = kotlinx.coroutines.coroutineScope {
+        // Recommended feed. YouTube's real trending/home browse is login- and
+        // session-token-gated, Piped trending now comes back empty, and
+        // NewPipe's kiosk crashes on this box's Android (java.util.stream
+        // Collectors.toUnmodifiableList is API 33+). So we synthesize a
+        // "popular" grid from InnerTube SEARCH (verified reliable, English)
+        // across a few broad seeds, run in parallel and merged. Not
+        // personalized — that's impossible without a login — but a full,
+        // English, live-free grid instead of one stray video.
+        val perSeed = RECOMMEND_SEEDS.map { seed ->
+            async(Dispatchers.IO) {
+                runCatching { innertube.search(seed) }.getOrNull()?.videos.orEmpty()
+            }
+        }.awaitAll()
 
-        // Tier 2: NewPipeExtractor's default kiosk.
-        runCatching {
-            val kioskList = service.kioskList
-            val kioskId = kioskList.defaultKioskId
-            val extractor = kioskList.getExtractorById(kioskId, null)
-            extractor.fetchPage()
-            val items = extractor.initialPage.items.orEmpty()
-            items.filterIsInstance<StreamInfoItem>()
-                .filterNot { it.streamType == org.schabi.newpipe.extractor.stream.StreamType.LIVE_STREAM }
-                .filter { isLikelyEnglish(it.name ?: "") }
-                .take(24)
-                .map { it.toSearchResult() }
-        }.onFailure { DebugLog.w(TAG, "NewPipe browse() failed", it) }.getOrDefault(emptyList())
+        val out = mutableListOf<SearchResult>()
+        val seen = mutableSetOf<String>()
+        // Interleave seeds round-robin so the grid is varied (not 24 music
+        // videos because "music" resolved first).
+        val maxLen = perSeed.maxOfOrNull { it.size } ?: 0
+        for (i in 0 until maxLen) {
+            for (videos in perSeed) {
+                val v = videos.getOrNull(i) ?: continue
+                if (v.isLive || !isLikelyEnglish(v.title)) continue
+                if (seen.add(v.videoId)) out.add(v.toSearchResult())
+                if (out.size >= 24) return@coroutineScope out
+            }
+        }
+        if (out.isNotEmpty()) return@coroutineScope out
+
+        // Last-ditch fallback: Piped trending (rarely up now).
+        val piped = runCatching { piped.trending() }.getOrNull()
+        piped.orEmpty()
+            .filterNot { it.isLive }
+            .filter { isLikelyEnglish(it.title) }
+            .take(24)
+            .map { it.toSearchResult() }
     }
 
     override suspend fun search(query: String): List<SearchResult> = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext emptyList()
 
-        // Tier 0: InnerTube (direct YouTube, hl=en/gl=US). English titles,
-        // and it returns CHANNELS too. If a channel matches what you typed,
-        // we lead with that creator's newest uploads (newest -> oldest, from
-        // the public RSS feed) so "search a creator -> see their latest" just
-        // works, then append the general video results.
+        // Tier 0: InnerTube (direct YouTube, hl=en/gl=US) — English titles,
+        // YouTube's own relevance order. We keep that order as-is: it already
+        // surfaces the searched creator's videos near the top, and because a
+        // creator often has several channels (main / VODs / shorts), pinning
+        // just one channel's uploads (an earlier approach) actually hid the
+        // others. Relevance covers them all.
         val itResult = runCatching { innertube.search(query) }.getOrNull()
-        if (itResult != null && (itResult.videos.isNotEmpty() || itResult.channels.isNotEmpty())) {
+        if (itResult != null && itResult.videos.isNotEmpty()) {
             val out = mutableListOf<SearchResult>()
             val seen = mutableSetOf<String>()
-            val matched = itResult.channels.firstOrNull { channelMatchesQuery(query, it.name) }
-            if (matched != null) {
-                val newest = runCatching { innertube.channelNewest(matched.channelId) }
-                    .getOrDefault(emptyList())
-                for (v in newest) if (seen.add(v.videoId)) out.add(v.toSearchResult())
-            }
             for (v in itResult.videos) if (seen.add(v.videoId)) out.add(v.toSearchResult())
             if (out.isNotEmpty()) return@withContext out
         }
@@ -339,6 +343,13 @@ class YouTubeProvider : Provider {
 
     companion object {
         private const val TAG = "YouTubeProvider"
+
+        // Broad seeds for the no-login "recommended" grid (see browse()).
+        // Mixed categories so the merged, round-robin grid feels varied.
+        private val RECOMMEND_SEEDS = listOf(
+            "official music video", "movie trailer", "highlights",
+            "podcast", "gaming", "documentary",
+        )
 
         /** One-shot extractor init. Call from [com.dt.streamz.DtApplication]. */
         fun initOnce() {

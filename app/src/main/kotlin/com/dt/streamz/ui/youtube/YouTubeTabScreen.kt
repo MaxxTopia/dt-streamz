@@ -42,6 +42,8 @@ import com.dt.streamz.scraper.ProviderRegistry
 import com.dt.streamz.ui.search.SearchEditorDialog
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import com.dt.streamz.ui.theme.GlowYouTube
+import com.dt.streamz.ui.theme.focusGlow
 import kotlinx.coroutines.launch
 
 /**
@@ -77,6 +79,25 @@ fun YouTubeTabScreen(
     var searching by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     var searchJob by remember { mutableStateOf<Job?>(null) }
+
+    // Recent YouTube searches, persisted so the on-screen keyboard isn't
+    // needed to re-run a past query (shown as chips in the search dialog).
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    val ytPrefs = remember {
+        ctx.getSharedPreferences("yt_search_history", android.content.Context.MODE_PRIVATE)
+    }
+    var historyTick by remember { mutableStateOf(0) }
+    val recentSearches = remember(historyTick) {
+        ytPrefs.getString("queries", "").orEmpty().split("\n").filter { it.isNotBlank() }
+    }
+    fun rememberSearch(q: String) {
+        val t = q.trim()
+        if (t.length < 2) return
+        val cur = ytPrefs.getString("queries", "").orEmpty().split("\n").filter { it.isNotBlank() }
+        val next = (listOf(t) + cur.filterNot { it.equals(t, ignoreCase = true) }).take(12)
+        ytPrefs.edit().putString("queries", next.joinToString("\n")).apply()
+        historyTick++
+    }
 
     LaunchedEffect(provider.id) {
         // 5s cap — NewPipeExtractor on Android 9 can hang for tens of
@@ -168,9 +189,11 @@ fun YouTubeTabScreen(
             onSubmit = { text ->
                 query = text
                 editorOpen = false
+                rememberSearch(text)
                 runSearch(text)
             },
             suggestionsProvider = { provider.suggest(it) },
+            recentSearches = recentSearches,
         )
     }
 }
@@ -302,7 +325,8 @@ private fun VideoCard(
             onClick = onClick,
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(16f / 9f),
+                .aspectRatio(16f / 9f)
+                .focusGlow(focused, GlowYouTube),
             colors = ClickableSurfaceDefaults.colors(
                 containerColor = MaterialTheme.colorScheme.surface,
                 focusedContainerColor = MaterialTheme.colorScheme.surface,

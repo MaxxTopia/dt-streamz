@@ -52,6 +52,7 @@ import com.dt.streamz.scraper.ProviderRegistry
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.flowOf
+import com.dt.streamz.ui.theme.focusGlow
 import kotlinx.coroutines.launch
 
 @Composable
@@ -457,7 +458,8 @@ internal fun PosterCard(
             onClick = onClick,
             modifier = Modifier
                 .width(132.dp)
-                .height(198.dp),
+                .height(198.dp)
+                .focusGlow(focused),
             colors = ClickableSurfaceDefaults.colors(
                 containerColor = MaterialTheme.colorScheme.surface,
                 focusedContainerColor = MaterialTheme.colorScheme.surface,

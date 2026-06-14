@@ -267,23 +267,22 @@ class VidSrcProvider(
             else -> {
                 val ep = episode.id.takeIf { it.matches(Regex("s\\d+e\\d+")) }
                     ?: "s1e${episode.number}"
-                val season = ep.substringAfter('s').substringBefore('e').toInt()
-                val number = ep.substringAfter('e').toInt()
+                val rawSeason = ep.substringAfter('s').substringBefore('e').toIntOrNull() ?: 1
+                // Guard: a value that looks like a year (e.g. 2007) is a
+                // release-year that leaked into the season slot, not a real
+                // season — embeds 404 on tv/<id>/2007/1. Fall back to S1.
+                val season = if (rawSeason in 1..99) rawSeason else 1
+                val number = ep.substringAfter('e').toIntOrNull() ?: episode.number
                 listOf("tv/$titleId/$season/$number")
             }
         }
-        // Order matters — the WebPlayer walks top-to-bottom on transport
-        // failures or no-media-traffic timeouts.
+        // Order matters — the WebPlayer walks top-to-bottom on failures.
         //
-        // 2026-06-13 mirror refresh: the previous list was dominated by
-        // hosts that have since gone fully dead (DNS NXDOMAIN, not just
-        // network-blocked) — embed.su, autoembed.cc, moviesapi.club,
-        // vidsrc.net, vidsrc.xyz, vidsrc.icu, vidsrc.mov. The box's debug
-        // log showed EVERY mirror failing (ERR_NAME_NOT_RESOLVED / SSL /
-        // timeout) which is why nothing would play. Rebuilt from hosts
-        // verified reachable on 2026-06-13, front-loading the clean modern
-        // players (vidlink) and keeping infra diverse so a single CDN ban
-        // doesn't take them all down together.
+        // 2026-06-14: VidSrc content is keyed by IMDB id, and the box's 0.4.7
+        // log showed vidlink returning a blank player for IMDB TV ids (vidlink
+        // really wants TMDb ids — it's great for the TMDb-based Must-Watch row,
+        // but a bad first pick here). So the IMDB-native vidsrc.* family +
+        // 2embed lead, and vidlink drops to the tail as a long shot.
         return paths.flatMap { path ->
             val pathKindIsTv = path.startsWith("tv/")
             val (imdb, season, ep) = if (pathKindIsTv) {
@@ -294,15 +293,6 @@ class VidSrcProvider(
             }
 
             listOf(
-                // vidlink.pro — modern, single-iframe player, minimal popups;
-                // best UX inside the box's WebView. Accepts IMDB ids directly.
-                StreamSource(
-                    url = if (pathKindIsTv) "https://vidlink.pro/tv/$imdb/$season/$ep"
-                          else "https://vidlink.pro/movie/$imdb",
-                    kind = StreamKind.DirectEmbed,
-                    serverLabel = "vidlink",
-                    headers = mapOf("Referer" to "https://vidlink.pro/"),
-                ),
                 // vidsrc.to — long-lived, reliable, IMDB path shape.
                 StreamSource(
                     url = "https://vidsrc.to/embed/$path",
@@ -345,6 +335,16 @@ class VidSrcProvider(
                     kind = StreamKind.DirectEmbed,
                     serverLabel = "VidSrc · .pm",
                     headers = mapOf("Referer" to "https://vidsrc.pm/"),
+                ),
+                // vidlink — tail long shot for IMDB content (it prefers TMDb
+                // ids; blank for IMDB TV on the box, but occasionally resolves
+                // movies, so keep it late rather than dropping it).
+                StreamSource(
+                    url = if (pathKindIsTv) "https://vidlink.pro/tv/$imdb/$season/$ep"
+                          else "https://vidlink.pro/movie/$imdb",
+                    kind = StreamKind.DirectEmbed,
+                    serverLabel = "vidlink",
+                    headers = mapOf("Referer" to "https://vidlink.pro/"),
                 ),
                 // multiembed — last resort. Reachable but the box has shown
                 // intermittent SSL handshake trouble against it; keep it as a

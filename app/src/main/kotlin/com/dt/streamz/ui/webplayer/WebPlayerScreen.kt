@@ -77,6 +77,14 @@ private const val LOAD_TIMEOUT_MS = 20_000L
 private const val MEDIA_CHECK_MS = 18_000L
 
 /**
+ * If no player element of any kind shows up within this window after
+ * page-finish, treat the mirror as a blank/dead wrapper and walk on —
+ * instead of waiting the full [MEDIA_CHECK_MS]. Mirrors that DO show a
+ * player still get the full window.
+ */
+private const val BLANK_CUTOFF_MS = 8_000L
+
+/**
  * WebView error codes that indicate the embed host itself is unreachable
  * (TCP reset, DNS failure, TLS handshake refused, etc.). When we hit one
  * of these AND we have a [WebPlayerScreen.fallbacks] list, walking to the
@@ -237,8 +245,10 @@ fun WebPlayerScreen(
     // alive. No segment? Walk to the next mirror.
     LaunchedEffect(activeUrl, attempt, loadState) {
         if (loadState !is LoadState.Loaded) return@LaunchedEffect
-        val deadline = System.currentTimeMillis() + MEDIA_CHECK_MS
+        val start = System.currentTimeMillis()
+        val deadline = start + MEDIA_CHECK_MS
         var lastSignal = "none"
+        var sawPlayer = false
         while (System.currentTimeMillis() < deadline) {
             delay(500)
             val wv = webViewRef ?: return@LaunchedEffect
@@ -248,6 +258,13 @@ fun WebPlayerScreen(
                 DebugLog.i(TAG, "play confirmed mirror=$mirrorIndex via $signal")
                 return@LaunchedEffect
             }
+            if (signal == "iframe-cross-origin") sawPlayer = true
+            // Fast-fail a dead wrapper: if NO player element of any kind has
+            // appeared within BLANK_CUTOFF_MS, this mirror is blank — don't
+            // burn the full 18s before walking to the next one. (Players that
+            // showed an iframe get the full window in case they just need a
+            // moment / a tap.)
+            if (!sawPlayer && System.currentTimeMillis() - start >= BLANK_CUTOFF_MS) break
         }
         // Timed out without confirmed media traffic. IMPORTANT: a lot of
         // modern players (vidlink, vidsrc.cc, cloudnestra) either (a) proxy
