@@ -659,11 +659,9 @@ private class EmbedWebViewClient(
             DebugLog.i(TAG, "page-finish ${truncUrl(url)}")
             onMainFrameFinished()
         }
-        // D-pad play/pause: the box remote's OK/center (and the media
-        // play/pause key) toggle the same-origin <video> — the vidlink and
-        // YouTube embed players that actually work on the box both expose one.
-        // Capture-phase + preventDefault so a working player doesn't also seek.
-        view.evaluateJavascript(PLAY_PAUSE_JS, null)
+        // Predictable D-pad controls over the same-origin video (play/pause,
+        // ±10s seek, kill volume-on-up/down). See DPAD_CONTROL_JS.
+        view.evaluateJavascript(DPAD_CONTROL_JS, null)
 
         if (cosmeticCss.isBlank()) return
         val jsLiteral = JSONObject.quote(cosmeticCss)
@@ -911,26 +909,53 @@ private val CDN_ALLOWLIST_SUFFIXES = setOf(
 )
 
 /**
- * Injected into every loaded embed: maps the TV remote's OK/center + the
- * media play/pause key to toggling the page's same-origin <video>. Runs in
- * capture phase and stops the event so a player that would otherwise treat
- * OK as "seek" doesn't double-act. No-op on cross-origin iframe players
- * (we can't reach their video), which don't play on the box anyway.
+ * Injected into every loaded page to give the TV remote predictable, "normal
+ * player" controls over the same-origin <video> (vidlink, the YouTube watch
+ * page), instead of the site's erratic raw-key behavior:
+ *   - OK / center / space / media-play-pause -> toggle play/pause
+ *   - LEFT / RIGHT -> seek -10s / +10s
+ *   - UP / DOWN -> swallowed (so they STOP changing volume, the complaint)
+ * Each handled key is preventDefault + stopImmediatePropagation in the
+ * capture phase so the site's own handler doesn't ALSO act (no double-seek).
+ * A small centered toast shows the action. No-op (keys pass through) when no
+ * same-origin video is reachable.
  */
-private const val PLAY_PAUSE_JS = """
+private const val DPAD_CONTROL_JS = """
     (function(){
-      if (window.__dtPlayPause) return; window.__dtPlayPause = true;
-      function toggle(){
+      if (window.__dtDpad) return; window.__dtDpad = true;
+      function vid(){
         var v = document.querySelector('video');
-        if (!v) return false;
-        try { if (v.paused) v.play(); else v.pause(); return true; } catch(e){ return false; }
+        if (v) return v;
+        var f = document.querySelectorAll('iframe');
+        for (var i=0;i<f.length;i++){ try{ var d=f[i].contentDocument; var vv=d&&d.querySelector('video'); if(vv) return vv; }catch(e){} }
+        return null;
+      }
+      var t;
+      function toast(msg){
+        try{
+          var el=document.getElementById('__dtToast');
+          if(!el){ el=document.createElement('div'); el.id='__dtToast';
+            el.style.cssText='position:fixed;left:50%;bottom:12%;transform:translateX(-50%);z-index:2147483647;'+
+              'background:rgba(0,0,0,.72);color:#fff;font:600 22px system-ui,sans-serif;padding:10px 18px;'+
+              'border-radius:10px;pointer-events:none;transition:opacity .25s;opacity:0';
+            document.documentElement.appendChild(el); }
+          el.textContent=msg; el.style.opacity='1';
+          clearTimeout(t); t=setTimeout(function(){ el.style.opacity='0'; },900);
+        }catch(e){}
       }
       document.addEventListener('keydown', function(e){
-        var k = e.keyCode;
-        // 13=Enter/OK, 32=Space, 179=MediaPlayPause, 85=KEYCODE_MEDIA_PLAY_PAUSE
-        if (k===13 || k===32 || k===179 || k===85 || e.key==='Enter' || e.key==='MediaPlayPause'){
-          if (toggle()){ e.preventDefault(); e.stopPropagation(); }
-        }
+        var v=vid(); if(!v) return;
+        var k=e.keyCode;
+        if (k===13||k===32||k===85||k===179||e.key==='Enter'||e.key==='MediaPlayPause'){
+          try{ if(v.paused){v.play();toast('▶');} else {v.pause();toast('⏸');} }catch(e2){}
+        } else if (k===37||e.key==='ArrowLeft'){
+          try{ v.currentTime=Math.max(0,(v.currentTime||0)-10); toast('⏪ 10s'); }catch(e2){}
+        } else if (k===39||e.key==='ArrowRight'){
+          try{ v.currentTime=Math.min((v.duration||1e9),(v.currentTime||0)+10); toast('⏩ 10s'); }catch(e2){}
+        } else if (k===38||k===40||e.key==='ArrowUp'||e.key==='ArrowDown'){
+          // swallow only — kill the unwanted volume-on-arrows behavior
+        } else { return; }
+        e.preventDefault(); e.stopImmediatePropagation();
       }, true);
     })();
 """

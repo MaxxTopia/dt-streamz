@@ -73,9 +73,19 @@ fun SearchScreen(
     val historyPrefs = remember { ctx.getSharedPreferences("search_history", android.content.Context.MODE_PRIVATE) }
     var historyTick by remember { mutableStateOf(0) }
     val recentSearches = remember(historyTick) { readSearchHistory(historyPrefs) }
+    // Pin focus to the always-present search bar after a search runs.
+    // Without this, clicking a recent/suggestion chip removed the chip's
+    // container from composition, focus snapped UP to the TabRow, and its
+    // onFocus handler silently switched you to the Movies tab.
+    val searchBarFocus = remember { FocusRequester() }
+    var pinFocus by remember { mutableStateOf(false) }
+    LaunchedEffect(pinFocus) {
+        if (pinFocus) { kotlinx.coroutines.delay(60); runCatching { searchBarFocus.requestFocus() }; pinFocus = false }
+    }
     fun runQuery(q: String) {
         vm.onQueryChange(q); vm.onSubmit()
         writeSearchHistory(historyPrefs, q); historyTick++
+        pinFocus = true
     }
     val liveCount = (state as? SearchState.Loaded)?.results?.size
     val favoriteEntries by (favorites?.entries ?: flowOf(emptyList()))
@@ -105,7 +115,7 @@ fun SearchScreen(
         modifier = Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        SearchBarCard(query = query, onClick = { editorOpen = true })
+        SearchBarCard(query = query, onClick = { editorOpen = true }, focusRequester = searchBarFocus)
 
         when (val s = state) {
             SearchState.Idle -> {
@@ -234,13 +244,14 @@ private fun SuggestionChip(label: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun SearchBarCard(query: String, onClick: () -> Unit) {
+private fun SearchBarCard(query: String, onClick: () -> Unit, focusRequester: FocusRequester) {
     var focused by remember { mutableStateOf(false) }
     Surface(
         onClick = onClick,
         modifier = Modifier
             .fillMaxWidth(0.5f)
             .height(44.dp)
+            .focusRequester(focusRequester)
             .onFocusChanged { focused = it.isFocused },
         colors = ClickableSurfaceDefaults.colors(
             containerColor = MaterialTheme.colorScheme.surface,

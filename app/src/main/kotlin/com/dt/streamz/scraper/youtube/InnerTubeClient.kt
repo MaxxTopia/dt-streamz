@@ -171,13 +171,18 @@ internal class InnerTubeClient {
             .build()
         Http.client.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) {
-                DebugLog.d(TAG, "POST $endpoint -> HTTP ${resp.code}")
+                DebugLog.w(TAG, "POST $endpoint -> HTTP ${resp.code} (search will fall back)")
                 return@use null
             }
             val body = resp.body?.string() ?: return@use null
-            Http.json.parseToJsonElement(body).jsonObject
+            val obj = Http.json.parseToJsonElement(body).jsonObject
+            // Diagnostic: did we actually get search content back? If the box
+            // gets a 200 but no 'contents' (consent wall / bot page), this
+            // tells us; from a healthy IP 'contents' is present.
+            DebugLog.i(TAG, "POST $endpoint ok ${body.length}B contents=${obj.containsKey("contents")}")
+            obj
         }
-    }.onFailure { DebugLog.d(TAG, "POST $endpoint failed: ${it.message}") }.getOrNull()
+    }.onFailure { DebugLog.w(TAG, "POST $endpoint failed: ${it.message}") }.getOrNull()
 
     private fun get(url: String): String? = runCatching {
         val req = Request.Builder()

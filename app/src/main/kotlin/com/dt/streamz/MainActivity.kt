@@ -1,7 +1,8 @@
 package com.dt.streamz
 
 import android.content.Context
-import android.media.MediaPlayer
+import android.media.AudioAttributes
+import android.media.SoundPool
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -36,14 +37,33 @@ class MainActivity : ComponentActivity() {
         networkMonitor.stop()
     }
 
+    private var openSoundPool: SoundPool? = null
+
+    /**
+     * App-open sound via SoundPool — loads + decodes OFF the main thread
+     * (unlike MediaPlayer.create, which decodes synchronously and was
+     * stuttering the splash animation). Plays on load-complete, then the
+     * pool self-releases shortly after.
+     */
     private fun playOpenSound() {
         runCatching {
-            MediaPlayer.create(this, R.raw.app_open)?.apply {
-                setVolume(0.85f, 0.85f)
-                setOnCompletionListener { it.release() }
-                setOnErrorListener { mp, _, _ -> mp.release(); true }
-                start()
+            val sp = SoundPool.Builder()
+                .setMaxStreams(1)
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build(),
+                )
+                .build()
+            openSoundPool = sp
+            sp.setOnLoadCompleteListener { pool, id, status ->
+                if (status == 0) pool.play(id, 0.85f, 0.85f, 1, 0, 1f)
             }
+            sp.load(this, R.raw.app_open, 1)
+            window.decorView.postDelayed({
+                openSoundPool?.release(); openSoundPool = null
+            }, 5000)
         }
     }
 

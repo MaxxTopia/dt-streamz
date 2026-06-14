@@ -275,19 +275,16 @@ class YouTubeProvider : Provider {
         withContext(Dispatchers.IO) {
             val videoId = videoIdOf(titleId)
 
-            // Play YouTube through its OWN embedded player inside the WebView,
-            // with the in-app adblock stripping ad domains. This is the robust
-            // path: YouTube handles its own signature cipher + bot tokens, so
-            // we no longer depend on
-            //   - Piped (its one surviving instance returns junk LBRY-proxied
-            //     URLs, not real YouTube streams), or
-            //   - NewPipeExtractor (its extract path calls a 33+ URLEncoder
-            //     overload that crashes on this box's Android).
-            // Single source -> one tap, no picker.
+            // Play YouTube in the WebView with the in-app adblock stripping ad
+            // domains. We use the full WATCH page rather than /embed/: the box
+            // log showed many videos have embedding disabled by the uploader,
+            // so /embed/ threw "Video unavailable — Watch on YouTube". The
+            // watch page plays every public video and autoplays. (We still
+            // avoid Piped — junk LBRY URLs — and NewPipe — 33+ URLEncoder
+            // crash on this box.) Single source -> one tap, no picker.
             listOf(
                 StreamSource(
-                    url = "https://www.youtube.com/embed/$videoId" +
-                        "?autoplay=1&playsinline=1&rel=0&modestbranding=1&fs=1",
+                    url = "https://www.youtube.com/watch?v=$videoId",
                     kind = StreamKind.DirectEmbed,
                     serverLabel = "YouTube",
                     headers = mapOf("Referer" to "https://www.youtube.com/"),
