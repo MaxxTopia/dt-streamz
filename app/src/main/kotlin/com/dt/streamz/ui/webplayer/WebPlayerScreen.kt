@@ -166,6 +166,18 @@ fun WebPlayerScreen(
     val blockedHosts = remember { mutableStateListOf<String>() }
     var mainFrameHost by remember { mutableStateOf<String?>(hostOf(activeUrl)) }
 
+    // True while the active mirror is our hosted YouTube embed (`ytembed://`).
+    // Drives the D-pad handler: on our own wrapper page we seek via the
+    // IFrame API; on cross-origin embeds we can only let the key through.
+    // Held as a State object (not a delegate) so the WebView's key listener —
+    // captured once in the factory — reads the live value.
+    val ytEmbedActive = remember { mutableStateOf(activeUrl.startsWith(YT_EMBED_SCHEME)) }
+    // Tracks what URL/embed we've actually told the WebView to load. We can't
+    // rely on `webView.url` for this: a `ytembed://` source is loaded via
+    // loadDataWithBaseURL, after which webView.url is the base origin, not the
+    // source key — so the naive `wv.url != activeUrl` reload guard would loop.
+    var lastLoadedUrl by remember { mutableStateOf<String?>(null) }
+
     DisposableEffect(activeUrl) {
         monitor?.setActiveHost(activeUrl)
         onDispose { monitor?.setActiveHost(null) }
@@ -179,6 +191,7 @@ fun WebPlayerScreen(
         loadState = LoadState.Loading
         blockedHosts.clear()
         mainFrameHost = hostOf(activeUrl)
+        ytEmbedActive.value = activeUrl.startsWith(YT_EMBED_SCHEME)
     }
 
     // Auto-report a fully-failed playback (all mirrors exhausted) so dead
@@ -309,6 +322,49 @@ fun WebPlayerScreen(
         chromeClientRef?.forceExit()
     }
 
+    // Single load entry-point. A `ytembed://<id>` source is expanded into our
+    // hosted IFrame-API player and loaded via loadDataWithBaseURL (so the YT
+    // API gets a real origin); everything else is a plain headered loadUrl.
+    fun loadInto(wv: WebView, url: String, hdrs: Map<String, String>) {
+        if (url.startsWith(YT_EMBED_SCHEME)) {
+            val vid = url.removePrefix(YT_EMBED_SCHEME)
+            DebugLog.i(TAG, "load yt-embed vid=$vid")
+            wv.loadDataWithBaseURL(YT_EMBED_BASE, buildYtEmbedHtml(vid), "text/html", "utf-8", YT_EMBED_BASE)
+        } else {
+            wv.loadUrl(url, hdrs)
+        }
+    }
+
+    // D-pad seek policy (the user's "double-press to seek"): a SINGLE Left/
+    // Right is swallowed so you don't seek by accident while moving toward the
+    // gear/volume; a DOUBLE-tap within DPAD_DOUBLE_MS seeks ±10s. On our own
+    // YouTube wrapper (same-origin) we drive the seek through the IFrame API;
+    // on a cross-origin embed we can't reach its player, so the second tap is
+    // passed through to let the embed perform its own seek.
+    val dpadState = remember { DpadSeekState() }
+    val dpadListener = remember {
+        android.view.View.OnKeyListener { _, keyCode, event ->
+            val isLR = keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT ||
+                keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT
+            if (!isLR) return@OnKeyListener false // up/down/center pass through
+            if (event.action != android.view.KeyEvent.ACTION_DOWN) return@OnKeyListener true
+            if (event.repeatCount > 0) return@OnKeyListener true // ignore key-repeat
+            val dir = if (keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT) 1 else -1
+            val now = event.eventTime
+            val isDouble = keyCode == dpadState.lastKey && now - dpadState.lastTime <= DPAD_DOUBLE_MS
+            dpadState.lastKey = keyCode
+            dpadState.lastTime = now
+            if (!isDouble) return@OnKeyListener true // single tap: swallow
+            dpadState.lastKey = 0 // consume the pair so a 3rd tap starts fresh
+            if (ytEmbedActive.value) {
+                webViewRef?.evaluateJavascript("ytSeek(${dir * 10});", null)
+                true
+            } else {
+                false // cross-origin: let this 2nd tap reach the embed
+            }
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
@@ -354,6 +410,20 @@ fun WebPlayerScreen(
                                 blockedHosts.add(host)
                             }
                         },
+                        onEmbedBlocked = {
+                            // YT IFrame API reported the uploader disabled
+                            // embedding (error 101/150). Walk to the next
+                            // mirror — for YouTube that's the watch page,
+                            // which plays embed-blocked videos.
+                            if (mirrorIndex + 1 < totalMirrors) {
+                                DebugLog.i(TAG, "yt embed blocked -> watch-page fallback")
+                                mirrorIndex += 1
+                            } else {
+                                loadState = LoadState.Failed(
+                                    "This video can't be embedded and the fallback is unavailable.",
+                                )
+                            }
+                        },
                     )
                     val chrome = FullscreenChromeClient(
                         getActivity = { ctx.findActivity() },
@@ -366,21 +436,26 @@ fun WebPlayerScreen(
                     isFocusable = true
                     isFocusableInTouchMode = true
                     requestFocus()
+                    setOnKeyListener(dpadListener)
                     if (BuildConfig.DEBUG) {
                         WebView.setWebContentsDebuggingEnabled(true)
                     }
-                    loadUrl(activeUrl, effectiveHeaders)
+                    loadInto(this, activeUrl, effectiveHeaders)
                 }
+                lastLoadedUrl = activeUrl
                 webViewRef = webView
                 webView
             },
             update = { wv ->
-                // Re-load when the active mirror changes (auto-advance after
-                // transport error). Without this, AndroidView keeps the old
-                // page since factory only runs once.
-                if (wv.url != activeUrl && wv.url != "about:blank") {
+                // Re-load when the active mirror changes (auto-advance after a
+                // transport error, or the YT embed falling back to the watch
+                // page). Compare against lastLoadedUrl, not wv.url, so the
+                // loadDataWithBaseURL'd YT embed doesn't look like a stale page
+                // and reload on every recomposition.
+                if (activeUrl != lastLoadedUrl) {
+                    lastLoadedUrl = activeUrl
                     wv.stopLoading()
-                    wv.loadUrl(activeUrl, effectiveHeaders)
+                    loadInto(wv, activeUrl, effectiveHeaders)
                 }
             },
             onRelease = { wv ->
@@ -435,7 +510,8 @@ fun WebPlayerScreen(
                         mirrorIndex = 0
                         loadState = LoadState.Loading
                         attempt += 1
-                        wv.loadUrl(embedUrl, headers + ("Referer" to defaultReferer(embedUrl)))
+                        lastLoadedUrl = embedUrl
+                        loadInto(wv, embedUrl, headers + ("Referer" to defaultReferer(embedUrl)))
                     }
                 },
                 onBack = onExit,
@@ -642,6 +718,7 @@ private class EmbedWebViewClient(
     private val onMainFrameFinished: () -> Unit,
     private val onMainFrameError: (Int, String, String?) -> Unit,
     private val onResourceBlocked: (String) -> Unit,
+    private val onEmbedBlocked: () -> Unit = {},
 ) : WebViewClient() {
 
     override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
@@ -696,6 +773,12 @@ private class EmbedWebViewClient(
     ): Boolean {
         val url = request.url ?: return false
         val scheme = url.scheme
+        // Sentinel from our YouTube embed wrapper: the IFrame API reported the
+        // video can't be embedded. Trigger the watch-page fallback and consume.
+        if (scheme == YT_FALLBACK_SCHEME) {
+            onEmbedBlocked()
+            return true
+        }
         if (scheme != "http" && scheme != "https") return true
         // Let WebView handle navigations natively. Intercepting and calling
         // view.loadUrl() hoists iframe targets into the main frame, which
@@ -887,6 +970,12 @@ private val CDN_ALLOWLIST_SUFFIXES = setOf(
     "fastly.net",
     "googlevideo.com",
     "ytimg.com",
+    // YouTube embed player (ytembed:// wrapper) core resources — keep these
+    // off the adblock chopping block or the IFrame player can't initialise.
+    "youtube.com",
+    "youtube-nocookie.com",
+    "ggpht.com",
+    "gstatic.com",
     "cloudnestra.com",
     "vsembed.ru",
     "tmstr.shop",
@@ -914,3 +1003,82 @@ private val CDN_ALLOWLIST_SUFFIXES = setOf(
 private const val TAG = "WebPlayer"
 private const val DESKTOP_UA =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+// --- YouTube embed player ---------------------------------------------------
+
+/** Source-URL marker for a YouTube video to play via our hosted embed. */
+private const val YT_EMBED_SCHEME = "ytembed://"
+/** Base origin we host the embed under so the IFrame API has a real origin. */
+private const val YT_EMBED_BASE = "https://www.youtube-nocookie.com"
+/** Navigation sentinel the wrapper hits when the video blocks embedding. */
+private const val YT_FALLBACK_SCHEME = "ytfallback"
+/** Max gap between two Left/Right taps to count as a double (seek). */
+private const val DPAD_DOUBLE_MS = 400L
+
+/** Mutable holder for the double-tap detector (kept in remember{}). */
+private class DpadSeekState {
+    var lastKey: Int = 0
+    var lastTime: Long = 0
+}
+
+/**
+ * Full-bleed YouTube player page built around the IFrame Player API. It's our
+ * own document (same-origin under [YT_EMBED_BASE]), so:
+ *   - it autoplays the video and fills the screen (the clean, app-like player
+ *     instead of the desktop watch page), and
+ *   - native can drive it through `ytSeek()` (the double-press D-pad handler).
+ * If the uploader disabled embedding, onError 101/150 navigates to the
+ * [YT_FALLBACK_SCHEME] sentinel, which native turns into a watch-page fallback.
+ */
+private fun buildYtEmbedHtml(videoId: String): String {
+    val safe = videoId.filter { it.isLetterOrDigit() || it == '_' || it == '-' }
+    return YT_EMBED_TEMPLATE.replace("__VID__", safe)
+}
+
+private val YT_EMBED_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<style>
+  html,body{margin:0;padding:0;width:100%;height:100%;background:#000;overflow:hidden}
+  #player,iframe{position:absolute;top:0;left:0;width:100%;height:100%;border:0}
+</style>
+</head>
+<body>
+<div id="player"></div>
+<script>
+  var player = null;
+  function onYouTubeIframeAPIReady() {
+    player = new YT.Player('player', {
+      width: '100%', height: '100%',
+      videoId: '__VID__',
+      host: 'https://www.youtube-nocookie.com',
+      playerVars: {
+        autoplay: 1, controls: 1, rel: 0, fs: 1, modestbranding: 1,
+        playsinline: 1, iv_load_policy: 3, origin: 'https://www.youtube-nocookie.com'
+      },
+      events: {
+        onReady: function (e) { try { e.target.playVideo(); } catch (x) {} },
+        onError: function (e) {
+          if (e.data == 101 || e.data == 150) {
+            window.location.href = 'ytfallback://blocked';
+          }
+        }
+      }
+    });
+  }
+  // Native D-pad bridge (called via evaluateJavascript).
+  function ytSeek(d) {
+    try {
+      if (player && player.getCurrentTime) {
+        var t = player.getCurrentTime() || 0;
+        player.seekTo(Math.max(0, t + d), true);
+      }
+    } catch (x) {}
+  }
+</script>
+<script src="https://www.youtube.com/iframe_api"></script>
+</body>
+</html>
+""".trimIndent()

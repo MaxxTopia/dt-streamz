@@ -275,18 +275,29 @@ class YouTubeProvider : Provider {
         withContext(Dispatchers.IO) {
             val videoId = videoIdOf(titleId)
 
-            // Play YouTube in the WebView with the in-app adblock stripping ad
-            // domains. We use the full WATCH page rather than /embed/: the box
-            // log showed many videos have embedding disabled by the uploader,
-            // so /embed/ threw "Video unavailable — Watch on YouTube". The
-            // watch page plays every public video and autoplays. (We still
-            // avoid Piped — junk LBRY URLs — and NewPipe — 33+ URLEncoder
-            // crash on this box.) Single source -> one tap, no picker.
+            // PRIMARY: a hosted YouTube embed player (the `ytembed://` source
+            // is expanded by WebPlayerScreen into a full-screen IFrame-API
+            // player we control). This is the clean, app-like fullscreen
+            // player — autoplay, native YouTube controls, no desktop chrome —
+            // and being our own wrapper page it's same-origin, so the
+            // double-press-to-seek D-pad handling works on it.
+            //
+            // FALLBACK: the full WATCH page. Some uploaders disable embedding
+            // (IFrame error 101/150); when that happens the wrapper signals
+            // native and we walk to this mirror, which plays every public
+            // video. (We still avoid Piped — junk LBRY URLs — and NewPipe —
+            // API 33+ URLEncoder crash on this box.)
             listOf(
+                StreamSource(
+                    url = "ytembed://$videoId",
+                    kind = StreamKind.DirectEmbed,
+                    serverLabel = "YouTube",
+                    headers = emptyMap(),
+                ),
                 StreamSource(
                     url = "https://www.youtube.com/watch?v=$videoId",
                     kind = StreamKind.DirectEmbed,
-                    serverLabel = "YouTube",
+                    serverLabel = "YouTube (page)",
                     headers = mapOf("Referer" to "https://www.youtube.com/"),
                 ),
             )

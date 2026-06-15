@@ -99,6 +99,13 @@ fun DtApp() {
         if (sources.size == 1) {
             return playRouteFor(sources.first(), label, sources, pid, tid, eid, startMs)
         }
+        // YouTube returns [embed, watch-page] as primary + fallback, not a
+        // user-facing server choice. Play the embed straight away and let
+        // WebPlayer walk to the watch page if embedding is blocked — never
+        // show the Sub/Dub-style source picker for it.
+        if (pid == "youtube") {
+            return playRouteFor(sources.first(), label, sources, pid, tid, eid, startMs)
+        }
         audioPref()?.let { pref ->
             val match = sources.firstOrNull { (it.serverLabel ?: "").contains(pref, ignoreCase = true) }
             if (match != null) return playRouteFor(match, label, sources, pid, tid, eid, startMs)

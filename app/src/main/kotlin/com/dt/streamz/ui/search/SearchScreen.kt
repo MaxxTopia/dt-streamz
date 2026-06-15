@@ -83,6 +83,15 @@ fun SearchScreen(
         if (pinFocus) { kotlinx.coroutines.delay(60); runCatching { searchBarFocus.requestFocus() }; pinFocus = false }
     }
     fun runQuery(q: String) {
+        // Grab focus onto the always-present search bar BEFORE we mutate
+        // state. Submitting flips Idle -> Loading, which removes the focused
+        // recent/suggestion chip from composition in the same frame; if focus
+        // is still on that chip when it vanishes, Compose's fallback search
+        // snaps focus UP to the TabRow and its Tab.onFocus switches you off
+        // the Search tab (the "lands on a random Movies tab" bug). Moving
+        // focus to the stable search bar first means there's nothing to
+        // escape from. pinFocus below is a belt-and-suspenders re-grab.
+        runCatching { searchBarFocus.requestFocus() }
         vm.onQueryChange(q); vm.onSubmit()
         writeSearchHistory(historyPrefs, q); historyTick++
         pinFocus = true

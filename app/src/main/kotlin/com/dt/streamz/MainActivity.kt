@@ -38,14 +38,20 @@ class MainActivity : ComponentActivity() {
     }
 
     private var openSoundPool: SoundPool? = null
+    private var openSoundId: Int = 0
+    private var openSoundLoaded = false
+    // Set when the splash asks to play but the sample hasn't finished
+    // decoding yet — onLoadComplete fires the play then.
+    private var openSoundPending = false
 
     /**
-     * App-open sound via SoundPool — loads + decodes OFF the main thread
-     * (unlike MediaPlayer.create, which decodes synchronously and was
-     * stuttering the splash animation). Plays on load-complete, then the
-     * pool self-releases shortly after.
+     * Preload (but DON'T play) the app-open sound. SoundPool decodes the
+     * ~2s ogg off the main thread; we kick this off in onCreate so the
+     * sample is ready by the time the splash's first frame triggers it.
+     * Decoupling load from play is what lets the guitar start in lockstep
+     * with the tile animation instead of whenever the async decode lands.
      */
-    private fun playOpenSound() {
+    private fun preloadOpenSound() {
         runCatching {
             val sp = SoundPool.Builder()
                 .setMaxStreams(1)
@@ -58,21 +64,51 @@ class MainActivity : ComponentActivity() {
                 .build()
             openSoundPool = sp
             sp.setOnLoadCompleteListener { pool, id, status ->
-                if (status == 0) pool.play(id, 0.85f, 0.85f, 1, 0, 1f)
+                if (status == 0) {
+                    openSoundLoaded = true
+                    if (openSoundPending) {
+                        openSoundPending = false
+                        pool.play(id, 0.85f, 0.85f, 1, 0, 1f)
+                    }
+                }
             }
-            sp.load(this, R.raw.app_open, 1)
-            window.decorView.postDelayed({
-                openSoundPool?.release(); openSoundPool = null
-            }, 5000)
+            openSoundId = sp.load(this, R.raw.app_open, 1)
         }
+    }
+
+    /**
+     * Play the preloaded open sound NOW (called from the splash's first
+     * frame so audio + animation begin together). If the decode hasn't
+     * finished, mark it pending so onLoadComplete plays it the instant
+     * it's ready. Self-releases after the sample's full length.
+     */
+    private fun triggerOpenSound() {
+        val sp = openSoundPool ?: return
+        if (openSoundLoaded) sp.play(openSoundId, 0.85f, 0.85f, 1, 0, 1f)
+        else openSoundPending = true
+        window.decorView.postDelayed({
+            openSoundPool?.release(); openSoundPool = null
+        }, 5000)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // App-open sound: a soft guitar pluck-up, on a real cold launch only
-        // (savedInstanceState == null skips config-change recreations). The
-        // file is pre-mixed quiet (~-14 dB); fire-and-forget, self-releasing.
-        if (savedInstanceState == null) playOpenSound()
+        // App-open sound: a soft guitar arpeggio on every cold launch
+        // (savedInstanceState == null skips config-change recreations).
+        // Preloaded here; WHEN it fires depends on whether the splash will
+        // show this launch:
+        //   - splash shows (once per version) -> the splash's first frame
+        //     triggers it (onBegin), so the guitar rides the tile animation.
+        //   - no splash -> play it now as a plain open chime.
+        // Decoupling load from play is what lets the two start in lockstep.
+        if (savedInstanceState == null) {
+            preloadOpenSound()
+            val willShowSplash = run {
+                val prefs = getSharedPreferences(SPLASH_PREFS, Context.MODE_PRIVATE)
+                !prefs.getBoolean("$KEY_SPLASH_SEEN_PREFIX${BuildConfig.VERSION_NAME}", false)
+            }
+            if (!willShowSplash) triggerOpenSound()
+        }
         setContent {
             DtTheme {
                 val ctx = LocalContext.current
@@ -96,6 +132,7 @@ class MainActivity : ComponentActivity() {
                         exit = fadeOut(tween(400)),
                     ) {
                         SplashScreen(
+                            onBegin = { triggerOpenSound() },
                             onFinished = {
                                 if (!splashDone) {
                                     splashDone = true

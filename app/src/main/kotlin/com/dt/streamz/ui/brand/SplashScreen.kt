@@ -57,7 +57,7 @@ import kotlinx.coroutines.launch
  * land before the screen moves on. Press any key to skip.
  */
 @Composable
-fun SplashScreen(onFinished: () -> Unit) {
+fun SplashScreen(onFinished: () -> Unit, onBegin: () -> Unit = {}) {
     val tiles = remember { TILES }
     val tileAnims = remember { List(tiles.size) { Animatable(0f) } }
     var wordmarkAlpha by remember { mutableStateOf(0f) }
@@ -68,49 +68,58 @@ fun SplashScreen(onFinished: () -> Unit) {
 
     LaunchedEffect(Unit) {
         runCatching { focusReq.requestFocus() }
-        delay(60)
+        // Fire the open sound in lockstep with the first animation frame so
+        // the guitar and the tiles start together. The whole splash is then
+        // choreographed to the 1.94s arpeggio:
+        //   0 – ~1.0s  strum body  -> five tiles slide in, one per beat
+        //   ~1.0 – 1.9s ring-out   -> wordmark + subtitle settle on the decay
+        //   ~1.95s onward          -> fade as the note dies (~2.3s total)
+        // Previously the animation ran ~4.6s while the guitar finished at
+        // 1.9s, so the back half played in silence — that's the mismatch.
+        onBegin()
         if (skipped) { onFinished(); return@LaunchedEffect }
-        // Tile entry — staggered slide-in. Slower stagger + per-tile
-        // animation so the user can clock each tile as it lands instead
-        // of the whole row flashing past in <1s on a fast box.
+        // Tile entry — staggered slide-in tuned so all five land within the
+        // strum body (~1.0s). Snappier per-tile spec than before; the strum
+        // carries the motion so it reads as deliberate, not rushed.
         tileAnims.forEachIndexed { index, anim ->
             launch {
-                delay(index * 160L)
+                delay(index * TILE_STAGGER_MS)
                 anim.animateTo(
                     targetValue = 1f,
-                    animationSpec = tween(durationMillis = 650, easing = EaseOutBack),
+                    animationSpec = tween(durationMillis = TILE_ANIM_MS, easing = EaseOutBack),
                 )
             }
         }
-        // Wait for the last tile's anim to finish, then hold all five
-        // visible for a beat before the wordmark slides in.
-        delay(160L * (tiles.size - 1) + 650L + 900L)
+        // Last tile lands at (n-1)*stagger + anim; small beat, then the
+        // wordmark rises on the guitar's sustain.
+        delay(TILE_STAGGER_MS * (tiles.size - 1) + TILE_ANIM_MS + 120L)
         if (skipped) { onFinished(); return@LaunchedEffect }
 
         val wordmarkAnim = Animatable(0f)
         launch {
-            wordmarkAnim.animateTo(1f, tween(520, easing = FastOutSlowInEasing))
+            wordmarkAnim.animateTo(1f, tween(380, easing = FastOutSlowInEasing))
         }
         val wmStart = System.currentTimeMillis()
-        while (System.currentTimeMillis() - wmStart < 520 && !skipped) {
+        while (System.currentTimeMillis() - wmStart < 380 && !skipped) {
             wordmarkAlpha = wordmarkAnim.value
             delay(16)
         }
         wordmarkAlpha = 1f
 
-        delay(220)
+        delay(140)
         val subAnim = Animatable(0f)
-        launch { subAnim.animateTo(1f, tween(360)) }
+        launch { subAnim.animateTo(1f, tween(300)) }
         val subStart = System.currentTimeMillis()
-        while (System.currentTimeMillis() - subStart < 360 && !skipped) {
+        while (System.currentTimeMillis() - subStart < 300 && !skipped) {
             subtitleAlpha = subAnim.value
             delay(16)
         }
         subtitleAlpha = 1f
 
-        // Final hold so the wordmark has time to register before fade.
-        delay(900)
-        rootAlpha.animateTo(0f, tween(durationMillis = 420, easing = EaseOutCubic))
+        // Hold on the guitar's ring-out, then fade out exactly as the note
+        // dies so picture and sound resolve together.
+        delay(360)
+        rootAlpha.animateTo(0f, tween(durationMillis = 360, easing = EaseOutCubic))
         onFinished()
     }
 
@@ -414,6 +423,11 @@ private fun Wordmark(alpha: Float) {
         ),
     )
 }
+
+// Tile choreography, tuned to the 1.94s app-open arpeggio: five tiles land
+// across the ~1.0s strum body (165ms apart, 340ms each → last lands ~1.0s).
+private const val TILE_STAGGER_MS = 165L
+private const val TILE_ANIM_MS = 340
 
 private enum class TileKind { Movies, Anime, Tv, YouTube, Twitch }
 
