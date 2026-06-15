@@ -15,8 +15,8 @@ import com.dt.streamz.data.ContinueWatchingStore
 import com.dt.streamz.data.FavoritesStore
 import com.dt.streamz.networkmonitor.NetworkMonitor
 import com.dt.streamz.scraper.ProviderRegistry
-import com.dt.streamz.scraper.allanime.AllAnimeProvider
 import com.dt.streamz.scraper.anicrush.AnicrushProvider
+import com.dt.streamz.scraper.anilist.AniListProvider
 import com.dt.streamz.scraper.fixtures.FixturesProvider
 import com.dt.streamz.scraper.tmdb.TmdbProvider
 import com.dt.streamz.scraper.vidsrc.VidSrcProvider
@@ -97,10 +97,11 @@ class DtApplication : Application(), SingletonImageLoader.Factory {
             providers = listOf(
                 FixturesProvider(),
                 TmdbProvider(),
-                // AllAnime (ani-cli backend) replaces the animekai/anikai
-                // WebView resolver: plain JSON API, no Cloudflare-JS challenge
-                // to clear, returns direct m3u8 -> ExoPlayer with real controls.
-                AllAnimeProvider(),
+                // Anime: AniList metadata + vidnest WebView embed. The
+                // scraping backends (animekai, AllAnime) both 403'd behind
+                // Cloudflare from the box's IP; this embed path plays the same
+                // way movies do (which work on the box).
+                AniListProvider(),
                 VidSrcProvider(),
                 AnicrushProvider(),
                 YouTubeProvider(),
