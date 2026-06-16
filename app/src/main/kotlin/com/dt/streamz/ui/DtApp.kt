@@ -120,6 +120,7 @@ fun DtApp() {
         titleName: String, poster: String?, kindName: String?,
     ) {
         Toast.makeText(ctx, "▶ Ep ${ep.number}", Toast.LENGTH_SHORT).show()
+        app.interests.recordWatch(titleName)
         app.continueWatching.record(
             WatchEntry(
                 providerId = pid, titleId = tid, titleName = titleName, poster = poster,
@@ -248,6 +249,7 @@ fun DtApp() {
                             // Resume if we left this exact episode partway through.
                             val existing = app.continueWatching.find(providerId, titleId)
                             val resumeMs = resumeStartMs(existing, ep.id)
+                            app.interests.recordWatch(titleName)
                             app.continueWatching.record(
                                 WatchEntry(
                                     providerId = providerId,
@@ -348,6 +350,14 @@ fun DtApp() {
                     embedUrl = r.embedUrl,
                     headers = r.headers,
                     fallbacks = r.fallbacks,
+                    // YouTube-style autoplay: resolve related videos for the
+                    // embed player to cycle through. Only the YouTube provider
+                    // returns anything; everything else opts out (empty list).
+                    youtubeRelated = { videoId ->
+                        runCatching {
+                            registry.all.firstOrNull { it.supportsYouTube }?.related(videoId)
+                        }.getOrNull().orEmpty()
+                    },
                     onExit = { route = Route.Tabs },
                 )
             }
@@ -419,6 +429,7 @@ private fun TabsDestination(
                 onResume = onResume,
                 onRemoveContinue = onRemoveContinue,
                 showMustWatch = true,
+                forYou = recommenderFor(app, { true }, { true }),
             )
             Section.Anime -> HomeScreen(
                 title = "Anime",
@@ -430,6 +441,7 @@ private fun TabsDestination(
                 onOpenTitle = onOpenTitle,
                 onResume = onResume,
                 onRemoveContinue = onRemoveContinue,
+                forYou = recommenderFor(app, { it.supportsAnime }, { true }),
             )
             Section.Movies -> HomeScreen(
                 title = "Movies",
@@ -443,6 +455,7 @@ private fun TabsDestination(
                 onResume = onResume,
                 onRemoveContinue = onRemoveContinue,
                 showMustWatch = true,
+                forYou = recommenderFor(app, { it.supportsMovies }, { it == MediaKind.Movie }),
             )
             Section.TV -> HomeScreen(
                 title = "TV Shows",
@@ -456,6 +469,7 @@ private fun TabsDestination(
                 onResume = onResume,
                 onRemoveContinue = onRemoveContinue,
                 showMustWatch = true,
+                forYou = recommenderFor(app, { it.supportsMovies }, { it == MediaKind.Series }),
             )
             Section.YouTube -> YouTubeTabScreen(
                 registry = app.providerRegistry,
@@ -589,5 +603,38 @@ private fun resumeStartMs(entry: WatchEntry?, episodeId: String): Long {
 /** True when the saved episode was watched (essentially) to the end. */
 private fun isFinished(entry: WatchEntry): Boolean =
     entry.durationMs > 0 && entry.positionMs > entry.durationMs - RESUME_END_GUARD_MS
+
+/**
+ * Builds the per-tab "For You" recommender: searches the tab's providers with
+ * the user's top learned interest terms and returns the matching titles,
+ * deduped, capped. Returns empty when personalization is off or there's no
+ * history yet (cold start) so the row simply doesn't render. Runs lazily —
+ * HomeScreen calls it off the main thread when the tab paints.
+ */
+private fun recommenderFor(
+    app: DtApplication,
+    providerFilter: (com.dt.streamz.scraper.Provider) -> Boolean,
+    kindFilter: (MediaKind) -> Boolean,
+): suspend () -> List<com.dt.streamz.data.SearchResult> = recommend@{
+    val terms = app.interests.topTerms(4)
+    if (terms.isEmpty()) return@recommend emptyList()
+    // tmdb has no real search() — it feeds the Must-Watch row only.
+    val provs = app.providerRegistry.all.filter(providerFilter).filter { it.id != "tmdb" }
+    if (provs.isEmpty()) return@recommend emptyList()
+    val out = LinkedHashMap<String, com.dt.streamz.data.SearchResult>()
+    for (term in terms) {
+        for (p in provs) {
+            val res = runCatching { p.search(term) }.getOrNull().orEmpty()
+            for (r in res) {
+                if (!kindFilter(r.kind)) continue
+                out.putIfAbsent("${r.providerId}:${r.id}", r)
+                if (out.size >= 24) break
+            }
+            if (out.size >= 24) break
+        }
+        if (out.size >= 24) break
+    }
+    out.values.toList()
+}
 
 private const val TAG = "DtApp"

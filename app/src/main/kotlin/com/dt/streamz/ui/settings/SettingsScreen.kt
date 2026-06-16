@@ -51,6 +51,7 @@ fun SettingsScreen() {
 
     var blockerEnabled by remember { mutableStateOf(app.hostBlocker.enabled()) }
     var telemetryEnabled by remember { mutableStateOf(com.dt.streamz.diag.Telemetry.isEnabled()) }
+    var personalizeEnabled by remember { mutableStateOf(app.interests.isEnabled()) }
     var debugLogOpen by remember { mutableStateOf(false) }
 
     val items = buildList<SettingItem> {
@@ -108,6 +109,37 @@ fun SettingsScreen() {
                         app.continueWatching.clear()
                         Toast.makeText(ctx, "Continue watching cleared", Toast.LENGTH_SHORT).show()
                     }
+                },
+                actionLabel = "Clear",
+            ),
+        )
+        add(
+            SettingItem(
+                title = "Personalized recommendations",
+                subtitle = if (personalizeEnabled)
+                    "ON · learns from your searches + what you watch (on-device only) to build the YouTube grid and 'For You' rows."
+                else
+                    "OFF · YouTube + tabs show the generic trending mix; nothing is learned.",
+                action = {
+                    val next = !personalizeEnabled
+                    app.interests.setEnabled(next)
+                    personalizeEnabled = next
+                    Toast.makeText(
+                        ctx,
+                        if (next) "Personalization ON" else "Personalization OFF",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                },
+                actionLabel = "Toggle",
+            ),
+        )
+        add(
+            SettingItem(
+                title = "Clear what the app has learned",
+                subtitle = "Wipe the on-device interest history (searches + watches). Recommendations reset to the generic mix.",
+                action = {
+                    app.interests.clear()
+                    Toast.makeText(ctx, "Learned history cleared", Toast.LENGTH_SHORT).show()
                 },
                 actionLabel = "Clear",
             ),

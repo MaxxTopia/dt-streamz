@@ -59,6 +59,44 @@ internal class InnerTubeClient {
             .takeIf { it.channels.isNotEmpty() || it.videos.isNotEmpty() }
     }
 
+    /**
+     * Related / up-next video IDs for [videoId] via the youtubei `next`
+     * endpoint — the same "watch next" column YouTube shows beside a video,
+     * which is its relatedness signal. Returns IDs in YouTube's own order
+     * (most-relevant first). Best-effort: any failure yields an empty list.
+     */
+    suspend fun related(videoId: String): List<String> = withContext(Dispatchers.IO) {
+        if (videoId.isBlank()) return@withContext emptyList()
+        val payload = """
+            {"context":{"client":{"clientName":"WEB","clientVersion":"$CLIENT_VERSION","hl":"en","gl":"US"}},
+             "videoId":${videoId.jsonString()}}
+        """.trimIndent()
+        val root = post("next", payload) ?: return@withContext emptyList()
+        // The watch-next column nests results as compactVideoRenderer; walk
+        // the whole tree and collect their videoIds in document order.
+        val out = mutableListOf<String>()
+        val seen = mutableSetOf(videoId)
+        collectCompact(root, out, seen)
+        out
+    }
+
+    /** Depth-first collect of compactVideoRenderer videoIds (watch-next list). */
+    private fun collectCompact(el: JsonElement, out: MutableList<String>, seen: MutableSet<String>) {
+        when (el) {
+            is JsonObject -> {
+                el["compactVideoRenderer"]?.jsonObjectOrNull
+                    ?.get("videoId")?.jsonPrimitive?.contentOrNull
+                    ?.let { if (seen.add(it)) out.add(it) }
+                for ((k, v) in el) {
+                    if (k == "compactVideoRenderer") continue
+                    collectCompact(v, out, seen)
+                }
+            }
+            is JsonArray -> el.forEach { collectCompact(it, out, seen) }
+            else -> {}
+        }
+    }
+
     /** Depth-first collect of videoRenderer/gridVideoRenderer/channelRenderer. */
     private fun collectRenderers(
         el: JsonElement,

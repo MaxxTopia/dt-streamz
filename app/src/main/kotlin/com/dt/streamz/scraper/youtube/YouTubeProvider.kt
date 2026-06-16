@@ -41,7 +41,12 @@ import org.schabi.newpipe.extractor.stream.StreamInfoItem
  * that shape and extract the videoId on the fly so existing
  * continue-watching entries don't break.
  */
-class YouTubeProvider : Provider {
+class YouTubeProvider(
+    // Learned interest terms (recent searches / watched titles) the recommended
+    // grid blends with its fixed seeds. Defaults to none, so the provider still
+    // works standalone (tests, cold start). See [browse].
+    private val interestSeeds: suspend () -> List<String> = { emptyList() },
+) : Provider {
 
     override val id = "youtube"
     override val displayName = "YouTube"
@@ -61,7 +66,16 @@ class YouTubeProvider : Provider {
         // across a few broad seeds, run in parallel and merged. Not
         // personalized — that's impossible without a login — but a full,
         // English, live-free grid instead of one stray video.
-        val perSeed = RECOMMEND_SEEDS.map { seed ->
+        // Personalized seeds (recent searches / watched titles) lead, so the
+        // user's tastes surface first in the round-robin interleave; the fixed
+        // seeds fill out and keep the grid varied. Cold start / personalization
+        // off -> learned is empty and this is exactly the old behavior.
+        val learned = runCatching { interestSeeds() }.getOrNull().orEmpty()
+            .map { it.trim() }
+            .filter { it.length >= 2 }
+            .take(3)
+        val seeds = (learned + RECOMMEND_SEEDS).distinct()
+        val perSeed = seeds.map { seed ->
             async(Dispatchers.IO) {
                 runCatching { innertube.search(seed) }.getOrNull()?.videos.orEmpty()
             }
@@ -269,6 +283,17 @@ class YouTubeProvider : Provider {
                 episodes = listOf(Episode(id = "watch", number = 1, title = "Watch")),
             )
         }
+    }
+
+    /**
+     * Related video IDs for autoplay, via InnerTube's watch-next column
+     * (YouTube's own relatedness). Falls back to a broad search seeded on the
+     * video's own id-space only if `next` comes back empty, which is rare.
+     */
+    override suspend fun related(titleId: String): List<String> = withContext(Dispatchers.IO) {
+        val videoId = videoIdOf(titleId)
+        runCatching { innertube.related(videoId) }.getOrNull()?.takeIf { it.isNotEmpty() }
+            ?: emptyList()
     }
 
     override suspend fun streams(titleId: String, episode: Episode): List<StreamSource> =

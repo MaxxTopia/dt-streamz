@@ -94,6 +94,8 @@ fun SearchScreen(
         runCatching { searchBarFocus.requestFocus() }
         vm.onQueryChange(q); vm.onSubmit()
         writeSearchHistory(historyPrefs, q); historyTick++
+        // Feed the on-device interest model so recommendations adapt.
+        (ctx.applicationContext as? com.dt.streamz.DtApplication)?.interests?.recordSearch(q)
         pinFocus = true
     }
     val liveCount = (state as? SearchState.Loaded)?.results?.size

@@ -23,4 +23,11 @@ interface Provider {
 
     /** Optional: type-ahead query suggestions for the search box. Default none. */
     suspend fun suggest(query: String): List<String> = emptyList()
+
+    /**
+     * Optional: related/up-next title IDs for [titleId], most-relevant first.
+     * Powers YouTube-style autoplay (play a related video when the current
+     * one ends). Default none — providers without a related feed opt out.
+     */
+    suspend fun related(titleId: String): List<String> = emptyList()
 }

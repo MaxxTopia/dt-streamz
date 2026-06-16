@@ -74,6 +74,9 @@ fun HomeScreen(
     // Show the TMDb-fed "Must Watch / trending" row. On for Home/Movies/TV,
     // off for Anime (trending is movies+TV, not anime).
     showMustWatch: Boolean = false,
+    // On-device "For You" recommender for this tab. Returns titles matched to
+    // the user's learned interests; null or empty -> the row is hidden.
+    forYou: (suspend () -> List<SearchResult>)? = null,
 ) {
     val rawContinueEntries by (continueWatching?.entries ?: flowOf(emptyList()))
         .collectAsState(initial = emptyList())
@@ -122,6 +125,15 @@ fun HomeScreen(
             style = MaterialTheme.typography.headlineSmall,
             color = MaterialTheme.colorScheme.onBackground,
         )
+        if (forYou != null) {
+            ForYouRow(
+                load = forYou,
+                watchedKeys = watchedKeys,
+                favoriteKeys = favoriteKeys,
+                onOpenTitle = onOpenTitle,
+                onToggleFavorite = toggleFavorite,
+            )
+        }
         if (continueEntries.isNotEmpty()) {
             ContinueRow(
                 entries = continueEntries,
@@ -196,6 +208,44 @@ fun HomeScreen(
                 }
             },
         )
+    }
+}
+
+@Composable
+private fun ForYouRow(
+    load: suspend () -> List<SearchResult>,
+    watchedKeys: Set<String>,
+    favoriteKeys: Set<String>,
+    onOpenTitle: (String, String) -> Unit,
+    onToggleFavorite: (SearchResult) -> Unit,
+) {
+    // Loads async so the rest of the tab paints immediately; renders nothing
+    // until results arrive (and stays hidden if there are none), so there's no
+    // empty "For You" header on a cold profile.
+    var results by remember { mutableStateOf<List<SearchResult>?>(null) }
+    LaunchedEffect(Unit) {
+        results = runCatching { load() }.getOrDefault(emptyList())
+    }
+    val list = results ?: return
+    if (list.isEmpty()) return
+    Text(
+        text = "✨ For You",
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
+    )
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        items(list, key = { "${it.providerId}:${it.id}" }) { item ->
+            PosterCard(
+                result = item,
+                watched = "${item.providerId}:${item.id}" in watchedKeys,
+                favorited = "${item.providerId}:${item.id}" in favoriteKeys,
+                onClick = { onOpenTitle(item.providerId, item.id) },
+                onToggleFavorite = { onToggleFavorite(item) },
+            )
+        }
     }
 }
 

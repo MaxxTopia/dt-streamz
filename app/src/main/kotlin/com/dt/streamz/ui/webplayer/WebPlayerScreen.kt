@@ -36,6 +36,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,6 +56,7 @@ import com.dt.streamz.data.StreamSource
 import com.dt.streamz.diag.DebugLog
 import java.io.ByteArrayInputStream
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 private sealed interface LoadState {
@@ -126,6 +128,10 @@ fun WebPlayerScreen(
     embedUrl: String,
     headers: Map<String, String> = emptyMap(),
     fallbacks: List<StreamSource> = emptyList(),
+    // Related-video resolver for YouTube autoplay. Given the current videoId,
+    // returns related IDs (most-relevant first). Only used for `ytembed://`
+    // sources; null disables cycling.
+    youtubeRelated: (suspend (String) -> List<String>)? = null,
     onExit: () -> Unit = {},
 ) {
     val ctx = LocalContext.current
@@ -172,6 +178,12 @@ fun WebPlayerScreen(
     // Held as a State object (not a delegate) so the WebView's key listener —
     // captured once in the factory — reads the live value.
     val ytEmbedActive = remember { mutableStateOf(activeUrl.startsWith(YT_EMBED_SCHEME)) }
+    // YouTube autoplay cycle bookkeeping: the video currently playing in the
+    // embed (starts as the source's id, then follows each loadVideoById) and
+    // the set already played this session so related-video walks don't repeat.
+    val ytScope = rememberCoroutineScope()
+    val ytCurrentId = remember { mutableStateOf<String?>(null) }
+    val ytSeen = remember { mutableSetOf<String>() }
     // Tracks what URL/embed we've actually told the WebView to load. We can't
     // rely on `webView.url` for this: a `ytembed://` source is loaded via
     // loadDataWithBaseURL, after which webView.url is the base origin, not the
@@ -192,6 +204,12 @@ fun WebPlayerScreen(
         blockedHosts.clear()
         mainFrameHost = hostOf(activeUrl)
         ytEmbedActive.value = activeUrl.startsWith(YT_EMBED_SCHEME)
+        if (activeUrl.startsWith(YT_EMBED_SCHEME)) {
+            val vid = activeUrl.removePrefix(YT_EMBED_SCHEME)
+            ytCurrentId.value = vid
+            ytSeen.clear()
+            ytSeen.add(vid)
+        }
     }
 
     // Auto-report a fully-failed playback (all mirrors exhausted) so dead
@@ -335,6 +353,27 @@ fun WebPlayerScreen(
         }
     }
 
+    // YouTube autoplay: when a video ends the wrapper pings `ytnext://`; we
+    // resolve a related video we haven't played yet and load it in-place, so
+    // playback cycles forever until the user backs out. No fresh related ->
+    // we simply stop (the end screen stays).
+    fun cycleToNextYouTube() {
+        val resolver = youtubeRelated ?: return
+        val cur = ytCurrentId.value ?: return
+        ytScope.launch {
+            val related = runCatching { resolver(cur) }.getOrDefault(emptyList())
+            val next = related.firstOrNull { it !in ytSeen }
+            if (next != null) {
+                ytSeen.add(next)
+                ytCurrentId.value = next
+                DebugLog.i(TAG, "yt autoplay $cur -> $next")
+                webViewRef?.evaluateJavascript("ytPlay('$next');", null)
+            } else {
+                DebugLog.i(TAG, "yt autoplay: no fresh related for $cur — stopping")
+            }
+        }
+    }
+
     // D-pad seek policy (the user's "double-press to seek"): a SINGLE Left/
     // Right is swallowed so you don't seek by accident while moving toward the
     // gear/volume; a DOUBLE-tap within DPAD_DOUBLE_MS seeks ±10s. On our own
@@ -424,6 +463,7 @@ fun WebPlayerScreen(
                                 )
                             }
                         },
+                        onVideoEnded = { cycleToNextYouTube() },
                     )
                     val chrome = FullscreenChromeClient(
                         getActivity = { ctx.findActivity() },
@@ -719,6 +759,7 @@ private class EmbedWebViewClient(
     private val onMainFrameError: (Int, String, String?) -> Unit,
     private val onResourceBlocked: (String) -> Unit,
     private val onEmbedBlocked: () -> Unit = {},
+    private val onVideoEnded: () -> Unit = {},
 ) : WebViewClient() {
 
     override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
@@ -777,6 +818,12 @@ private class EmbedWebViewClient(
         // video can't be embedded. Trigger the watch-page fallback and consume.
         if (scheme == YT_FALLBACK_SCHEME) {
             onEmbedBlocked()
+            return true
+        }
+        // Our YouTube wrapper pinged us that the video ended — queue the next
+        // related one (autoplay cycle). Consume; nothing actually navigates.
+        if (scheme == YT_NEXT_SCHEME) {
+            onVideoEnded()
             return true
         }
         if (scheme != "http" && scheme != "https") return true
@@ -1012,6 +1059,8 @@ private const val YT_EMBED_SCHEME = "ytembed://"
 private const val YT_EMBED_BASE = "https://www.youtube-nocookie.com"
 /** Navigation sentinel the wrapper hits when the video blocks embedding. */
 private const val YT_FALLBACK_SCHEME = "ytfallback"
+/** Navigation sentinel the wrapper hits when the current video ends. */
+private const val YT_NEXT_SCHEME = "ytnext"
 /** Max gap between two Left/Right taps to count as a double (seek). */
 private const val DPAD_DOUBLE_MS = 400L
 
@@ -1060,6 +1109,11 @@ private val YT_EMBED_TEMPLATE = """
       },
       events: {
         onReady: function (e) { try { e.target.playVideo(); } catch (x) {} },
+        onStateChange: function (e) {
+          // ENDED (0): tell native to queue a related video so playback
+          // cycles YouTube-style instead of stopping on the end screen.
+          if (e.data === 0) { window.location.href = 'ytnext://end'; }
+        },
         onError: function (e) {
           if (e.data == 101 || e.data == 150) {
             window.location.href = 'ytfallback://blocked';
@@ -1076,6 +1130,11 @@ private val YT_EMBED_TEMPLATE = """
         player.seekTo(Math.max(0, t + d), true);
       }
     } catch (x) {}
+  }
+  // Native autoplay bridge: load + play the next related video in-place
+  // (no page reload, so the player keeps its fullscreen/controls state).
+  function ytPlay(id) {
+    try { if (player && player.loadVideoById) { player.loadVideoById(id); } } catch (x) {}
   }
 </script>
 <script src="https://www.youtube.com/iframe_api"></script>
