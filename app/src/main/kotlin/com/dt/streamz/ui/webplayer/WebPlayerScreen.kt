@@ -65,26 +65,32 @@ private sealed interface LoadState {
     data class Failed(val reason: String, val errorCode: Int = 0) : LoadState
 }
 
-private const val LOAD_TIMEOUT_MS = 20_000L
+// Adaptive per-mirror timeouts. The first mirror is the reliability-ranked
+// best, so it gets a generous window to load + start; every fallback after it
+// is a less-likely server we want to fail FAST through. These shorter windows
+// (plus best-first ordering + the dead-host skip) are what make a working
+// title load quickly and a broken one give up in seconds instead of ~20s.
+//
+// FIRST_* = mirror 0 (best server); NEXT_* = any fallback mirror.
+private const val FIRST_LOAD_TIMEOUT_MS = 12_000L
+private const val NEXT_LOAD_TIMEOUT_MS = 6_000L
 
 /**
  * After page-finished, how long to wait for actual media traffic
- * (.m3u8 / .ts / .mp4 / etc.) before deciding the embed is a dead
- * wrapper. 12s lets a slow box fetch the player JS, decode the
- * obfuscated URL, and start the first segment request. If we never
- * see media traffic in that window, the embed is confirmed dead and
- * we walk to the next mirror — no more 20s sit-and-wait for a
- * cross-origin iframe wrapper that's actually empty inside.
+ * (.m3u8 / .ts / .mp4 / etc.) before deciding the embed is a dead wrapper.
+ * The best server gets the full window to fetch player JS, decode the URL and
+ * start the first segment; fallbacks are abandoned quickly.
  */
-private const val MEDIA_CHECK_MS = 18_000L
+private const val FIRST_MEDIA_CHECK_MS = 12_000L
+private const val NEXT_MEDIA_CHECK_MS = 6_000L
 
 /**
  * If no player element of any kind shows up within this window after
  * page-finish, treat the mirror as a blank/dead wrapper and walk on —
- * instead of waiting the full [MEDIA_CHECK_MS]. Mirrors that DO show a
- * player still get the full window.
+ * instead of waiting the full media-check window.
  */
-private const val BLANK_CUTOFF_MS = 8_000L
+private const val FIRST_BLANK_CUTOFF_MS = 6_000L
+private const val NEXT_BLANK_CUTOFF_MS = 3_500L
 
 /**
  * WebView error codes that indicate the embed host itself is unreachable
@@ -119,8 +125,8 @@ private val TRANSPORT_ERROR_CODES = setOf(
  * [Route.WebPlayer] -> here. If no `Referer` is supplied, we default to
  * the embed's own origin, which is the safe baseline most embeds expect.
  *
- * Shows a retry/back overlay if the page doesn't finish loading in
- * [LOAD_TIMEOUT_MS] or if the main frame reports a network error — WebView
+ * Shows a retry/back overlay if the page doesn't finish loading in time
+ * or if the main frame reports a network error — WebView
  * otherwise just sits blank, indistinguishable from buffering.
  */
 @Composable
@@ -132,12 +138,16 @@ fun WebPlayerScreen(
     // returns related IDs (most-relevant first). Only used for `ytembed://`
     // sources; null disables cycling.
     youtubeRelated: (suspend (String) -> List<String>)? = null,
+    // Shown as a last-resort "Choose server" action on the failure overlay
+    // when every ranked mirror failed. Null hides it (single source / YouTube).
+    onPickServer: (() -> Unit)? = null,
     onExit: () -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as? DtApplication
     val blocker = app?.hostBlocker
     val monitor = app?.networkMonitor
+    val serverStats = app?.serverStats
 
     // Active mirror walks: 0 = original embedUrl, 1.. = fallbacks[i-1].
     var mirrorIndex by remember(embedUrl) { mutableStateOf(0) }
@@ -189,6 +199,16 @@ fun WebPlayerScreen(
     // loadDataWithBaseURL, after which webView.url is the base origin, not the
     // source key — so the naive `wv.url != activeUrl` reload guard would loop.
     var lastLoadedUrl by remember { mutableStateOf<String?>(null) }
+
+    // Feed the reliability model: did the mirror at [url] deliver video or
+    // fail? Skips the YouTube embed (not a user-pickable server) and records
+    // by host so the next pick tries the most reliable server first. Declared
+    // here so the load/media-gate effects below can call it.
+    fun reportMirror(url: String, success: Boolean) {
+        if (ytEmbedActive.value) return
+        val host = hostOf(url) ?: return
+        if (success) serverStats?.recordSuccess(host) else serverStats?.recordFailure(host)
+    }
 
     DisposableEffect(activeUrl) {
         monitor?.setActiveHost(activeUrl)
@@ -247,15 +267,18 @@ fun WebPlayerScreen(
         // Poll-based timeout instead of single delay — bail the moment
         // loadState transitions out of Loading (page-finish, transport
         // error, etc.). Single-delay had a race where the timeout branch
-        // fired late even after Loaded was set.
-        val deadline = System.currentTimeMillis() + LOAD_TIMEOUT_MS
+        // fired late even after Loaded was set. The best server (mirror 0)
+        // gets a generous window; fallbacks fail fast.
+        val loadTimeout = if (mirrorIndex == 0) FIRST_LOAD_TIMEOUT_MS else NEXT_LOAD_TIMEOUT_MS
+        val deadline = System.currentTimeMillis() + loadTimeout
         while (System.currentTimeMillis() < deadline) {
             delay(500)
             if (loadState !is LoadState.Loading) return@LaunchedEffect
         }
         if (loadState is LoadState.Loading) {
-            DebugLog.w(TAG, "timeout ${LOAD_TIMEOUT_MS}ms mirror=$mirrorIndex url=${truncUrl(activeUrl)}")
+            DebugLog.w(TAG, "timeout ${loadTimeout}ms mirror=$mirrorIndex url=${truncUrl(activeUrl)}")
             DeadHostRegistry.markIfHost(activeUrl)
+            reportMirror(activeUrl, success = false)
             if (mirrorIndex + 1 < totalMirrors) {
                 DebugLog.i(TAG, "advance ${mirrorIndex} -> ${mirrorIndex + 1} (timeout)")
                 mirrorIndex += 1
@@ -282,8 +305,12 @@ fun WebPlayerScreen(
         // and walking it to the watch page mid-init is exactly the slow
         // "failed to fetch, then click Watch" detour the user hit.
         if (ytEmbedActive.value) return@LaunchedEffect
+        // Best server (mirror 0) gets the full window to start; fallbacks are
+        // failed fast so a dud is abandoned in a few seconds, not ~18.
+        val mediaCheck = if (mirrorIndex == 0) FIRST_MEDIA_CHECK_MS else NEXT_MEDIA_CHECK_MS
+        val blankCutoff = if (mirrorIndex == 0) FIRST_BLANK_CUTOFF_MS else NEXT_BLANK_CUTOFF_MS
         val start = System.currentTimeMillis()
-        val deadline = start + MEDIA_CHECK_MS
+        val deadline = start + mediaCheck
         var lastSignal = "none"
         var sawPlayer = false
         while (System.currentTimeMillis() < deadline) {
@@ -293,6 +320,7 @@ fun WebPlayerScreen(
             lastSignal = signal
             if (signal == "media" || signal == "video" || signal == "iframe-video") {
                 DebugLog.i(TAG, "play confirmed mirror=$mirrorIndex via $signal")
+                reportMirror(activeUrl, success = true)
                 return@LaunchedEffect
             }
             if (signal == "iframe-cross-origin") sawPlayer = true
@@ -301,7 +329,7 @@ fun WebPlayerScreen(
             // burn the full 18s before walking to the next one. (Players that
             // showed an iframe get the full window in case they just need a
             // moment / a tap.)
-            if (!sawPlayer && System.currentTimeMillis() - start >= BLANK_CUTOFF_MS) break
+            if (!sawPlayer && System.currentTimeMillis() - start >= blankCutoff) break
         }
         // Timed out without confirmed media traffic. IMPORTANT: a lot of
         // modern players (vidlink, vidsrc.cc, cloudnestra) either (a) proxy
@@ -318,8 +346,9 @@ fun WebPlayerScreen(
             DebugLog.i(TAG, "keeping mirror=$mirrorIndex — player present, no autostart traffic (press play)")
             return@LaunchedEffect
         }
+        reportMirror(activeUrl, success = false)
         if (mirrorIndex + 1 < totalMirrors) {
-            DebugLog.i(TAG, "blank after ${MEDIA_CHECK_MS}ms (signal=$lastSignal) mirror=$mirrorIndex; advancing")
+            DebugLog.i(TAG, "blank after ${mediaCheck}ms (signal=$lastSignal) mirror=$mirrorIndex; advancing")
             mirrorIndex += 1
         } else {
             DebugLog.w(TAG, "exhausted ${totalMirrors} mirrors — last signal=$lastSignal")
@@ -441,6 +470,7 @@ fun WebPlayerScreen(
                                 // factory-captured (stale) activeUrl — otherwise
                                 // an error on mirror N poisons mirror 0's host.
                                 DeadHostRegistry.markIfHost(failedUrl ?: activeUrl)
+                                reportMirror(failedUrl ?: activeUrl, success = false)
                             }
                             if (transport && mirrorIndex + 1 < totalMirrors) {
                                 DebugLog.i(TAG, "advance ${mirrorIndex} -> ${mirrorIndex + 1} (transport err $code)")
@@ -548,6 +578,7 @@ fun WebPlayerScreen(
                     " (e.g. ${blockedHosts.last()}). Try Settings → 'Block ads in player' → off."
             ErrorOverlay(
                 message = reason,
+                onPickServer = onPickServer,
                 onRetry = {
                     // Restart the walk from the original embed.
                     webViewRef?.let { wv ->
@@ -647,11 +678,16 @@ private suspend fun probeForPlayer(webView: WebView): String {
 }
 
 @Composable
-private fun ErrorOverlay(message: String, onRetry: () -> Unit, onBack: () -> Unit) {
+private fun ErrorOverlay(
+    message: String,
+    onRetry: () -> Unit,
+    onBack: () -> Unit,
+    onPickServer: (() -> Unit)? = null,
+) {
     // The WebView under us holds focus while playing. When the overlay
     // shows up, the remote keeps sending events to the WebView and the
-    // Retry / Back buttons feel unclickable. Request focus on Retry as
-    // soon as the overlay enters composition so D-pad lands on it.
+    // buttons feel unclickable. Request focus on the first action as soon
+    // as the overlay enters composition so D-pad lands on it.
     val retryFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) {
         runCatching { retryFocus.requestFocus() }
@@ -673,11 +709,23 @@ private fun ErrorOverlay(message: String, onRetry: () -> Unit, onBack: () -> Uni
                 color = Color.White,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Button(
-                    onClick = onRetry,
-                    modifier = Modifier.focusRequester(retryFocus),
-                ) {
-                    Text("Retry", modifier = Modifier.padding(horizontal = 8.dp))
+                if (onPickServer != null) {
+                    Button(
+                        onClick = onPickServer,
+                        modifier = Modifier.focusRequester(retryFocus),
+                    ) {
+                        Text("Choose server", modifier = Modifier.padding(horizontal = 8.dp))
+                    }
+                    Button(onClick = onRetry) {
+                        Text("Retry", modifier = Modifier.padding(horizontal = 8.dp))
+                    }
+                } else {
+                    Button(
+                        onClick = onRetry,
+                        modifier = Modifier.focusRequester(retryFocus),
+                    ) {
+                        Text("Retry", modifier = Modifier.padding(horizontal = 8.dp))
+                    }
                 }
                 Spacer(Modifier.width(4.dp))
                 Button(onClick = onBack) {

@@ -42,5 +42,12 @@ sealed interface Route {
          * playback.
          */
         val fallbacks: List<StreamSource> = emptyList(),
+        // Full ranked source list + resume context, so the player can offer a
+        // manual server picker as a last resort if every mirror fails.
+        val allSources: List<StreamSource> = emptyList(),
+        val providerId: String? = null,
+        val titleId: String? = null,
+        val episodeId: String? = null,
+        val startPositionMs: Long = 0,
     ) : Route
 }

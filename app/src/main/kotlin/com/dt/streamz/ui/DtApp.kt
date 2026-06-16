@@ -112,6 +112,18 @@ fun DtApp() {
             val match = sources.firstOrNull { (it.serverLabel ?: "").contains(pref, ignoreCase = true) }
             if (match != null) return playRouteFor(match, label, sources, pid, tid, eid, startMs)
         }
+        // Sub/Dub is a real user choice -> keep the picker. Otherwise the
+        // multiple entries are just servers (movies/TV): auto-play the most
+        // reliable one and let WebPlayer walk the rest, ranked, on failure.
+        // The picker is still reachable as a last resort if all of them fail.
+        val isAudioChoice = sources.any {
+            val l = it.serverLabel ?: ""
+            l.contains("sub", ignoreCase = true) || l.contains("dub", ignoreCase = true)
+        }
+        if (!isAudioChoice) {
+            val ranked = rankSources(app, sources)
+            return playRouteFor(ranked.first(), label, ranked, pid, tid, eid, startMs)
+        }
         return Route.SourcePicker(label, sources, pid, tid, eid, startMs)
     }
 
@@ -360,6 +372,16 @@ fun DtApp() {
                             registry.all.firstOrNull { it.supportsYouTube }?.related(videoId)
                         }.getOrNull().orEmpty()
                     },
+                    // Last-resort manual server picker when every ranked mirror
+                    // failed (movies/TV only — not YouTube's embed/page pair).
+                    onPickServer = if (r.allSources.size > 1 && r.providerId != "youtube") {
+                        {
+                            route = Route.SourcePicker(
+                                r.title, r.allSources, r.providerId,
+                                r.titleId, r.episodeId, r.startPositionMs,
+                            )
+                        }
+                    } else null,
                     onExit = { route = Route.Tabs },
                 )
             }
@@ -580,13 +602,22 @@ private fun playRouteFor(
         subtitles = source.subtitles,
     )
     StreamKind.DirectEmbed -> {
-        // Auto-fallback list = every other DirectEmbed source we know
-        // about, preserving the provider's intent order. Lets WebPlayer
-        // walk past a dead mirror without dumping the user back to the
-        // picker.
+        // Auto-fallback list = every other DirectEmbed source we know about,
+        // preserving the (already reliability-ranked) order. Lets WebPlayer
+        // walk past a dead mirror without dumping the user back to the picker.
         val fallbacks = siblings
             .filter { it.kind == StreamKind.DirectEmbed && it.url != source.url }
-        Route.WebPlayer(source.url, label, source.headers, fallbacks)
+        Route.WebPlayer(
+            embedUrl = source.url,
+            title = label,
+            headers = source.headers,
+            fallbacks = fallbacks,
+            allSources = siblings,
+            providerId = providerId,
+            titleId = titleId,
+            episodeId = episodeId,
+            startPositionMs = startPositionMs,
+        )
     }
 }
 
@@ -607,6 +638,21 @@ private fun resumeStartMs(entry: WatchEntry?, episodeId: String): Long {
 /** True when the saved episode was watched (essentially) to the end. */
 private fun isFinished(entry: WatchEntry): Boolean =
     entry.durationMs > 0 && entry.positionMs > entry.durationMs - RESUME_END_GUARD_MS
+
+/** Embed host used as the reliability-stats key (e.g. "vidlink.pro"). */
+private fun hostKey(url: String): String =
+    runCatching { android.net.Uri.parse(url).host?.lowercase() }.getOrNull().orEmpty()
+
+/**
+ * Orders embed mirrors most-likely-to-work first: by learned reliability score,
+ * with any host marked dead this session shoved to the back. This is what makes
+ * the player try the optimal server first instead of the provider's fixed order.
+ */
+private fun rankSources(app: DtApplication, sources: List<StreamSource>): List<StreamSource> =
+    sources.sortedByDescending { src ->
+        if (com.dt.streamz.ui.webplayer.DeadHostRegistry.isDead(src.url)) -1.0
+        else app.serverStats.score(hostKey(src.url))
+    }
 
 /**
  * Curated TMDb rows for the Movies / TV tabs — Popular / Top Rated / Trending /

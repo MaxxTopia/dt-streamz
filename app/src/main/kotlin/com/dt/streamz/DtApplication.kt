@@ -14,6 +14,7 @@ import com.dt.streamz.config.ScraperConfigLoader
 import com.dt.streamz.data.ContinueWatchingStore
 import com.dt.streamz.data.FavoritesStore
 import com.dt.streamz.data.InterestStore
+import com.dt.streamz.data.ServerStatsStore
 import com.dt.streamz.networkmonitor.NetworkMonitor
 import com.dt.streamz.scraper.ProviderRegistry
 import com.dt.streamz.scraper.anicrush.AnicrushProvider
@@ -77,6 +78,8 @@ class DtApplication : Application(), SingletonImageLoader.Factory {
         private set
     lateinit var interests: InterestStore
         private set
+    lateinit var serverStats: ServerStatsStore
+        private set
 
     private val _availableUpdate = MutableStateFlow<UpdateChecker.Update?>(null)
 
@@ -92,6 +95,8 @@ class DtApplication : Application(), SingletonImageLoader.Factory {
         // On-device interest model — must exist before the provider registry
         // so the YouTube provider can pull learned seeds for its grid.
         interests = InterestStore(this)
+        // Per-server reliability stats driving best-first mirror ordering.
+        serverStats = ServerStatsStore(this)
 
         // YouTube provider boots NewPipeExtractor lazily on first call,
         // but doing it here avoids the cold-start tax on first browse.
