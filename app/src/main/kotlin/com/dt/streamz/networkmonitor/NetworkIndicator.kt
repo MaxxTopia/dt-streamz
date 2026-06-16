@@ -31,7 +31,13 @@ import kotlinx.coroutines.delay
  * any degradation or disconnect. Never focusable — D-pad ignores it.
  */
 @Composable
-fun NetworkIndicator(monitor: NetworkMonitor, modifier: Modifier = Modifier) {
+fun NetworkIndicator(
+    monitor: NetworkMonitor,
+    modifier: Modifier = Modifier,
+    // During playback we keep the indicator faint so it doesn't draw the eye
+    // away from the video — it's still there for a quick glance, just quiet.
+    dim: Boolean = false,
+) {
     val state by monitor.state.collectAsState()
     var hiddenAfterGreen by remember { mutableStateOf(false) }
 
@@ -48,8 +54,12 @@ fun NetworkIndicator(monitor: NetworkMonitor, modifier: Modifier = Modifier) {
     }
 
     val visible = !hiddenAfterGreen || state.tier != Tier.Green || !state.connected
+    // Faint while watching (so it doesn't take away from the video), full
+    // opacity otherwise. A disconnect still forces near-full so a genuine
+    // problem mid-stream is readable.
+    val maxAlpha = if (dim && state.connected) 0.3f else 1f
     val alphaFrac by animateFloatAsState(
-        targetValue = if (visible) 1f else 0f,
+        targetValue = if (visible) maxAlpha else 0f,
         label = "netmon-alpha",
     )
     if (alphaFrac < 0.01f) return

@@ -69,6 +69,15 @@ class TmdbProvider : Provider {
     // mixing TMDb into search would duplicate every result.
     override suspend fun search(query: String): List<SearchResult> = emptyList()
 
+    /**
+     * A single labelled TMDb list endpoint (e.g. "tv/popular",
+     * "movie/top_rated", "trending/tv/week") as a row of results. Powers the
+     * dedicated Popular / Top Rated / Trending / New-Episodes rows on the
+     * Movies and TV tabs so they're full listings rather than one mixed row.
+     */
+    suspend fun categoryRow(path: String): List<SearchResult> =
+        withContext(Dispatchers.IO) { fetchResults(path) }
+
     override suspend fun details(titleId: String): TitleDetails = withContext(Dispatchers.IO) {
         val (mediaType, tmdbId) = parseId(titleId)
         val obj = getJson("$API/$mediaType/$tmdbId?language=en-US")

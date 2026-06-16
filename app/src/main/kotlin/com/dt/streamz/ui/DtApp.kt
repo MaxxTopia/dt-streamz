@@ -39,8 +39,10 @@ import com.dt.streamz.ui.brand.UpdateChip
 import androidx.compose.runtime.collectAsState
 import com.dt.streamz.ui.details.DetailsScreen
 import com.dt.streamz.ui.genres.GenresScreen
+import com.dt.streamz.ui.home.CuratedRow
 import com.dt.streamz.ui.home.HomeScreen
 import com.dt.streamz.ui.home.LatestScreen
+import com.dt.streamz.scraper.tmdb.TmdbProvider
 import com.dt.streamz.ui.library.LibraryScreen
 import com.dt.streamz.ui.player.PlayerScreen
 import com.dt.streamz.ui.search.SearchScreen
@@ -372,12 +374,13 @@ fun DtApp() {
         horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
     ) {
         val update by app.availableUpdate.collectAsState()
-        UpdateChip(update = update)
-        NetworkIndicator(monitor = app.networkMonitor)
         // Hide the DT watermark while a video is on screen — it shouldn't
         // sit over playback. NetworkIndicator stays (it self-hides when the
-        // connection is healthy and is useful mid-stream).
+        // connection is healthy and is useful mid-stream) but goes faint
+        // during playback so it doesn't take away from the video.
         val watching = route is Route.Player || route is Route.WebPlayer
+        UpdateChip(update = update)
+        NetworkIndicator(monitor = app.networkMonitor, dim = watching)
         if (!watching) DtLogo()
     }
     }
@@ -454,8 +457,9 @@ private fun TabsDestination(
                 onOpenTitle = onOpenTitle,
                 onResume = onResume,
                 onRemoveContinue = onRemoveContinue,
-                showMustWatch = true,
+                // Curated TMDb rows replace the single mixed Must-Watch row.
                 forYou = recommenderFor(app, { it.supportsMovies }, { it == MediaKind.Movie }),
+                curatedRows = curatedRowsFor(app, tv = false),
             )
             Section.TV -> HomeScreen(
                 title = "TV Shows",
@@ -468,8 +472,8 @@ private fun TabsDestination(
                 onOpenTitle = onOpenTitle,
                 onResume = onResume,
                 onRemoveContinue = onRemoveContinue,
-                showMustWatch = true,
                 forYou = recommenderFor(app, { it.supportsMovies }, { it == MediaKind.Series }),
+                curatedRows = curatedRowsFor(app, tv = true),
             )
             Section.YouTube -> YouTubeTabScreen(
                 registry = app.providerRegistry,
@@ -603,6 +607,31 @@ private fun resumeStartMs(entry: WatchEntry?, episodeId: String): Long {
 /** True when the saved episode was watched (essentially) to the end. */
 private fun isFinished(entry: WatchEntry): Boolean =
     entry.durationMs > 0 && entry.positionMs > entry.durationMs - RESUME_END_GUARD_MS
+
+/**
+ * Curated TMDb rows for the Movies / TV tabs — Popular / Top Rated / Trending /
+ * etc. — so those tabs are full browsable listings (most-popular to least, plus
+ * what's airing now) instead of a single mixed "Must Watch" row. Empty if TMDb
+ * isn't available (no API key), in which case the tabs fall back to their
+ * provider browse rows.
+ */
+private fun curatedRowsFor(app: DtApplication, tv: Boolean): List<CuratedRow> {
+    val tmdb = app.providerRegistry.all.firstOrNull { it.id == "tmdb" } as? TmdbProvider
+        ?: return emptyList()
+    return if (tv) listOf(
+        CuratedRow("Popular") { tmdb.categoryRow("tv/popular") },
+        CuratedRow("Top Rated") { tmdb.categoryRow("tv/top_rated") },
+        CuratedRow("Trending this week") { tmdb.categoryRow("trending/tv/week") },
+        CuratedRow("New Episodes") { tmdb.categoryRow("tv/on_the_air") },
+        CuratedRow("Airing Today") { tmdb.categoryRow("tv/airing_today") },
+    ) else listOf(
+        CuratedRow("Popular") { tmdb.categoryRow("movie/popular") },
+        CuratedRow("Top Rated") { tmdb.categoryRow("movie/top_rated") },
+        CuratedRow("Now Playing") { tmdb.categoryRow("movie/now_playing") },
+        CuratedRow("Trending this week") { tmdb.categoryRow("trending/movie/week") },
+        CuratedRow("Upcoming") { tmdb.categoryRow("movie/upcoming") },
+    )
+}
 
 /**
  * Builds the per-tab "For You" recommender: searches the tab's providers with

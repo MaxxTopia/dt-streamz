@@ -276,6 +276,12 @@ fun WebPlayerScreen(
     // alive. No segment? Walk to the next mirror.
     LaunchedEffect(activeUrl, attempt, loadState) {
         if (loadState !is LoadState.Loaded) return@LaunchedEffect
+        // The hosted YouTube embed manages its own lifecycle (autoplay +
+        // onError -> watch-page fallback). Don't subject it to the blank-walk
+        // probe: the IFrame API can take several seconds to spin up on the box,
+        // and walking it to the watch page mid-init is exactly the slow
+        // "failed to fetch, then click Watch" detour the user hit.
+        if (ytEmbedActive.value) return@LaunchedEffect
         val start = System.currentTimeMillis()
         val deadline = start + MEDIA_CHECK_MS
         var lastSignal = "none"
@@ -556,11 +562,6 @@ fun WebPlayerScreen(
                 },
                 onBack = onExit,
             )
-        } else if (loadState is LoadState.Loaded) {
-            SkipForwardChip(
-                modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
-                onClick = { webViewRef?.let(::fireSkip10s) },
-            )
         }
     }
 }
@@ -643,53 +644,6 @@ private suspend fun probeForPlayer(webView: WebView): String {
         }
     }
     return result.removeSurrounding("\"")
-}
-
-private fun fireSkip10s(webView: WebView) {
-    val js = """
-        (function(){
-          var v = document.querySelector('video');
-          if (v) { try { v.currentTime = Math.min((v.duration || 1e9), (v.currentTime || 0) + 10); return 'ok'; } catch(e) { return 'err:'+e.message; } }
-          var frames = document.querySelectorAll('iframe');
-          for (var i = 0; i < frames.length; i++) {
-            try {
-              var doc = frames[i].contentDocument;
-              var vv = doc && doc.querySelector('video');
-              if (vv) { vv.currentTime = (vv.currentTime || 0) + 10; return 'ok-iframe'; }
-            } catch (e) {}
-          }
-          return 'no-video';
-        })();
-    """.trimIndent()
-    webView.evaluateJavascript(js) { result ->
-        Log.i(TAG, "skip +10s result: $result")
-    }
-}
-
-@Composable
-private fun SkipForwardChip(modifier: Modifier, onClick: () -> Unit) {
-    var focused by remember { mutableStateOf(false) }
-    Box(
-        modifier = modifier
-            .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp)),
-    ) {
-        androidx.tv.material3.Surface(
-            onClick = onClick,
-            modifier = Modifier
-                .onFocusChanged { focused = it.isFocused },
-            colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(
-                containerColor = Color.Transparent,
-                focusedContainerColor = Color.Black.copy(alpha = 0.55f),
-            ),
-        ) {
-            Text(
-                text = "+10s",
-                color = if (focused) Color.White else Color.White.copy(alpha = 0.45f),
-                style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-            )
-        }
-    }
 }
 
 @Composable

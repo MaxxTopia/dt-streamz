@@ -3,6 +3,8 @@ package com.dt.streamz.ui.home
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -77,6 +79,9 @@ fun HomeScreen(
     // On-device "For You" recommender for this tab. Returns titles matched to
     // the user's learned interests; null or empty -> the row is hidden.
     forYou: (suspend () -> List<SearchResult>)? = null,
+    // Curated TMDb-fed rows (Popular / Top Rated / Trending / …) for the Movies
+    // and TV tabs so they're full browsable listings, not one mixed row.
+    curatedRows: List<CuratedRow> = emptyList(),
 ) {
     val rawContinueEntries by (continueWatching?.entries ?: flowOf(emptyList()))
         .collectAsState(initial = emptyList())
@@ -117,7 +122,10 @@ fun HomeScreen(
     }
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 14.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 28.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(
@@ -148,6 +156,15 @@ fun HomeScreen(
                 favoriteKeys = favoriteKeys,
                 kindFilter = kindFilter,
                 titleOverride = "🔥 Must Watch · trending now",
+                onOpenTitle = onOpenTitle,
+                onToggleFavorite = toggleFavorite,
+            )
+        }
+        curatedRows.forEach { row ->
+            CuratedRowView(
+                row = row,
+                watchedKeys = watchedKeys,
+                favoriteKeys = favoriteKeys,
                 onOpenTitle = onOpenTitle,
                 onToggleFavorite = toggleFavorite,
             )
@@ -208,6 +225,47 @@ fun HomeScreen(
                 }
             },
         )
+    }
+}
+
+/** A labelled, lazily-loaded row of titles (e.g. TMDb "Popular"). */
+data class CuratedRow(
+    val title: String,
+    val load: suspend () -> List<SearchResult>,
+)
+
+@Composable
+private fun CuratedRowView(
+    row: CuratedRow,
+    watchedKeys: Set<String>,
+    favoriteKeys: Set<String>,
+    onOpenTitle: (String, String) -> Unit,
+    onToggleFavorite: (SearchResult) -> Unit,
+) {
+    var results by remember(row.title) { mutableStateOf<List<SearchResult>?>(null) }
+    LaunchedEffect(row.title) {
+        results = runCatching { row.load() }.getOrDefault(emptyList())
+    }
+    val list = results ?: return
+    if (list.isEmpty()) return
+    Text(
+        text = row.title,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
+    )
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        items(list, key = { "${it.providerId}:${it.id}" }) { item ->
+            PosterCard(
+                result = item,
+                watched = "${item.providerId}:${item.id}" in watchedKeys,
+                favorited = "${item.providerId}:${item.id}" in favoriteKeys,
+                onClick = { onOpenTitle(item.providerId, item.id) },
+                onToggleFavorite = { onToggleFavorite(item) },
+            )
+        }
     }
 }
 
