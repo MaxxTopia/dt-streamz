@@ -296,6 +296,19 @@ class YouTubeProvider(
             ?: emptyList()
     }
 
+    /**
+     * Related videos with full metadata for the in-player "Up next" rail.
+     * Same watch-next signal as [related], parsed into [SearchResult]s and
+     * filtered to non-live, English titles (matching the rest of the feed).
+     */
+    override suspend fun relatedResults(titleId: String): List<SearchResult> = withContext(Dispatchers.IO) {
+        val videoId = videoIdOf(titleId)
+        runCatching { innertube.relatedVideos(videoId) }.getOrNull().orEmpty()
+            .filterNot { it.isLive }
+            .filter { isLikelyEnglish(it.title) }
+            .map { it.toSearchResult() }
+    }
+
     override suspend fun streams(titleId: String, episode: Episode): List<StreamSource> =
         withContext(Dispatchers.IO) {
             val videoId = videoIdOf(titleId)

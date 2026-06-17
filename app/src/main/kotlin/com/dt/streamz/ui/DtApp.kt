@@ -60,6 +60,7 @@ private enum class Section(val label: String) {
     Movies("Movies"),
     TV("TV"),
     YouTube("YouTube"),
+    Recommended("Recommended"),
     Latest("Latest"),
     Search("Search"),
     Genres("Genres"),
@@ -182,7 +183,27 @@ fun DtApp() {
         when (val r = route) {
             Route.Tabs -> TabsDestination(
                 onOpenTitle = { providerId, titleId ->
-                    route = Route.Details(providerId, titleId)
+                    if (providerId == "youtube") {
+                        // YouTube plays through our hosted embed, which only
+                        // needs the videoId — there is nothing to fetch first.
+                        // The old flow opened the details screen, where the
+                        // Piped/NewPipe backends hang ~20s on this box, fail
+                        // with "backend may be unreachable", and force a manual
+                        // "Watch" tap before anything plays. Skip all of it:
+                        // resolve the (network-free) embed sources and play
+                        // immediately.
+                        scope.launch {
+                            val ep = com.dt.streamz.data.Episode(
+                                id = "watch", number = 1, title = "Watch",
+                            )
+                            val sources = runCatching {
+                                registry.get("youtube").streams(titleId, ep)
+                            }.getOrDefault(emptyList())
+                            route = routeForSources("YouTube", sources, "youtube", titleId, "watch")
+                        }
+                    } else {
+                        route = Route.Details(providerId, titleId)
+                    }
                 },
                 onOpenTwitchChannel = { channel ->
                     // Runs in DtApp's scope so it survives a Tab focus-
@@ -372,6 +393,12 @@ fun DtApp() {
                             registry.all.firstOrNull { it.supportsYouTube }?.related(videoId)
                         }.getOrNull().orEmpty()
                     },
+                    // Rich related videos for the in-player "Up next" rail.
+                    youtubeRelatedResults = { videoId ->
+                        runCatching {
+                            registry.all.firstOrNull { it.supportsYouTube }?.relatedResults(videoId)
+                        }.getOrNull().orEmpty()
+                    },
                     // Last-resort manual server picker when every ranked mirror
                     // failed (movies/TV only — not YouTube's embed/page pair).
                     onPickServer = if (r.allSources.size > 1 && r.providerId != "youtube") {
@@ -501,6 +528,10 @@ private fun TabsDestination(
                 registry = app.providerRegistry,
                 onOpenTitle = onOpenTitle,
             )
+            Section.Recommended -> com.dt.streamz.ui.youtube.YouTubeRecommendedScreen(
+                registry = app.providerRegistry,
+                onOpenTitle = onOpenTitle,
+            )
             Section.Latest -> LatestScreen(
                 registry = app.providerRegistry,
                 favorites = app.favorites,
@@ -546,6 +577,7 @@ private fun tabTintFor(section: Section): androidx.compose.ui.graphics.Color = w
     Section.Movies -> MoviesGold
     Section.TV -> TvBlue
     Section.YouTube -> YouTubeRed
+    Section.Recommended -> androidx.compose.ui.graphics.Color(0xFFFF5252)
     Section.Latest -> LatestGreen
     Section.Library -> LibraryTeal
     Section.Genres -> GenresPink

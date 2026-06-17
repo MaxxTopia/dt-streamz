@@ -30,4 +30,11 @@ interface Provider {
      * one ends). Default none — providers without a related feed opt out.
      */
     suspend fun related(titleId: String): List<String> = emptyList()
+
+    /**
+     * Optional: related/up-next items for [titleId] with full metadata
+     * (title + poster), most-relevant first. Powers the in-player "Up next"
+     * rail. Default none — providers without a related feed opt out.
+     */
+    suspend fun relatedResults(titleId: String): List<SearchResult> = emptyList()
 }

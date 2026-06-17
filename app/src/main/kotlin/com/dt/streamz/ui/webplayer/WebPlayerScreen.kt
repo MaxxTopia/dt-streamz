@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -47,8 +48,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.tv.material3.Button
+import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.dt.streamz.DtApplication
 import com.dt.streamz.adblock.HostBlocker
@@ -138,6 +150,9 @@ fun WebPlayerScreen(
     // returns related IDs (most-relevant first). Only used for `ytembed://`
     // sources; null disables cycling.
     youtubeRelated: (suspend (String) -> List<String>)? = null,
+    // Rich related videos (title + thumbnail) for the in-player "Up next"
+    // rail the user opens with D-pad DOWN. YouTube-only; null hides the rail.
+    youtubeRelatedResults: (suspend (String) -> List<com.dt.streamz.data.SearchResult>)? = null,
     // Shown as a last-resort "Choose server" action on the failure overlay
     // when every ranked mirror failed. Null hides it (single source / YouTube).
     onPickServer: (() -> Unit)? = null,
@@ -200,6 +215,33 @@ fun WebPlayerScreen(
     // source key — so the naive `wv.url != activeUrl` reload guard would loop.
     var lastLoadedUrl by remember { mutableStateOf<String?>(null) }
 
+    // In-player "Up next" rail (YouTube). `relatedList` is loaded for the
+    // currently-playing video; `railVisible` is toggled by D-pad DOWN. The
+    // rail is native Compose, so while it's focused the WebView's key
+    // listener is dormant — Left/Right move between cards instead of seeking.
+    var relatedList by remember { mutableStateOf<List<com.dt.streamz.data.SearchResult>>(emptyList()) }
+    var railVisible by remember { mutableStateOf(false) }
+    val railFocus = remember { FocusRequester() }
+
+    // Load related videos for whatever is currently playing in the YT embed.
+    LaunchedEffect(ytCurrentId.value, ytEmbedActive.value) {
+        if (!ytEmbedActive.value || youtubeRelatedResults == null) {
+            relatedList = emptyList()
+            return@LaunchedEffect
+        }
+        val vid = ytCurrentId.value ?: return@LaunchedEffect
+        relatedList = runCatching { youtubeRelatedResults(vid) }.getOrNull().orEmpty()
+    }
+
+    // Bring the rail's focus into Compose once it's shown (the WebView holds
+    // focus during playback; this hands it to the first card).
+    LaunchedEffect(railVisible) {
+        if (railVisible) {
+            delay(60) // let the rail compose before requesting focus
+            runCatching { railFocus.requestFocus() }
+        }
+    }
+
     // Feed the reliability model: did the mirror at [url] deliver video or
     // fail? Skips the YouTube embed (not a user-pickable server) and records
     // by host so the next pick tries the most reliable server first. Declared
@@ -224,6 +266,9 @@ fun WebPlayerScreen(
         blockedHosts.clear()
         mainFrameHost = hostOf(activeUrl)
         ytEmbedActive.value = activeUrl.startsWith(YT_EMBED_SCHEME)
+        // Re-evaluate the cursor for the new mirror (YT embed hides it; a
+        // watch-page / cross-origin fallback restores a normal pointer).
+        webViewRef?.pointerIcon = pointerIconFor(ctx, activeUrl.startsWith(YT_EMBED_SCHEME))
         if (activeUrl.startsWith(YT_EMBED_SCHEME)) {
             val vid = activeUrl.removePrefix(YT_EMBED_SCHEME)
             ytCurrentId.value = vid
@@ -375,6 +420,13 @@ fun WebPlayerScreen(
         chromeClientRef?.forceExit()
     }
 
+    // BACK while the "Up next" rail is open closes the rail and returns focus
+    // to the video, instead of exiting the player.
+    BackHandler(enabled = railVisible) {
+        railVisible = false
+        webViewRef?.requestFocus()
+    }
+
     // Single load entry-point. A `ytembed://<id>` source is expanded into our
     // hosted IFrame-API player and loaded via loadDataWithBaseURL (so the YT
     // API gets a real origin); everything else is a plain headered loadUrl.
@@ -409,6 +461,18 @@ fun WebPlayerScreen(
         }
     }
 
+    // Play a related video the user picked from the "Up next" rail, in-place
+    // in the same embed (no reload, keeps fullscreen). Closes the rail and
+    // hands focus back to the player so OK resumes pausing the new video.
+    fun playYouTubeInPlace(id: String) {
+        ytSeen.add(id)
+        ytCurrentId.value = id
+        DebugLog.i(TAG, "yt rail pick -> $id")
+        webViewRef?.evaluateJavascript("ytPlay('$id');", null)
+        railVisible = false
+        webViewRef?.requestFocus()
+    }
+
     // D-pad seek policy (the user's "double-press to seek"): a SINGLE Left/
     // Right is swallowed so you don't seek by accident while moving toward the
     // gear/volume; a DOUBLE-tap within DPAD_DOUBLE_MS seeks ±10s. On our own
@@ -418,9 +482,41 @@ fun WebPlayerScreen(
     val dpadState = remember { DpadSeekState() }
     val dpadListener = remember {
         android.view.View.OnKeyListener { _, keyCode, event ->
+            val isCenter = keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER ||
+                keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
+                keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER
+            val isPlayPause = keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE ||
+                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PLAY ||
+                keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PAUSE ||
+                keyCode == android.view.KeyEvent.KEYCODE_SPACE
+            // D-pad DOWN on our YouTube embed opens the native "Up next" rail
+            // (if we have related videos). Consume so the keystroke doesn't
+            // reach the embed's own end-screen. While the rail is up, focus
+            // lives in Compose and this listener is dormant.
+            if (keyCode == android.view.KeyEvent.KEYCODE_DPAD_DOWN &&
+                ytEmbedActive.value && !railVisible && relatedList.isNotEmpty()
+            ) {
+                if (event.action == android.view.KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                    railVisible = true
+                }
+                return@OnKeyListener true
+            }
+            // OK / Play-Pause on OUR YouTube embed: toggle playback through the
+            // IFrame API so the video can be paused with the remote's OK button
+            // — no need to flip the box into mouse-cursor mode. Guarded by
+            // !railVisible so that pressing OK on a related-video card plays
+            // that video (handled in Compose) instead of toggling pause. On a
+            // cross-origin embed (vidsrc etc.) we can't reach the player, so
+            // let the key fall through to that embed's own on-screen controls.
+            if ((isCenter || isPlayPause) && ytEmbedActive.value && !railVisible) {
+                if (event.action == android.view.KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                    webViewRef?.evaluateJavascript("ytTogglePlay();", null)
+                }
+                return@OnKeyListener true // consume down + up so it never reaches the player
+            }
             val isLR = keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT ||
                 keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT
-            if (!isLR) return@OnKeyListener false // up/down/center pass through
+            if (!isLR) return@OnKeyListener false // up/down pass through
             if (event.action != android.view.KeyEvent.ACTION_DOWN) return@OnKeyListener true
             if (event.repeatCount > 0) return@OnKeyListener true // ignore key-repeat
             val dir = if (keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT) 1 else -1
@@ -513,6 +609,14 @@ fun WebPlayerScreen(
                     isFocusableInTouchMode = true
                     requestFocus()
                     setOnKeyListener(dpadListener)
+                    // Hide the OS mouse pointer over our own YouTube embed.
+                    // The box's remote can flip into air-mouse mode, and the
+                    // pointer it draws then lingers over the player even after
+                    // switching back to D-pad — ugly, and now unnecessary since
+                    // OK pauses directly. Only suppressed for the YT embed;
+                    // cross-origin embeds keep a normal cursor in case the user
+                    // needs it to click their player's controls.
+                    pointerIcon = pointerIconFor(ctx, activeUrl.startsWith(YT_EMBED_SCHEME))
                     if (BuildConfig.DEBUG) {
                         WebView.setWebContentsDebuggingEnabled(true)
                     }
@@ -594,6 +698,22 @@ fun WebPlayerScreen(
                 onBack = onExit,
             )
         }
+
+        // In-player "Up next" rail — opened with D-pad DOWN on the YouTube
+        // embed. Native Compose, so it owns focus while open (Left/Right move
+        // between cards, OK plays the picked video in-place).
+        if (railVisible && ytEmbedActive.value && relatedList.isNotEmpty()) {
+            RelatedRail(
+                videos = relatedList,
+                firstFocus = railFocus,
+                onPlay = { id -> playYouTubeInPlace(id) },
+                onDismiss = {
+                    railVisible = false
+                    webViewRef?.requestFocus()
+                },
+                modifier = Modifier.align(Alignment.BottomCenter),
+            )
+        }
     }
 }
 
@@ -611,6 +731,102 @@ private fun MirrorWalkChip(modifier: Modifier, index: Int, total: Int) {
             text = "Trying mirror $index of $total…",
             color = Color.White.copy(alpha = 0.85f),
             style = MaterialTheme.typography.labelMedium,
+        )
+    }
+}
+
+/**
+ * Bottom "Up next" rail of related YouTube videos, opened with D-pad DOWN.
+ * Left/Right scrolls between cards; OK plays the picked video in-place; UP
+ * (or BACK) closes it and returns to the video.
+ */
+@Composable
+private fun RelatedRail(
+    videos: List<com.dt.streamz.data.SearchResult>,
+    firstFocus: FocusRequester,
+    onPlay: (String) -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(
+                androidx.compose.ui.graphics.Brush.verticalGradient(
+                    listOf(Color.Transparent, Color.Black.copy(alpha = 0.95f)),
+                ),
+            )
+            .padding(horizontal = 24.dp, vertical = 14.dp)
+            .onPreviewKeyEvent { ev ->
+                if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionUp) {
+                    onDismiss(); true
+                } else false
+            },
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = "Up next",
+            style = MaterialTheme.typography.titleSmall,
+            color = Color.White,
+        )
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            itemsIndexed(videos, key = { _, v -> v.id }) { i, v ->
+                RelatedCard(
+                    result = v,
+                    focusRequester = if (i == 0) firstFocus else null,
+                    onClick = { onPlay(v.id) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RelatedCard(
+    result: com.dt.streamz.data.SearchResult,
+    focusRequester: FocusRequester?,
+    onClick: () -> Unit,
+) {
+    var focused by remember { mutableStateOf(false) }
+    Column(
+        modifier = Modifier
+            .width(200.dp)
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .onFocusChanged { focused = it.isFocused },
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Surface(
+            onClick = onClick,
+            colors = ClickableSurfaceDefaults.colors(
+                containerColor = Color(0xFF1A1A1A),
+                focusedContainerColor = Color(0xFF1A1A1A),
+            ),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(16f / 9f)
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                    .border(
+                        width = if (focused) 2.dp else 0.dp,
+                        color = if (focused) Color.White else Color.Transparent,
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+                    ),
+            ) {
+                if (result.poster != null) {
+                    coil3.compose.AsyncImage(
+                        model = result.poster,
+                        contentDescription = result.title,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+        Text(
+            text = result.title,
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White.copy(alpha = if (focused) 1f else 0.8f),
+            maxLines = 2,
         )
     }
 }
@@ -990,6 +1206,17 @@ private fun shareEffectiveDomain(a: String, b: String): Boolean {
 
 private fun hostOf(url: String): String? = runCatching { Uri.parse(url).host?.lowercase() }.getOrNull()
 
+/**
+ * Pointer icon for the player WebView. [hidden] = our own YouTube embed,
+ * where we suppress the OS mouse cursor entirely (TYPE_NULL); otherwise a
+ * normal arrow so cross-origin embeds stay clickable.
+ */
+private fun pointerIconFor(ctx: Context, hidden: Boolean): android.view.PointerIcon =
+    android.view.PointerIcon.getSystemIcon(
+        ctx,
+        if (hidden) android.view.PointerIcon.TYPE_NULL else android.view.PointerIcon.TYPE_ARROW,
+    )
+
 /** Shortens a URL for the in-app debug log so screenshots stay readable. */
 private fun truncUrl(url: String, max: Int = 90): String =
     if (url.length <= max) url else url.take(max - 1) + "…"
@@ -1131,6 +1358,16 @@ private val YT_EMBED_TEMPLATE = """
         var t = player.getCurrentTime() || 0;
         player.seekTo(Math.max(0, t + d), true);
       }
+    } catch (x) {}
+  }
+  // Native OK / Play-Pause bridge: toggle playback. State 1 = playing,
+  // 3 = buffering -> pause; anything else (paused/ended/cued) -> play.
+  // Pausing surfaces YouTube's own control bar, so the pause state is visible.
+  function ytTogglePlay() {
+    try {
+      if (!player || !player.getPlayerState) return;
+      var s = player.getPlayerState();
+      if (s === 1 || s === 3) { player.pauseVideo(); } else { player.playVideo(); }
     } catch (x) {}
   }
   // Native autoplay bridge: load + play the next related video in-place

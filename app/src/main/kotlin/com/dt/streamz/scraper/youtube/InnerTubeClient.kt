@@ -80,6 +80,24 @@ internal class InnerTubeClient {
         out
     }
 
+    /**
+     * Same watch-next column as [related], but parsed into full [YtVideo]s
+     * (title + thumbnail + uploader) so the player can show a navigable
+     * "Up next" rail instead of just cycling opaque IDs.
+     */
+    suspend fun relatedVideos(videoId: String): List<YtVideo> = withContext(Dispatchers.IO) {
+        if (videoId.isBlank()) return@withContext emptyList()
+        val payload = """
+            {"context":{"client":{"clientName":"WEB","clientVersion":"$CLIENT_VERSION","hl":"en","gl":"US"}},
+             "videoId":${videoId.jsonString()}}
+        """.trimIndent()
+        val root = post("next", payload) ?: return@withContext emptyList()
+        val out = mutableListOf<YtVideo>()
+        val seen = mutableSetOf(videoId)
+        collectCompactVideos(root, out, seen)
+        out
+    }
+
     /** Depth-first collect of compactVideoRenderer videoIds (watch-next list). */
     private fun collectCompact(el: JsonElement, out: MutableList<String>, seen: MutableSet<String>) {
         when (el) {
@@ -96,6 +114,42 @@ internal class InnerTubeClient {
             else -> {}
         }
     }
+
+    /** Depth-first collect of compactVideoRenderer into full YtVideos. */
+    private fun collectCompactVideos(
+        el: JsonElement,
+        out: MutableList<YtVideo>,
+        seen: MutableSet<String>,
+    ) {
+        when (el) {
+            is JsonObject -> {
+                el["compactVideoRenderer"]?.jsonObjectOrNull
+                    ?.let { parseCompact(it)?.let { v -> if (seen.add(v.videoId)) out.add(v) } }
+                for ((k, v) in el) {
+                    if (k == "compactVideoRenderer") continue
+                    collectCompactVideos(v, out, seen)
+                }
+            }
+            is JsonArray -> el.forEach { collectCompactVideos(it, out, seen) }
+            else -> {}
+        }
+    }
+
+    private fun parseCompact(v: JsonObject): YtVideo? {
+        val videoId = v["videoId"]?.jsonPrimitive?.contentOrNull ?: return null
+        // compactVideoRenderer title is usually simpleText; fall back to runs.
+        val title = v["title"]?.textOrNull() ?: return null
+        val uploader = v["longBylineText"]?.runsText() ?: v["shortBylineText"]?.runsText()
+        val live = v["thumbnailOverlays"]?.jsonArrayOrNull?.any { ov ->
+            ov.jsonObjectOrNull?.get("thumbnailOverlayTimeStatusRenderer")?.jsonObjectOrNull
+                ?.get("style")?.jsonPrimitive?.contentOrNull == "LIVE"
+        } == true
+        return YtVideo(videoId, title, uploader, null, thumbOf(videoId), live, published = "")
+    }
+
+    /** simpleText or concatenated runs, whichever the node carries. */
+    private fun JsonElement.textOrNull(): String? =
+        jsonObjectOrNull?.get("simpleText")?.jsonPrimitive?.contentOrNull ?: runsText()
 
     /** Depth-first collect of videoRenderer/gridVideoRenderer/channelRenderer. */
     private fun collectRenderers(
