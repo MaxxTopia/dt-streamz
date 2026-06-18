@@ -37,4 +37,13 @@ interface Provider {
      * rail. Default none — providers without a related feed opt out.
      */
     suspend fun relatedResults(titleId: String): List<SearchResult> = emptyList()
+
+    /**
+     * Optional: is [titleId] a livestream that is broadcasting RIGHT NOW?
+     * Used to drop ended livestreams from recommendation rows (a result's
+     * cached `isLive` flag can be stale by the time it's shown). Default
+     * false — providers with no live content never surface live results, so
+     * this is only meaningfully overridden by YouTube.
+     */
+    suspend fun isLiveNow(titleId: String): Boolean = false
 }

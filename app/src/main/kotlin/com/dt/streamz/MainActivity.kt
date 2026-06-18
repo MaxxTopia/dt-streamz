@@ -68,7 +68,7 @@ class MainActivity : ComponentActivity() {
                     openSoundLoaded = true
                     if (openSoundPending) {
                         openSoundPending = false
-                        pool.play(id, 0.85f, 0.85f, 1, 0, 1f)
+                        pool.play(id, OPEN_SOUND_VOLUME, OPEN_SOUND_VOLUME, 1, 0, 1f)
                     }
                 }
             }
@@ -84,7 +84,7 @@ class MainActivity : ComponentActivity() {
      */
     private fun triggerOpenSound() {
         val sp = openSoundPool ?: return
-        if (openSoundLoaded) sp.play(openSoundId, 0.85f, 0.85f, 1, 0, 1f)
+        if (openSoundLoaded) sp.play(openSoundId, OPEN_SOUND_VOLUME, OPEN_SOUND_VOLUME, 1, 0, 1f)
         else openSoundPending = true
         window.decorView.postDelayed({
             openSoundPool?.release(); openSoundPool = null
@@ -149,5 +149,8 @@ class MainActivity : ComponentActivity() {
     companion object {
         private const val SPLASH_PREFS = "ui"
         private const val KEY_SPLASH_SEEN_PREFIX = "splash_seen_v"
+        // App-open guitar volume (0..1). Dialed down from 0.85 so it's a soft
+        // accent under the splash, not a jolt.
+        private const val OPEN_SOUND_VOLUME = 0.6f
     }
 }

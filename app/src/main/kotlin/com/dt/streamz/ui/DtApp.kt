@@ -52,6 +52,8 @@ import com.dt.streamz.twitch.TwitchStreamResolver
 import com.dt.streamz.ui.twitch.TwitchScreen
 import com.dt.streamz.ui.webplayer.WebPlayerScreen
 import com.dt.streamz.ui.youtube.YouTubeTabScreen
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
 
 private enum class Section(val label: String) {
@@ -755,7 +757,24 @@ private fun recommenderFor(
         }
         if (out.size >= 24) break
     }
-    out.values.toList()
+    // Drop ended livestreams: a result's `isLive` flag is from search time and
+    // goes stale the moment the broadcast ends. For every live-flagged item,
+    // re-confirm it's live RIGHT NOW (in parallel) and keep it only if so —
+    // non-live items pass straight through. So For You only ever shows a live
+    // stream while it's actually live.
+    val provById = provs.associateBy { it.id }
+    kotlinx.coroutines.coroutineScope {
+        out.values.map { r ->
+            async {
+                if (!r.isLive) r
+                else {
+                    val live = provById[r.providerId]
+                        ?.let { runCatching { it.isLiveNow(r.id) }.getOrDefault(false) } == true
+                    if (live) r else null
+                }
+            }
+        }.awaitAll().filterNotNull()
+    }
 }
 
 private const val TAG = "DtApp"

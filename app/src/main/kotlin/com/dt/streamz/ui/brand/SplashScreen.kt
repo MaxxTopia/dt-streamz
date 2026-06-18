@@ -23,6 +23,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -76,6 +77,12 @@ fun SplashScreen(onFinished: () -> Unit, onBegin: () -> Unit = {}) {
         //   ~1.95s onward          -> fade as the note dies (~2.3s total)
         // Previously the animation ran ~4.6s while the guitar finished at
         // 1.9s, so the back half played in silence — that's the mismatch.
+        // Wait for the first ACTUAL rendered frame before firing the guitar.
+        // The LaunchedEffect body runs before the splash has painted, so on a
+        // slow cold-start the old code started the sound while the screen was
+        // still black — the guitar then ran ahead of the tiles. Gating on the
+        // first frame starts audio with the first visible tile motion.
+        withFrameNanos { }
         onBegin()
         if (skipped) { onFinished(); return@LaunchedEffect }
         // Tile entry — staggered slide-in tuned so all five land within the

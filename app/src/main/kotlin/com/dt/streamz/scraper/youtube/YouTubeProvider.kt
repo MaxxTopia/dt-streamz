@@ -309,6 +309,11 @@ class YouTubeProvider(
             .map { it.toSearchResult() }
     }
 
+    /** Confirm a video is broadcasting live right now (drops ended streams). */
+    override suspend fun isLiveNow(titleId: String): Boolean = withContext(Dispatchers.IO) {
+        runCatching { innertube.isLiveNow(videoIdOf(titleId)) }.getOrDefault(false)
+    }
+
     override suspend fun streams(titleId: String, episode: Episode): List<StreamSource> =
         withContext(Dispatchers.IO) {
             val videoId = videoIdOf(titleId)

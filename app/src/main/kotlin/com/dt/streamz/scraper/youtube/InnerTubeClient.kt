@@ -7,6 +7,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -113,6 +114,34 @@ internal class InnerTubeClient {
             is JsonArray -> el.forEach { collectCompact(it, out, seen) }
             else -> {}
         }
+    }
+
+    /**
+     * Is [videoId] live RIGHT NOW? Hits the `next` (watch) endpoint and looks
+     * for the live "watching now" view-count marker. An ended/VOD stream comes
+     * back without it, so this reliably distinguishes "still live" from
+     * "was live, now ended" (the case a stale search badge can't). Best-effort:
+     * any failure returns false (treated as not-currently-live).
+     */
+    suspend fun isLiveNow(videoId: String): Boolean = withContext(Dispatchers.IO) {
+        if (videoId.isBlank()) return@withContext false
+        val payload = """
+            {"context":{"client":{"clientName":"WEB","clientVersion":"$CLIENT_VERSION","hl":"en","gl":"US"}},
+             "videoId":${videoId.jsonString()}}
+        """.trimIndent()
+        val root = post("next", payload) ?: return@withContext false
+        findLiveNow(root)
+    }
+
+    /** True if the tree carries a live "watching now" view-count marker. */
+    private fun findLiveNow(el: JsonElement): Boolean = when (el) {
+        is JsonObject -> {
+            val liveHere = el["videoViewCountRenderer"]?.jsonObjectOrNull
+                ?.get("isLive")?.jsonPrimitive?.booleanOrNull == true
+            liveHere || el.values.any { findLiveNow(it) }
+        }
+        is JsonArray -> el.any { findLiveNow(it) }
+        else -> false
     }
 
     /** Depth-first collect of compactVideoRenderer into full YtVideos. */
