@@ -62,6 +62,7 @@ fun LibraryScreen(
     val continueEntries by continueWatching.entries.collectAsState(initial = emptyList())
     val favoriteEntries by favorites.entries.collectAsState(initial = emptyList())
     var pendingRemoval by remember { mutableStateOf<WatchEntry?>(null) }
+    var menuEntry by remember { mutableStateOf<WatchEntry?>(null) }
     val scope = rememberCoroutineScope()
 
     Column(
@@ -93,7 +94,7 @@ fun LibraryScreen(
                 rowItems(continueEntries, key = { "${it.providerId}:${it.titleId}" }) { entry ->
                     ContinueTile(
                         entry = entry,
-                        onClick = { onResume(entry) },
+                        onClick = { menuEntry = entry },
                         onRequestRemove = { pendingRemoval = entry },
                     )
                 }
@@ -138,6 +139,16 @@ fun LibraryScreen(
                     androidx.compose.material3.Text("Cancel")
                 }
             },
+        )
+    }
+
+    menuEntry?.let { target ->
+        com.dt.streamz.ui.home.ContinueOptionsDialog(
+            entry = target,
+            onResume = { menuEntry = null; onResume(target) },
+            onEpisodes = { menuEntry = null; onOpenTitle(target.providerId, target.titleId) },
+            onRemove = { menuEntry = null; pendingRemoval = target },
+            onDismiss = { menuEntry = null },
         )
     }
 }

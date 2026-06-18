@@ -152,10 +152,14 @@ fun DtApp() {
     // (+1 = next, -1 = previous). Shared by the Next/Prev buttons (manual =
     // true, toasts when there's nothing there) and auto-play-on-end
     // (manual = false, +1, returns to tabs at the finale).
-    fun advanceEpisode(r: Route.Player, delta: Int, manual: Boolean) {
-        val pid = r.providerId
-        val tid = r.titleId
-        val eid = r.episodeId
+    // Resolve + play the episode [delta] steps from (pid,tid,eid). Works for
+    // both the native player and the embed (WebPlayer) routes. manual=true
+    // toasts when there's nothing there; manual=false (auto-play-on-end)
+    // silently returns to the tabs at the finale.
+    fun advanceFrom(
+        pid: String?, tid: String?, eid: String?, fallbackTitle: String,
+        delta: Int, manual: Boolean,
+    ) {
         if (pid == null || tid == null || eid == null) {
             if (!manual) route = Route.Tabs
             return
@@ -171,9 +175,12 @@ fun DtApp() {
                 else route = Route.Tabs
                 return@launch
             }
-            playEpisode(pid, tid, target, details?.title ?: r.title, details?.poster, details?.kind?.name)
+            playEpisode(pid, tid, target, details?.title ?: fallbackTitle, details?.poster, details?.kind?.name)
         }
     }
+
+    fun advanceEpisode(r: Route.Player, delta: Int, manual: Boolean) =
+        advanceFrom(r.providerId, r.titleId, r.episodeId, r.title, delta, manual)
 
     Box(modifier = Modifier.fillMaxSize()) {
     Surface(
@@ -399,6 +406,13 @@ fun DtApp() {
                             registry.all.firstOrNull { it.supportsYouTube }?.relatedResults(videoId)
                         }.getOrNull().orEmpty()
                     },
+                    // Episodic embed (TV/anime, not movies/YouTube) gets the
+                    // Netflix-style D-pad control bar (press UP) + best-effort
+                    // auto-play-next when the embed reports the video ended.
+                    showNextPrev = r.episodeId != null && r.providerId != "youtube",
+                    onNext = { advanceFrom(r.providerId, r.titleId, r.episodeId, r.title, +1, manual = true) },
+                    onPrev = { advanceFrom(r.providerId, r.titleId, r.episodeId, r.title, -1, manual = true) },
+                    onEmbedEnded = { advanceFrom(r.providerId, r.titleId, r.episodeId, r.title, +1, manual = false) },
                     // Last-resort manual server picker when every ranked mirror
                     // failed (movies/TV only — not YouTube's embed/page pair).
                     onPickServer = if (r.allSources.size > 1 && r.providerId != "youtube") {

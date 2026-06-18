@@ -26,6 +26,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
@@ -112,6 +114,8 @@ fun HomeScreen(
         }
     }
     var pendingRemoval by remember { mutableStateOf<WatchEntry?>(null) }
+    // Continue-watching card tap opens this quick menu (Resume / Episodes / Remove).
+    var menuEntry by remember { mutableStateOf<WatchEntry?>(null) }
     // tmdb feeds only the dedicated Must-Watch row — keep it out of the
     // generic per-provider browse rows.
     val visibleProviders = registry?.all?.filter(providerFilter).orEmpty()
@@ -145,7 +149,7 @@ fun HomeScreen(
         if (continueEntries.isNotEmpty()) {
             ContinueRow(
                 entries = continueEntries,
-                onResume = onResume,
+                onOpenMenu = { menuEntry = it },
                 onRequestRemove = { pendingRemoval = it },
             )
         }
@@ -224,6 +228,16 @@ fun HomeScreen(
                     androidx.compose.material3.Text("Cancel")
                 }
             },
+        )
+    }
+
+    menuEntry?.let { target ->
+        ContinueOptionsDialog(
+            entry = target,
+            onResume = { menuEntry = null; onResume(target) },
+            onEpisodes = { menuEntry = null; onOpenTitle(target.providerId, target.titleId) },
+            onRemove = { menuEntry = null; pendingRemoval = target },
+            onDismiss = { menuEntry = null },
         )
     }
 }
@@ -310,7 +324,7 @@ private fun ForYouRow(
 @Composable
 private fun ContinueRow(
     entries: List<WatchEntry>,
-    onResume: (WatchEntry) -> Unit,
+    onOpenMenu: (WatchEntry) -> Unit,
     onRequestRemove: (WatchEntry) -> Unit,
 ) {
     Text(
@@ -325,10 +339,68 @@ private fun ContinueRow(
         items(entries, key = { "${it.providerId}:${it.titleId}" }) { entry ->
             ContinueCard(
                 entry = entry,
-                onClick = { onResume(entry) },
+                onClick = { onOpenMenu(entry) },
                 onRequestRemove = { onRequestRemove(entry) },
             )
         }
+    }
+}
+
+/**
+ * Quick menu shown when a Continue Watching card is tapped: Resume where
+ * you left off, jump to the Episodes list to pick any episode, or remove
+ * the title from the row. First action is auto-focused for D-pad.
+ */
+@Composable
+internal fun ContinueOptionsDialog(
+    entry: WatchEntry,
+    onResume: () -> Unit,
+    onEpisodes: () -> Unit,
+    onRemove: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val firstFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { firstFocus.requestFocus() } }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { androidx.compose.material3.Text(entry.titleName) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                MenuButton(
+                    "▶  Resume · Ep ${entry.episodeNumber}",
+                    onClick = onResume,
+                    modifier = Modifier.focusRequester(firstFocus),
+                )
+                MenuButton("☰  Episodes", onClick = onEpisodes)
+                MenuButton("✕  Remove from row", onClick = onRemove)
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { androidx.compose.material3.Text("Cancel") }
+        },
+    )
+}
+
+@Composable
+private fun MenuButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    var focused by remember { mutableStateOf(false) }
+    Surface(
+        onClick = onClick,
+        modifier = modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused },
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = MaterialTheme.colorScheme.surface,
+            focusedContainerColor = MaterialTheme.colorScheme.primary,
+        ),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.titleSmall,
+            color = if (focused) MaterialTheme.colorScheme.onPrimary
+            else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+        )
     }
 }
 

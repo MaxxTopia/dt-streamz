@@ -153,6 +153,14 @@ fun WebPlayerScreen(
     // Rich related videos (title + thumbnail) for the in-player "Up next"
     // rail the user opens with D-pad DOWN. YouTube-only; null hides the rail.
     youtubeRelatedResults: (suspend (String) -> List<com.dt.streamz.data.SearchResult>)? = null,
+    // Episodic embed (TV/anime): show the D-pad control bar (press UP) with
+    // Prev/Next-episode, and wire best-effort auto-play-next.
+    showNextPrev: Boolean = false,
+    onNext: () -> Unit = {},
+    onPrev: () -> Unit = {},
+    // Fired when a non-YouTube embed reports the video ended (best-effort,
+    // via a postMessage listener). Used for auto-play-next on TV/anime.
+    onEmbedEnded: () -> Unit = {},
     // Shown as a last-resort "Choose server" action on the failure overlay
     // when every ranked mirror failed. Null hides it (single source / YouTube).
     onPickServer: (() -> Unit)? = null,
@@ -222,6 +230,17 @@ fun WebPlayerScreen(
     var relatedList by remember { mutableStateOf<List<com.dt.streamz.data.SearchResult>>(emptyList()) }
     var railVisible by remember { mutableStateOf(false) }
     val railFocus = remember { FocusRequester() }
+
+    // Netflix-style D-pad control bar (Prev/Next episode + Back), opened with
+    // DPAD_UP on episodic embeds. Native Compose, owns focus while shown.
+    var controlsVisible by remember { mutableStateOf(false) }
+    val controlsFocus = remember { FocusRequester() }
+    LaunchedEffect(controlsVisible) {
+        if (controlsVisible) {
+            delay(60)
+            runCatching { controlsFocus.requestFocus() }
+        }
+    }
 
     // Load related videos for whatever is currently playing in the YT embed.
     LaunchedEffect(ytCurrentId.value, ytEmbedActive.value) {
@@ -427,6 +446,12 @@ fun WebPlayerScreen(
         webViewRef?.requestFocus()
     }
 
+    // BACK while the control bar is open closes it (doesn't exit the player).
+    BackHandler(enabled = controlsVisible) {
+        controlsVisible = false
+        webViewRef?.requestFocus()
+    }
+
     // Single load entry-point. A `ytembed://<id>` source is expanded into our
     // hosted IFrame-API player and loaded via loadDataWithBaseURL (so the YT
     // API gets a real origin); everything else is a plain headered loadUrl.
@@ -489,6 +514,16 @@ fun WebPlayerScreen(
                 keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PLAY ||
                 keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PAUSE ||
                 keyCode == android.view.KeyEvent.KEYCODE_SPACE
+            // D-pad UP on an episodic embed opens the native control bar
+            // (Prev/Next episode + Back). Consume so it doesn't reach the embed.
+            if (keyCode == android.view.KeyEvent.KEYCODE_DPAD_UP &&
+                showNextPrev && !controlsVisible && !railVisible
+            ) {
+                if (event.action == android.view.KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                    controlsVisible = true
+                }
+                return@OnKeyListener true
+            }
             // D-pad DOWN on our YouTube embed opens the native "Up next" rail
             // (if we have related videos). Consume so the keystroke doesn't
             // reach the embed's own end-screen. While the rail is up, focus
@@ -596,6 +631,8 @@ fun WebPlayerScreen(
                             }
                         },
                         onVideoEnded = { cycleToNextYouTube() },
+                        onEmbedEnded = onEmbedEnded,
+                        injectEndedHook = showNextPrev,
                     )
                     val chrome = FullscreenChromeClient(
                         getActivity = { ctx.findActivity() },
@@ -696,6 +733,28 @@ fun WebPlayerScreen(
                     }
                 },
                 onBack = onExit,
+            )
+        }
+
+        // Netflix-style control bar — opened with D-pad UP on episodic embeds.
+        // Prev/Next episode + Back; native Compose, owns focus while shown.
+        if (controlsVisible && showNextPrev) {
+            PlayerControlBar(
+                firstFocus = controlsFocus,
+                onPrev = {
+                    controlsVisible = false
+                    onPrev()
+                },
+                onNext = {
+                    controlsVisible = false
+                    onNext()
+                },
+                onBack = onExit,
+                onDismiss = {
+                    controlsVisible = false
+                    webViewRef?.requestFocus()
+                },
+                modifier = Modifier.align(Alignment.TopCenter),
             )
         }
 
@@ -827,6 +886,63 @@ private fun RelatedCard(
             style = MaterialTheme.typography.labelSmall,
             color = Color.White.copy(alpha = if (focused) 1f else 0.8f),
             maxLines = 2,
+        )
+    }
+}
+
+/**
+ * Top control bar (Prev episode / Back / Next episode), opened with D-pad UP
+ * on episodic embeds. D-pad DOWN closes it and returns to the video.
+ */
+@Composable
+private fun PlayerControlBar(
+    firstFocus: FocusRequester,
+    onPrev: () -> Unit,
+    onNext: () -> Unit,
+    onBack: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(
+                androidx.compose.ui.graphics.Brush.verticalGradient(
+                    listOf(Color.Black.copy(alpha = 0.95f), Color.Transparent),
+                ),
+            )
+            .padding(horizontal = 24.dp, vertical = 16.dp)
+            .onPreviewKeyEvent { ev ->
+                if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown) {
+                    onDismiss(); true
+                } else false
+            },
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ControlButton("⏮  Prev", onClick = onPrev, modifier = Modifier.focusRequester(firstFocus))
+        ControlButton("⟵  Back", onClick = onBack)
+        ControlButton("Next  ▶|", onClick = onNext)
+    }
+}
+
+@Composable
+private fun ControlButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    var focused by remember { mutableStateOf(false) }
+    Surface(
+        onClick = onClick,
+        modifier = modifier.onFocusChanged { focused = it.isFocused },
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color.Black.copy(alpha = 0.55f),
+            focusedContainerColor = Color.White.copy(alpha = 0.92f),
+        ),
+        shape = ClickableSurfaceDefaults.shape(androidx.compose.foundation.shape.RoundedCornerShape(8.dp)),
+    ) {
+        Text(
+            text = label,
+            color = if (focused) Color.Black else Color.White,
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
         )
     }
 }
@@ -978,6 +1094,10 @@ private class EmbedWebViewClient(
     private val onResourceBlocked: (String) -> Unit,
     private val onEmbedBlocked: () -> Unit = {},
     private val onVideoEnded: () -> Unit = {},
+    // Best-effort "video ended" from a non-YouTube embed (postMessage hook).
+    private val onEmbedEnded: () -> Unit = {},
+    // Inject the embed-ended postMessage listener after page load.
+    private val injectEndedHook: Boolean = false,
 ) : WebViewClient() {
 
     override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
@@ -1001,6 +1121,16 @@ private class EmbedWebViewClient(
         // you reach by navigating with the remote. Hijacking arrows for
         // ±10s seek trapped focus and made the gear/volume unreachable, so
         // keys now pass straight through to the player's native controls.
+
+        // Best-effort auto-play-next: many embed players postMessage a
+        // player-event to the top window when the video ends. We can't read
+        // the cross-origin <video>, but we CAN catch that message. Conservative
+        // match (only clear "ended" signals) + a 60s arm window so it can't
+        // fire on an early ad/buffer event and skip mid-episode. If the embed
+        // doesn't emit anything, the manual Next button (DPAD UP) covers it.
+        if (injectEndedHook) {
+            view.evaluateJavascript(ENDED_HOOK_JS, null)
+        }
 
         if (cosmeticCss.isBlank()) return
         val jsLiteral = JSONObject.quote(cosmeticCss)
@@ -1042,6 +1172,12 @@ private class EmbedWebViewClient(
         // related one (autoplay cycle). Consume; nothing actually navigates.
         if (scheme == YT_NEXT_SCHEME) {
             onVideoEnded()
+            return true
+        }
+        // Best-effort "video ended" from a non-YouTube embed's postMessage hook.
+        if (scheme == DT_NEXT_SCHEME) {
+            DebugLog.i(TAG, "embed reported ended -> auto-next")
+            onEmbedEnded()
             return true
         }
         if (scheme != "http" && scheme != "https") return true
@@ -1290,6 +1426,35 @@ private const val YT_EMBED_BASE = "https://www.youtube-nocookie.com"
 private const val YT_FALLBACK_SCHEME = "ytfallback"
 /** Navigation sentinel the wrapper hits when the current video ends. */
 private const val YT_NEXT_SCHEME = "ytnext"
+/** Sentinel a non-YouTube embed's postMessage hook hits when the video ends. */
+private const val DT_NEXT_SCHEME = "dtnext"
+
+/**
+ * Best-effort "video ended" listener injected into non-YouTube embeds. Many
+ * players (vidsrc/vidlink/vidnest families) postMessage a player-event to the
+ * top window; we can't read the cross-origin <video>, but we can catch that.
+ * Conservative: only fires on a clear "ended" signal, only after a 60s arm
+ * window (so an early ad/buffer event can't skip mid-episode), and only once.
+ * If the embed emits nothing, the manual Next button (D-pad UP) covers it.
+ */
+private val ENDED_HOOK_JS = """
+    (function(){
+      if (window.__dtEndedHook) return; window.__dtEndedHook = 1;
+      var armed = false, fired = false;
+      setTimeout(function(){ armed = true; }, 60000);
+      window.addEventListener('message', function(e){
+        try {
+          var d = e.data;
+          var s = (typeof d === 'string') ? d : JSON.stringify(d || '');
+          if (!s) return;
+          // Clear end-of-video signals only (NOT generic "complete").
+          if (/(^|[^a-z])ended([^a-z]|$)|videoended|playbackended|video[_-]?end\b/i.test(s)) {
+            if (armed && !fired) { fired = true; window.location.href = 'dtnext://end'; }
+          }
+        } catch (x) {}
+      }, false);
+    })();
+""".trimIndent()
 /** Max gap between two Left/Right taps to count as a double (seek). */
 private const val DPAD_DOUBLE_MS = 400L
 
