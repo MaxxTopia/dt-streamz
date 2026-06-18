@@ -301,6 +301,11 @@ fun WebPlayerScreen(
     LaunchedEffect(loadState) {
         val f = loadState
         if (f is LoadState.Failed) {
+            // Release WebView focus so the error overlay's Retry/Back buttons
+            // can take it — otherwise the WebView keeps eating D-pad input.
+            railVisible = false
+            controlsVisible = false
+            webViewRef?.clearFocus()
             com.dt.streamz.diag.Telemetry.report(
                 "playback_failed",
                 mapOf(
@@ -507,6 +512,11 @@ fun WebPlayerScreen(
     val dpadState = remember { DpadSeekState() }
     val dpadListener = remember {
         android.view.View.OnKeyListener { _, keyCode, event ->
+            // While the error overlay is up, let EVERY key through to Compose so
+            // its Retry/Back buttons are reachable. Otherwise Left/Right keep
+            // seeking the dead embed and the overlay is unusable (you had to
+            // spam BACK to escape).
+            if (loadState is LoadState.Failed) return@OnKeyListener false
             val isCenter = keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER ||
                 keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
                 keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER
