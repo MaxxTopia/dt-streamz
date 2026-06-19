@@ -25,6 +25,12 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.SurfaceDefaults
 import androidx.tv.material3.Tab
 import androidx.tv.material3.TabRow
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.painterResource
+import com.dt.streamz.R
 import androidx.tv.material3.Text
 import androidx.compose.ui.Alignment
 import com.dt.streamz.DtApplication
@@ -538,14 +544,26 @@ private fun TabsDestination(
             .fillMaxSize()
             .background(tintBrush),
     ) {
-        TabRow(selectedTabIndex = selected.ordinal) {
-            Section.entries.forEach { section ->
-                Tab(
-                    selected = selected == section,
-                    onFocus = { onSelect(section) },
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
-                ) {
-                    TabLabel(section = section, selected = selected == section)
+        androidx.compose.foundation.layout.Row(
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Image(
+                painter = painterResource(R.drawable.viewmaxxing_logo),
+                contentDescription = "viewmaxxing",
+                modifier = Modifier
+                    .padding(start = 12.dp, end = 4.dp)
+                    .size(34.dp)
+                    .clip(RoundedCornerShape(8.dp)),
+            )
+            TabRow(selectedTabIndex = selected.ordinal, modifier = Modifier.weight(1f)) {
+                Section.entries.forEach { section ->
+                    Tab(
+                        selected = selected == section,
+                        onFocus = { onSelect(section) },
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                    ) {
+                        TabLabel(section = section, selected = selected == section)
+                    }
                 }
             }
         }
@@ -559,6 +577,7 @@ private fun TabsDestination(
                 onResume = onResume,
                 onRemoveContinue = onRemoveContinue,
                 showMustWatch = true,
+                showHero = true,
                 forYou = recommenderFor(app, { true }, { true }),
             )
             Section.Anime -> HomeScreen(

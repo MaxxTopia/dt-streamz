@@ -174,6 +174,7 @@ class TmdbProvider : Provider {
             val title = (if (mediaType == "movie") o.str("title") else o.str("name"))
                 ?: return@mapNotNull null
             val poster = o.str("poster_path")?.let { POSTER + it }
+            val backdrop = o.str("backdrop_path")?.let { BACKDROP + it }
             val year = (if (mediaType == "movie") o.str("release_date") else o.str("first_air_date"))
                 ?.take(4)?.toIntOrNull()
             SearchResult(
@@ -183,6 +184,7 @@ class TmdbProvider : Provider {
                 poster = poster,
                 year = year,
                 kind = if (mediaType == "movie") MediaKind.Movie else MediaKind.Series,
+                backdrop = backdrop,
             )
         }
     }

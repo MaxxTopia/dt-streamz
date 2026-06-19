@@ -79,6 +79,8 @@ fun HomeScreen(
     // Curated TMDb-fed rows (Popular / Top Rated / Trending / …) for the Movies
     // and TV tabs so they're full browsable listings, not one mixed row.
     curatedRows: List<CuratedRow> = emptyList(),
+    // Big featured hero banner at the very top (Home tab only).
+    showHero: Boolean = false,
 ) {
     val rawContinueEntries by (continueWatching?.entries ?: flowOf(emptyList()))
         .collectAsState(initial = emptyList())
@@ -127,11 +129,15 @@ fun HomeScreen(
             .padding(horizontal = 28.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.onBackground,
-        )
+        if (showHero && mustWatchProvider != null) {
+            HomeHero(provider = mustWatchProvider, onOpenTitle = onOpenTitle)
+        } else {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+        }
         if (forYou != null) {
             ForYouRow(
                 load = forYou,
@@ -234,6 +240,113 @@ fun HomeScreen(
             onRemove = { menuEntry = null; pendingRemoval = target },
             onDismiss = { menuEntry = null },
         )
+    }
+}
+
+/**
+ * Big featured hero banner at the top of Home — a wide backdrop with the
+ * title, meta, and a Play affordance. Auto-rotates through the top trending
+ * titles every few seconds (pausing while focused). The whole banner is one
+ * focusable card; OK opens the title.
+ */
+@Composable
+private fun HomeHero(
+    provider: Provider,
+    onOpenTitle: (String, String) -> Unit,
+) {
+    var items by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
+    LaunchedEffect(Unit) {
+        items = runCatching { provider.browse() }.getOrDefault(emptyList())
+            .filter { !it.backdrop.isNullOrBlank() }
+            .take(6)
+    }
+    if (items.isEmpty()) return
+    var idx by remember { mutableStateOf(0) }
+    var focused by remember { mutableStateOf(false) }
+    // Auto-rotate while not focused; cancels + restarts when focus changes.
+    LaunchedEffect(items, focused) {
+        if (items.size > 1 && !focused) {
+            while (true) {
+                kotlinx.coroutines.delay(7000)
+                idx = (idx + 1) % items.size
+            }
+        }
+    }
+    val item = items[idx.coerceIn(0, items.lastIndex)]
+    Surface(
+        onClick = { onOpenTitle(item.providerId, item.id) },
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(250.dp)
+            .onFocusChanged { focused = it.isFocused },
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color.Transparent,
+            focusedContainerColor = Color.Transparent,
+        ),
+        shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(14.dp)),
+    ) {
+        Box(modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(14.dp))) {
+            com.dt.streamz.ui.components.PosterImage(
+                model = item.backdrop,
+                title = item.title,
+                modifier = Modifier.fillMaxSize(),
+            )
+            // Left-to-right dark scrim so the text is always legible.
+            Box(
+                modifier = Modifier.fillMaxSize().background(
+                    androidx.compose.ui.graphics.Brush.horizontalGradient(
+                        0f to Color.Black.copy(alpha = 0.85f),
+                        0.55f to Color.Black.copy(alpha = 0.35f),
+                        1f to Color.Transparent,
+                    ),
+                ),
+            )
+            if (focused) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .border(3.dp, Color.White, RoundedCornerShape(14.dp)),
+                )
+            }
+            Column(
+                modifier = Modifier.align(Alignment.BottomStart).padding(28.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = item.title,
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = Color.White,
+                    maxLines = 2,
+                )
+                val meta = listOfNotNull(
+                    item.year?.toString(),
+                    if (item.kind == MediaKind.Movie) "Movie" else "Series",
+                ).joinToString(" · ")
+                if (meta.isNotBlank()) {
+                    Text(
+                        text = meta,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color.White.copy(alpha = 0.75f),
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .padding(top = 4.dp)
+                        .background(
+                            if (focused) MaterialTheme.colorScheme.primary
+                            else Color.White.copy(alpha = 0.92f),
+                            RoundedCornerShape(8.dp),
+                        )
+                        .padding(horizontal = 20.dp, vertical = 8.dp),
+                ) {
+                    Text(
+                        text = "▶ Play",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = if (focused) MaterialTheme.colorScheme.onPrimary else Color.Black,
+                    )
+                }
+            }
+        }
     }
 }
 

@@ -11,6 +11,8 @@ data class SearchResult(
     val kind: MediaKind,
     /** True for an in-progress live broadcast (currently YouTube only). */
     val isLive: Boolean = false,
+    /** Wide 16:9 backdrop (TMDb), for the Home hero banner. Null = use poster. */
+    val backdrop: String? = null,
 )
 
 data class TitleDetails(
