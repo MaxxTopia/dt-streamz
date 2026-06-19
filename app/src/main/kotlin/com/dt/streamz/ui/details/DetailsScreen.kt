@@ -226,6 +226,10 @@ private fun Loaded(
 @Composable
 private fun ResumeButton(resume: ResumeInfo, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
+    // Land the D-pad on Resume when the screen opens with a resume point, so
+    // continuing is a single OK press instead of arrowing down to find it.
+    val resumeFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    androidx.compose.runtime.LaunchedEffect(Unit) { runCatching { resumeFocus.requestFocus() } }
     val label = buildString {
         append("▶ Resume Ep ")
         append(resume.episode.number)
@@ -234,7 +238,7 @@ private fun ResumeButton(resume: ResumeInfo, onClick: () -> Unit) {
     }
     Surface(
         onClick = onClick,
-        modifier = Modifier.onFocusChanged { focused = it.isFocused },
+        modifier = Modifier.focusRequester(resumeFocus).onFocusChanged { focused = it.isFocused },
         colors = ClickableSurfaceDefaults.colors(
             containerColor = MaterialTheme.colorScheme.primary,
             focusedContainerColor = MaterialTheme.colorScheme.primary,

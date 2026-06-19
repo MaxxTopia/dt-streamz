@@ -30,11 +30,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.MaterialTheme
@@ -45,6 +40,7 @@ import com.dt.streamz.data.ContinueWatchingStore
 import com.dt.streamz.data.FavoriteEntry
 import com.dt.streamz.data.FavoritesStore
 import com.dt.streamz.data.WatchEntry
+import com.dt.streamz.ui.onMenuKeyUp
 import kotlinx.coroutines.launch
 
 /**
@@ -166,12 +162,7 @@ private fun ContinueTile(
         modifier = Modifier
             .width(168.dp)
             .onFocusChanged { focused = it.isFocused }
-            .onKeyEvent { event ->
-                val menuKey = event.key == Key.Menu || event.key == Key.F10
-                if (focused && menuKey && event.type == KeyEventType.KeyUp) {
-                    onRequestRemove(); true
-                } else false
-            },
+            .onMenuKeyUp(focused, onRequestRemove),
     ) {
         Surface(
             onClick = onClick,
@@ -248,12 +239,7 @@ private fun FavoriteTile(
         verticalArrangement = Arrangement.spacedBy(4.dp),
         modifier = Modifier
             .onFocusChanged { focused = it.isFocused }
-            .onKeyEvent { event ->
-                val menuKey = event.key == Key.Menu || event.key == Key.F10
-                if (focused && menuKey && event.type == KeyEventType.KeyUp) {
-                    onToggle(); true
-                } else false
-            },
+            .onMenuKeyUp(focused, onToggle),
     ) {
         Surface(
             onClick = onClick,

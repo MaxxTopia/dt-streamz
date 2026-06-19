@@ -146,6 +146,19 @@ fun SettingsScreen() {
         )
         add(
             SettingItem(
+                title = "Clear search history",
+                subtitle = "Forget the recent-search chips on the Search and YouTube tabs.",
+                action = {
+                    val mode = android.content.Context.MODE_PRIVATE
+                    ctx.getSharedPreferences("search_history", mode).edit().remove("queries").apply()
+                    ctx.getSharedPreferences("yt_search_history", mode).edit().remove("queries").apply()
+                    Toast.makeText(ctx, "Search history cleared", Toast.LENGTH_SHORT).show()
+                },
+                actionLabel = "Clear",
+            ),
+        )
+        add(
+            SettingItem(
                 title = "Pinned Twitch channels",
                 subtitle = if (pinnedChannels.isEmpty()) "None (using defaults)"
                 else pinnedChannels.joinToString(", "),

@@ -15,10 +15,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -31,19 +27,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.compose.runtime.LaunchedEffect
 import com.dt.streamz.DtApplication
+import com.dt.streamz.ui.onMenuKeyUp
 import com.dt.streamz.twitch.TwitchStreamResolver
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -58,7 +46,6 @@ fun TwitchScreen(
     val scope = rememberCoroutineScope()
     val channels by (app.pinnedChannels.channels).collectAsState(initial = emptyList())
     var showAddDialog by remember { mutableStateOf(false) }
-    var newChannel by remember { mutableStateOf("") }
     var liveStatus by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
     val resolver = remember { TwitchStreamResolver() }
 
@@ -67,8 +54,14 @@ fun TwitchScreen(
     // issues tokens for offline channels too so it can't serve as a probe.
     LaunchedEffect(channels) {
         if (channels.isEmpty()) return@LaunchedEffect
+        // Cap + guard each probe: a hung/erroring isLive() call must not leave
+        // the badge stuck on "… checking" forever. Timeout or throw -> OFFLINE.
         val results = channels.map { ch ->
-            async { ch to (resolver.isLive(ch) == true) }
+            async {
+                ch to (runCatching {
+                    kotlinx.coroutines.withTimeoutOrNull(6_000) { resolver.isLive(ch) }
+                }.getOrNull() == true)
+            }
         }.awaitAll()
         liveStatus = results.toMap()
     }
@@ -116,20 +109,24 @@ fun TwitchScreen(
     }
 
     if (showAddDialog) {
-        AddChannelDialog(
-            initial = newChannel,
-            onChange = { newChannel = it },
-            onDismiss = {
-                showAddDialog = false
-                newChannel = ""
-            },
-            onSubmit = {
-                val cleaned = newChannel.trim()
+        // Reuse the app-wide D-pad on-screen keyboard. The box's system IME
+        // never reliably delivers committed text back to a field (see the
+        // SearchEditorDialog header), so a Material text field here meant the
+        // channel often couldn't be typed at all. The grid keyboard always
+        // works on the remote.
+        com.dt.streamz.ui.search.SearchEditorDialog(
+            initialQuery = "",
+            onDismiss = { showAddDialog = false },
+            onSubmit = { text ->
+                // Accept a pasted/typed "twitch.tv/name" or bare login; logins
+                // are lower-case.
+                val cleaned = text.trim().lowercase()
+                    .substringAfterLast("twitch.tv/")
+                    .trim('/', ' ')
                 if (cleaned.isNotBlank()) {
                     scope.launch { app.pinnedChannels.add(cleaned) }
                 }
                 showAddDialog = false
-                newChannel = ""
             },
         )
     }
@@ -154,13 +151,7 @@ private fun ChannelCard(
         modifier = Modifier
             .width(196.dp)
             .onFocusChanged { focused = it.isFocused }
-            .onKeyEvent { event ->
-                val menuKey = event.key == Key.Menu || event.key == Key.F10
-                if (focused && menuKey && event.type == KeyEventType.KeyUp) {
-                    onRequestRemove()
-                    true
-                } else false
-            }
+            .onMenuKeyUp(focused, onRequestRemove)
             .clip(RoundedCornerShape(8.dp))
             .background(
                 if (focused) mt.colorScheme.primary else mt.colorScheme.surface,
@@ -235,59 +226,6 @@ private fun AddChannelCard(onClick: () -> Unit) {
                 style = mt.typography.labelMedium,
                 color = if (focused) mt.colorScheme.onPrimary.copy(alpha = 0.75f)
                 else mt.colorScheme.onSurface.copy(alpha = 0.7f),
-            )
-        }
-    }
-}
-
-@Composable
-private fun AddChannelDialog(
-    initial: String,
-    onChange: (String) -> Unit,
-    onSubmit: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val keyboard = LocalSoftwareKeyboardController.current
-    val mt = androidx.tv.material3.MaterialTheme
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            dismissOnBackPress = true,
-            dismissOnClickOutside = true,
-            usePlatformDefaultWidth = false,
-        ),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(0.6f)
-                .clip(RoundedCornerShape(16.dp))
-                .background(mt.colorScheme.surface)
-                .padding(24.dp),
-        ) {
-            OutlinedTextField(
-                value = initial,
-                onValueChange = onChange,
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                label = { androidx.compose.material3.Text("Twitch channel (login)") },
-                placeholder = { androidx.compose.material3.Text("e.g. aussieantics") },
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = {
-                    keyboard?.hide()
-                    onSubmit()
-                }),
-                textStyle = mt.typography.bodyLarge,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = mt.colorScheme.surface,
-                    unfocusedContainerColor = mt.colorScheme.surface,
-                    focusedTextColor = mt.colorScheme.onSurface,
-                    unfocusedTextColor = mt.colorScheme.onSurface,
-                    cursorColor = mt.colorScheme.primary,
-                    focusedLabelColor = mt.colorScheme.primary,
-                    unfocusedLabelColor = mt.colorScheme.onSurface.copy(alpha = 0.7f),
-                    focusedBorderColor = mt.colorScheme.primary,
-                    unfocusedBorderColor = mt.colorScheme.onSurface.copy(alpha = 0.5f),
-                ),
             )
         }
     }

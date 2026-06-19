@@ -36,11 +36,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.MaterialTheme
@@ -53,6 +48,7 @@ import com.dt.streamz.data.SearchResult
 import com.dt.streamz.scraper.ProviderRegistry
 import kotlinx.coroutines.flow.flowOf
 import com.dt.streamz.ui.theme.focusGlow
+import com.dt.streamz.ui.onMenuKeyUp
 import kotlinx.coroutines.launch
 
 @Composable
@@ -632,13 +628,7 @@ private fun PosterCard(
         verticalArrangement = Arrangement.spacedBy(4.dp),
         modifier = Modifier
             .onFocusChanged { focused = it.isFocused }
-            .onKeyEvent { event ->
-                val menuKey = event.key == Key.Menu || event.key == Key.F10
-                if (focused && menuKey && event.type == KeyEventType.KeyUp) {
-                    onToggleFavorite()
-                    true
-                } else false
-            },
+            .onMenuKeyUp(focused, onToggleFavorite),
     ) {
         Surface(
             onClick = onClick,

@@ -16,8 +16,8 @@ android {
         // code path requires API 30+ (no @RequiresApi / SDK_INT branches).
         minSdk = 26
         targetSdk = 35
-        versionCode = 38
-        versionName = "0.4.24"
+        versionCode = 39
+        versionName = "0.4.25"
     }
 
     signingConfigs {
@@ -49,6 +49,13 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // NewPipeExtractor's YouTube parser calls API 33+ JDK methods
+        // (URLEncoder.encode(String, Charset), Collectors.toUnmodifiableList).
+        // The box is API 30, so without core-library desugaring those throw
+        // NoSuchMethodError the moment we extract a stream. The `_nio` variant
+        // is required — the default desugar artifact does NOT backport the
+        // URLEncoder Charset overload.
+        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
@@ -93,6 +100,7 @@ dependencies {
     implementation(libs.media3.ui)
 
     implementation(libs.newpipe.extractor)
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.5")
 
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)

@@ -69,6 +69,7 @@ fun PlayerScreen(
     title: String = "",
     twitchChannel: String? = null,
     startPositionMs: Long = 0,
+    audioUrl: String? = null,
     subtitles: List<SubtitleTrack> = emptyList(),
     onProgress: (positionMs: Long, durationMs: Long) -> Unit = { _, _ -> },
     onEnded: () -> Unit = {},
@@ -97,7 +98,7 @@ fun PlayerScreen(
     // Player is hoisted out of the AndroidView factory so the progress
     // ticker + dispose handler below can read currentPosition off it. The
     // factory only attaches it to a PlayerView.
-    val player = remember(url) {
+    val player = remember(url, audioUrl) {
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
                 /* minBufferMs = */ 5_000,
@@ -114,7 +115,7 @@ fun PlayerScreen(
             .setSeekForwardIncrementMs(10_000)
             .build()
             .apply {
-                setMediaSource(buildMediaSource(url, streamKind, subtitles))
+                setMediaSource(buildMediaSource(url, streamKind, subtitles, audioUrl))
                 addListener(object : Player.Listener {
                     // Surface fatal failures instead of sitting on a black
                     // screen — the native player has no mirror-walk, so the
@@ -291,6 +292,7 @@ private fun buildMediaSource(
     url: String,
     kind: StreamKind,
     subtitles: List<SubtitleTrack>,
+    audioUrl: String? = null,
 ): MediaSource {
     val factory = DefaultHttpDataSource.Factory()
         .setUserAgent(
@@ -317,11 +319,19 @@ private fun buildMediaSource(
         .setSubtitleConfigurations(subConfigs)
         .build()
     val primary = builderFn(factory, item)
-    if (subConfigs.isEmpty()) return primary
+    // YouTube high-quality path: [url] is a video-only track and [audioUrl] is
+    // the matching audio-only track. Merge them so ExoPlayer plays one video +
+    // one audio track together (the only way past YouTube's 360p muxed cap).
+    val audioSource = audioUrl?.takeIf { it.isNotBlank() }?.let { au ->
+        val audioItem = MediaItem.Builder().setUri(au).build()
+        ProgressiveMediaSource.Factory(factory).createMediaSource(audioItem)
+    }
     val subSources = subConfigs.map { cfg ->
         SingleSampleMediaSource.Factory(factory).createMediaSource(cfg, C.TIME_UNSET)
     }
-    return MergingMediaSource(primary, *subSources.toTypedArray())
+    val extras = listOfNotNull(audioSource) + subSources
+    if (extras.isEmpty()) return primary
+    return MergingMediaSource(primary, *extras.toTypedArray())
 }
 
 private fun subtitleMime(url: String): String = when {

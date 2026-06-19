@@ -200,56 +200,6 @@ fun YouTubeTabScreen(
     }
 }
 
-/**
- * Recommended tab — a full-screen grid of recommended YouTube videos
- * (interest-blended via the provider's browse()). Search-free; tapping a
- * card plays it straight away (same instant-embed path as the YouTube tab).
- */
-@Composable
-fun YouTubeRecommendedScreen(
-    registry: ProviderRegistry,
-    onOpenTitle: (providerId: String, titleId: String) -> Unit,
-) {
-    val provider = remember { registry.all.firstOrNull { it.supportsYouTube } }
-    if (provider == null) {
-        Box(
-            modifier = Modifier.fillMaxSize().padding(48.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = "YouTube provider unavailable.",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-            )
-        }
-        return
-    }
-    var videos by remember { mutableStateOf<List<SearchResult>?>(null) }
-    LaunchedEffect(provider.id) {
-        videos = runCatching {
-            kotlinx.coroutines.withTimeoutOrNull(8_000) { BrowseCache.browse(provider) } ?: emptyList()
-        }.getOrDefault(emptyList())
-    }
-    Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 32.dp, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Text(
-            text = "Recommended",
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onBackground,
-        )
-        when (val list = videos) {
-            null -> Hint("Loading recommendations…")
-            else -> if (list.isEmpty()) {
-                Hint("Recommendations unavailable on this network — try the YouTube tab to search by name.")
-            } else {
-                ResultsGrid(list, onOpenTitle)
-            }
-        }
-    }
-}
-
 @Composable
 private fun YouTubeSearchBar(
     query: String,

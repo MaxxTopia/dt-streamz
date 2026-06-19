@@ -30,11 +30,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
@@ -57,6 +52,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.flowOf
 import com.dt.streamz.ui.theme.focusGlow
+import com.dt.streamz.ui.onMenuKeyUp
 import kotlinx.coroutines.launch
 
 @Composable
@@ -417,13 +413,7 @@ private fun ContinueCard(
         modifier = Modifier
             .width(168.dp)
             .onFocusChanged { focused = it.isFocused }
-            .onKeyEvent { event ->
-                val menuKey = event.key == Key.Menu || event.key == Key.F10
-                if (focused && menuKey && event.type == KeyEventType.KeyUp) {
-                    onRequestRemove()
-                    true
-                } else false
-            },
+            .onMenuKeyUp(focused, onRequestRemove),
     ) {
         Surface(
             onClick = onClick,
@@ -579,13 +569,7 @@ private fun RandomPickCard(
             .width(232.dp)
             .height(120.dp)
             .onFocusChanged { focused = it.isFocused }
-            .onKeyEvent { event ->
-                val menuKey = event.key == Key.Menu || event.key == Key.F10
-                if (focused && menuKey && event.type == KeyEventType.KeyUp) {
-                    kind = kind.next()
-                    true
-                } else false
-            },
+            .onMenuKeyUp(focused) { kind = kind.next() },
         shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(14.dp)),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = MaterialTheme.colorScheme.surface,
@@ -626,13 +610,7 @@ internal fun PosterCard(
         modifier = Modifier
             .width(132.dp)
             .onFocusChanged { focused = it.isFocused }
-            .onKeyEvent { event ->
-                val menuKey = event.key == Key.Menu || event.key == Key.F10
-                if (focused && menuKey && event.type == KeyEventType.KeyUp) {
-                    onToggleFavorite()
-                    true
-                } else false
-            },
+            .onMenuKeyUp(focused, onToggleFavorite),
     ) {
         Surface(
             onClick = onClick,

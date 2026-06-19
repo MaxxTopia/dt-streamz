@@ -41,6 +41,14 @@ data class StreamSource(
     val quality: String? = null,
     val subtitles: List<SubtitleTrack> = emptyList(),
     val serverLabel: String? = null,
+    /**
+     * Optional separate audio-only track URL. Modern YouTube only muxes
+     * audio+video together at <=360p; for higher quality the video-only and
+     * audio-only adaptive streams come separately and must be merged at
+     * playback time. When set, [url] is the video-only track and the player
+     * merges this audio track alongside it. Null = [url] already carries audio.
+     */
+    val audioUrl: String? = null,
 )
 
 enum class StreamKind { Hls, Mp4, Dash, DirectEmbed }

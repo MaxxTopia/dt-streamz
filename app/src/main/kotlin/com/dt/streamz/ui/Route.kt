@@ -21,6 +21,10 @@ sealed interface Route {
         val title: String = "",
         val twitchChannel: String? = null,
         val kind: StreamKind = StreamKind.Hls,
+        // Optional separate audio-only track, merged with [url] at playback
+        // time (YouTube adaptive video-only + audio-only). Null when [url]
+        // already carries audio.
+        val audioUrl: String? = null,
         // Resume-watching context. Non-null for on-demand episodes/movies so
         // the player can seek to [startPositionMs] and write progress back.
         // All null for live Twitch (no position to persist).

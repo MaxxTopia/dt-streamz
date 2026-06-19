@@ -71,11 +71,19 @@ class SearchViewModel(
             // Query every provider in parallel — serial was N round-trips of
             // latency stacked end to end. A provider that throws contributes
             // nothing rather than failing the whole search.
-            val merged = providers
-                .map { p -> async { runCatching { p.search(q) }.getOrDefault(emptyList()) } }
+            val outcomes = providers
+                .map { p -> async { runCatching { p.search(q) } } }
                 .awaitAll()
-                .flatten()
-            _state.value = SearchState.Loaded(merged)
+            val merged = outcomes.mapNotNull { it.getOrNull() }.flatten()
+            // Distinguish "nobody had a match" (Loaded, empty -> "No results")
+            // from "every source errored" (Error -> tells the user it's a
+            // connection problem, not an empty catalog).
+            val allFailed = providers.isNotEmpty() && outcomes.all { it.isFailure }
+            _state.value = if (allFailed) {
+                SearchState.Error("couldn't reach any source — check the box's connection")
+            } else {
+                SearchState.Loaded(merged)
+            }
         }
     }
 

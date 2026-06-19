@@ -16,7 +16,11 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.ServiceList
+import org.schabi.newpipe.extractor.stream.AudioStream
+import org.schabi.newpipe.extractor.stream.StreamInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
+import org.schabi.newpipe.extractor.stream.StreamType
+import org.schabi.newpipe.extractor.stream.VideoStream
 
 /**
  * YouTube provider — two backends with auto-fallback:
@@ -318,23 +322,30 @@ class YouTubeProvider(
         withContext(Dispatchers.IO) {
             val videoId = videoIdOf(titleId)
 
-            // PRIMARY: a hosted YouTube embed player (the `ytembed://` source
-            // is expanded by WebPlayerScreen into a full-screen IFrame-API
-            // player we control). This is the clean, app-like fullscreen
-            // player — autoplay, native YouTube controls, no desktop chrome —
-            // and being our own wrapper page it's same-origin, so the
-            // double-press-to-seek D-pad handling works on it.
-            //
-            // FALLBACK: the full WATCH page. Some uploaders disable embedding
-            // (IFrame error 101/150); when that happens the wrapper signals
-            // native and we walk to this mirror, which plays every public
-            // video. (We still avoid Piped — junk LBRY URLs — and NewPipe —
-            // API 33+ URLEncoder crash on this box.)
+            // PRIMARY: native stream extraction via NewPipeExtractor, played by
+            // ExoPlayer. The IFrame embed is a 2026 dead end (YouTube ramping
+            // ads into embeds, tiny non-TV UI, unfixable embed-disabled errors),
+            // so we extract real stream URLs and play them in our native player:
+            // genuinely ad-free, full D-pad transport, higher quality. NewPipe
+            // v0.26.3 hops to the ANDROID_VR/iOS clients to dodge SABR/PoToken
+            // enforcement, so no login or attestation token is needed. (The old
+            // API-33 URLEncoder crash on this box is now handled by the `_nio`
+            // core-library desugaring enabled in build.gradle.kts.)
+            val native = runCatching { extractNative(videoId) }
+                .onFailure { DebugLog.w(TAG, "native extract($videoId) failed", it) }
+                .getOrNull()
+            if (!native.isNullOrEmpty()) return@withContext native
+
+            // FALLBACK: the hosted IFrame embed + watch page, used only when
+            // extraction yields nothing playable (a video YouTube has fully
+            // locked down). WebPlayerScreen expands `ytembed://` into a
+            // full-screen IFrame-API player; the watch page plays the rest.
+            DebugLog.i(TAG, "native extract empty for $videoId — falling back to embed")
             listOf(
                 StreamSource(
                     url = "ytembed://$videoId",
                     kind = StreamKind.DirectEmbed,
-                    serverLabel = "YouTube",
+                    serverLabel = "YouTube (embed)",
                     headers = emptyMap(),
                 ),
                 StreamSource(
@@ -345,6 +356,92 @@ class YouTubeProvider(
                 ),
             )
         }
+
+    /**
+     * Extract playable stream URLs for [videoId] via NewPipeExtractor.
+     *  - Live -> the HLS master playlist (separated audio+video) for HlsMediaSource.
+     *  - VOD  -> best video-only track (<=1080p, codec ranked for box HW decode)
+     *            paired with the best audio-only track, merged at playback time.
+     *  - Last resort -> a muxed progressive stream (audio+video in one URL, <=360p).
+     * Returns empty if nothing usable came back (caller then tries the embed).
+     */
+    private fun extractNative(videoId: String): List<StreamSource> {
+        val info = StreamInfo.getInfo(service, watchUrl(videoId))
+
+        if (info.streamType == StreamType.LIVE_STREAM ||
+            info.streamType == StreamType.AUDIO_LIVE_STREAM
+        ) {
+            val hls = info.hlsUrl
+            if (!hls.isNullOrBlank()) {
+                return listOf(
+                    StreamSource(url = hls, kind = StreamKind.Hls, serverLabel = "YouTube Live"),
+                )
+            }
+        }
+
+        val video = pickVideo(info.videoOnlyStreams)
+        val audio = pickAudio(info.audioStreams)
+        if (video != null && audio != null) {
+            return listOf(
+                StreamSource(
+                    url = video.content,
+                    audioUrl = audio.content,
+                    kind = StreamKind.Mp4,
+                    serverLabel = "YouTube ${video.resolution}",
+                ),
+            )
+        }
+
+        // Muxed fallback (capped ~360p, but a single self-contained URL).
+        val muxed = info.videoStreams
+            .filter { it.isUrl && !it.content.isNullOrBlank() }
+            .maxByOrNull { resolutionValue(it.resolution) }
+        if (muxed != null) {
+            return listOf(
+                StreamSource(
+                    url = muxed.content, kind = StreamKind.Mp4,
+                    serverLabel = "YouTube ${muxed.resolution}",
+                ),
+            )
+        }
+        return emptyList()
+    }
+
+    /**
+     * Best video-only track: cap at 1080p (the box struggles above it) and
+     * rank codecs by hardware-decode friendliness — AVC/H264 first, then VP9,
+     * then anything else, with AV1 last (most TV boxes lack AV1 HW decode and
+     * stutter on it).
+     */
+    private fun pickVideo(streams: List<VideoStream>): VideoStream? {
+        val usable = streams.filter {
+            it.isUrl && !it.content.isNullOrBlank() && resolutionValue(it.resolution) in 1..1080
+        }
+        if (usable.isEmpty()) return null
+        fun codecRank(s: VideoStream): Int {
+            val c = (s.codec ?: "").lowercase()
+            return when {
+                c.startsWith("avc") || c.contains("h264") -> 0
+                c.startsWith("vp9") || c.startsWith("vp09") -> 1
+                c.startsWith("av01") || c.contains("av1") -> 3
+                else -> 2
+            }
+        }
+        return usable.sortedWith(
+            compareBy({ codecRank(it) }, { -resolutionValue(it.resolution) }),
+        ).firstOrNull()
+    }
+
+    /** Best audio-only track by bitrate. */
+    private fun pickAudio(streams: List<AudioStream>): AudioStream? =
+        streams.filter { it.isUrl && !it.content.isNullOrBlank() }
+            .maxByOrNull { it.averageBitrate }
+
+    /** "1080p60" / "720p" -> numeric height (0 if unparseable). */
+    private fun resolutionValue(res: String?): Int {
+        if (res.isNullOrBlank()) return 0
+        return res.takeWhile { it.isDigit() }.toIntOrNull() ?: 0
+    }
 
     private fun YtVideo.toSearchResult(): SearchResult {
         val r = SearchResult(

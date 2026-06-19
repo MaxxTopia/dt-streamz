@@ -41,7 +41,6 @@ import com.dt.streamz.ui.details.DetailsScreen
 import com.dt.streamz.ui.genres.GenresScreen
 import com.dt.streamz.ui.home.CuratedRow
 import com.dt.streamz.ui.home.HomeScreen
-import com.dt.streamz.ui.home.LatestScreen
 import com.dt.streamz.scraper.tmdb.TmdbProvider
 import com.dt.streamz.ui.library.LibraryScreen
 import com.dt.streamz.ui.player.PlayerScreen
@@ -62,8 +61,6 @@ private enum class Section(val label: String) {
     Movies("Movies"),
     TV("TV"),
     YouTube("YouTube"),
-    Recommended("Recommended"),
-    Latest("Latest"),
     Search("Search"),
     Genres("Genres"),
     Twitch("Twitch"),
@@ -183,6 +180,22 @@ fun DtApp() {
 
     fun advanceEpisode(r: Route.Player, delta: Int, manual: Boolean) =
         advanceFrom(r.providerId, r.titleId, r.episodeId, r.title, delta, manual)
+
+    // YouTube autoplay-next: when a video ends, play its top related video —
+    // the continuity the embed used to provide, now driven from the native
+    // player. No related / resolve failure -> fall back to the tabs.
+    fun playYouTubeRelated(videoId: String?) {
+        if (videoId == null) { route = Route.Tabs; return }
+        scope.launch {
+            val nextId = runCatching { registry.get("youtube").related(videoId) }
+                .getOrNull()?.firstOrNull()
+            if (nextId == null) { route = Route.Tabs; return@launch }
+            val ep = com.dt.streamz.data.Episode(id = "watch", number = 1, title = "Watch")
+            val sources = runCatching { registry.get("youtube").streams(nextId, ep) }
+                .getOrDefault(emptyList())
+            route = routeForSources("YouTube", sources, "youtube", nextId, "watch")
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
     Surface(
@@ -361,27 +374,36 @@ fun DtApp() {
                         Binge.prefetchNext(registry.get(pid), tid, eid)
                     }
                 }
+                val isYouTube = r.providerId == "youtube"
                 PlayerScreen(
                     url = r.url,
                     streamKind = r.kind,
                     title = r.title,
                     twitchChannel = r.twitchChannel,
                     startPositionMs = r.startPositionMs,
+                    audioUrl = r.audioUrl,
                     subtitles = r.subtitles,
                     onProgress = { posMs, durMs ->
                         val pid = r.providerId
                         val tid = r.titleId
                         val eid = r.episodeId
-                        if (pid != null && tid != null && eid != null) {
+                        // YouTube isn't tracked in Continue Watching (it has no
+                        // episode catalog) — skip persisting position for it.
+                        if (!isYouTube && pid != null && tid != null && eid != null) {
                             scope.launch {
                                 app.continueWatching.updatePosition(pid, tid, eid, posMs, durMs)
                             }
                         }
                     },
-                    showNextButton = r.episodeId != null,
+                    // Episode Next/Prev only make sense for episodic content.
+                    // YouTube uses autoplay-next-related on end instead.
+                    showNextButton = r.episodeId != null && !isYouTube,
                     onNext = { advanceEpisode(r, delta = 1, manual = true) },
                     onPrev = { advanceEpisode(r, delta = -1, manual = true) },
-                    onEnded = { advanceEpisode(r, delta = 1, manual = false) },
+                    onEnded = {
+                        if (isYouTube) playYouTubeRelated(r.titleId)
+                        else advanceEpisode(r, delta = 1, manual = false)
+                    },
                     onExit = {
                         Log.i(TAG, "PlayerScreen.onExit() called -> Tabs")
                         route = Route.Tabs
@@ -544,16 +566,6 @@ private fun TabsDestination(
                 registry = app.providerRegistry,
                 onOpenTitle = onOpenTitle,
             )
-            Section.Recommended -> com.dt.streamz.ui.youtube.YouTubeRecommendedScreen(
-                registry = app.providerRegistry,
-                onOpenTitle = onOpenTitle,
-            )
-            Section.Latest -> LatestScreen(
-                registry = app.providerRegistry,
-                favorites = app.favorites,
-                continueWatching = app.continueWatching,
-                onOpenTitle = onOpenTitle,
-            )
             Section.Library -> LibraryScreen(
                 continueWatching = app.continueWatching,
                 favorites = app.favorites,
@@ -584,7 +596,6 @@ private val TwitchPurple = androidx.compose.ui.graphics.Color(0xFF9146FF)
 private val TvBlue = androidx.compose.ui.graphics.Color(0xFF1E88E5)
 private val LibraryTeal = androidx.compose.ui.graphics.Color(0xFF26A69A)
 private val GenresPink = androidx.compose.ui.graphics.Color(0xFFE91E63)
-private val LatestGreen = androidx.compose.ui.graphics.Color(0xFF43A047)
 private val YouTubeRed = androidx.compose.ui.graphics.Color(0xFFFF0000)
 
 private fun tabTintFor(section: Section): androidx.compose.ui.graphics.Color = when (section) {
@@ -593,8 +604,6 @@ private fun tabTintFor(section: Section): androidx.compose.ui.graphics.Color = w
     Section.Movies -> MoviesGold
     Section.TV -> TvBlue
     Section.YouTube -> YouTubeRed
-    Section.Recommended -> androidx.compose.ui.graphics.Color(0xFFFF5252)
-    Section.Latest -> LatestGreen
     Section.Library -> LibraryTeal
     Section.Genres -> GenresPink
     Section.Twitch -> TwitchPurple
@@ -612,7 +621,6 @@ private fun TabLabel(section: Section, selected: Boolean) {
         Section.YouTube -> if (selected) YouTubeRed else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
         Section.Library -> if (selected) LibraryTeal else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
         Section.Genres -> if (selected) GenresPink else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
-        Section.Latest -> if (selected) LatestGreen else androidx.compose.ui.graphics.Color(0xFFCFCFCF)
         else -> androidx.compose.ui.graphics.Color.White
     }
     val weight = if (section == Section.Anime && selected)
@@ -647,6 +655,7 @@ private fun playRouteFor(
         titleId = titleId,
         episodeId = episodeId,
         startPositionMs = startPositionMs,
+        audioUrl = source.audioUrl,
         subtitles = source.subtitles,
     )
     StreamKind.DirectEmbed -> {
@@ -757,20 +766,28 @@ private fun recommenderFor(
         }
         if (out.size >= 24) break
     }
-    // Drop ended livestreams: a result's `isLive` flag is from search time and
-    // goes stale the moment the broadcast ends. For every live-flagged item,
-    // re-confirm it's live RIGHT NOW (in parallel) and keep it only if so —
-    // non-live items pass straight through. So For You only ever shows a live
-    // stream while it's actually live.
+    // Live-only rule for streamers. YouTube creators are only ever wanted in
+    // For You while they're actually broadcasting RIGHT NOW — never their old
+    // uploads/VODs (e.g. don't surface "RD On The Scene" videos unless he's
+    // live this exact moment). So every YouTube result is re-checked live-now
+    // and dropped unless it's a current broadcast — regardless of its (stale,
+    // VOD=false) search-time `isLive` flag.
+    //
+    // For on-demand catalogs (movies / anime / TV), `isLive` only ever marks a
+    // genuine livestream; those pass through, and any live-flagged one is
+    // re-confirmed live-now so an ended broadcast doesn't linger. Everything
+    // non-live there passes straight through.
     val provById = provs.associateBy { it.id }
+    suspend fun liveNow(r: com.dt.streamz.data.SearchResult): Boolean =
+        provById[r.providerId]
+            ?.let { runCatching { it.isLiveNow(r.id) }.getOrDefault(false) } == true
     kotlinx.coroutines.coroutineScope {
         out.values.map { r ->
             async {
-                if (!r.isLive) r
-                else {
-                    val live = provById[r.providerId]
-                        ?.let { runCatching { it.isLiveNow(r.id) }.getOrDefault(false) } == true
-                    if (live) r else null
+                when {
+                    r.providerId == "youtube" -> if (liveNow(r)) r else null
+                    !r.isLive -> r
+                    else -> if (liveNow(r)) r else null
                 }
             }
         }.awaitAll().filterNotNull()
