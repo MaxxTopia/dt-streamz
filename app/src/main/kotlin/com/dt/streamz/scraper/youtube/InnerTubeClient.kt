@@ -166,6 +166,10 @@ internal class InnerTubeClient {
 
     private fun parseCompact(v: JsonObject): YtVideo? {
         val videoId = v["videoId"]?.jsonPrimitive?.contentOrNull ?: return null
+        // Drop premieres / scheduled-upcoming videos — they aren't playable yet
+        // (open to a "Premieres in N days" countdown), so they have no business
+        // in the up-next rail.
+        if (isUpcoming(v)) return null
         // compactVideoRenderer title is usually simpleText; fall back to runs.
         val title = v["title"]?.textOrNull() ?: return null
         val uploader = v["longBylineText"]?.runsText() ?: v["shortBylineText"]?.runsText()
@@ -174,6 +178,20 @@ internal class InnerTubeClient {
                 ?.get("style")?.jsonPrimitive?.contentOrNull == "LIVE"
         } == true
         return YtVideo(videoId, title, uploader, null, thumbOf(videoId), live, published = "")
+    }
+
+    /**
+     * True for a premiere / scheduled-upcoming video. YouTube marks these with
+     * `upcomingEventData` (the scheduled start) and/or an "UPCOMING" thumbnail
+     * time-status overlay. They can't be played until they air — opening one
+     * dead-ends on a countdown — so we drop them from every feed.
+     */
+    private fun isUpcoming(v: JsonObject): Boolean {
+        if (v.containsKey("upcomingEventData")) return true
+        return v["thumbnailOverlays"]?.jsonArrayOrNull?.any { ov ->
+            ov.jsonObjectOrNull?.get("thumbnailOverlayTimeStatusRenderer")?.jsonObjectOrNull
+                ?.get("style")?.jsonPrimitive?.contentOrNull == "UPCOMING"
+        } == true
     }
 
     /** simpleText or concatenated runs, whichever the node carries. */
@@ -239,6 +257,10 @@ internal class InnerTubeClient {
 
     private fun parseVideo(v: JsonObject): YtVideo? {
         val videoId = v["videoId"]?.jsonPrimitive?.contentOrNull ?: return null
+        // Drop premieres / scheduled-upcoming videos from search + trending —
+        // they aren't playable until they air (open to a countdown), so they
+        // should never surface as something to watch now. See [isUpcoming].
+        if (isUpcoming(v)) return null
         // gridVideoRenderer uses headline+shortBylineText; videoRenderer uses
         // title+ownerText. Accept either so shelf results aren't dropped.
         val title = v["title"]?.runsText() ?: v["headline"]?.runsText() ?: return null
