@@ -1,5 +1,6 @@
 package com.dt.streamz.ui
 
+import com.dt.streamz.data.AudioOption
 import com.dt.streamz.data.StreamKind
 import com.dt.streamz.data.StreamSource
 import com.dt.streamz.data.SubtitleTrack
@@ -33,6 +34,9 @@ sealed interface Route {
         val episodeId: String? = null,
         val startPositionMs: Long = 0,
         val subtitles: List<SubtitleTrack> = emptyList(),
+        // Selectable audio-language tracks for the in-player switch (YouTube
+        // multi-audio). Empty = no switch shown.
+        val audioTracks: List<AudioOption> = emptyList(),
     ) : Route
     data class WebPlayer(
         val embedUrl: String,

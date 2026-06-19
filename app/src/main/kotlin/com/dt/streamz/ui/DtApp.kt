@@ -383,6 +383,12 @@ fun DtApp() {
                     startPositionMs = r.startPositionMs,
                     audioUrl = r.audioUrl,
                     subtitles = r.subtitles,
+                    audioTracks = r.audioTracks,
+                    // Captions stay OFF by default for YouTube (English audio,
+                    // never auto-on) but remember the user's last CC choice;
+                    // anime/movies keep their existing default-on behaviour.
+                    captionsDefaultOn = !isYouTube,
+                    rememberCaptions = isYouTube,
                     onProgress = { posMs, durMs ->
                         val pid = r.providerId
                         val tid = r.titleId
@@ -683,6 +689,7 @@ private fun playRouteFor(
         startPositionMs = startPositionMs,
         audioUrl = source.audioUrl,
         subtitles = source.subtitles,
+        audioTracks = source.audioTracks,
     )
     StreamKind.DirectEmbed -> {
         // Auto-fallback list = every other DirectEmbed source we know about,

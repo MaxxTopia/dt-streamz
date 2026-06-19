@@ -51,6 +51,7 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.source.SingleSampleMediaSource
 import androidx.media3.ui.PlayerView
 import com.dt.streamz.DtApplication
+import com.dt.streamz.data.AudioOption
 import com.dt.streamz.data.StreamKind
 import com.dt.streamz.data.SubtitleTrack
 import com.dt.streamz.ui.twitchchat.TwitchChatOverlay
@@ -71,6 +72,17 @@ fun PlayerScreen(
     startPositionMs: Long = 0,
     audioUrl: String? = null,
     subtitles: List<SubtitleTrack> = emptyList(),
+    // Selectable audio-language tracks (YouTube multi-audio). When >1 the
+    // player shows an "Audio" chip that cycles languages, rebuilding playback
+    // at the same position. Empty/single = no chip.
+    audioTracks: List<AudioOption> = emptyList(),
+    // Whether captions start visible absent a remembered choice. Anime/movies
+    // pass true (keeps existing default-on); YouTube passes false (English
+    // audio — captions are opt-in, never auto-on).
+    captionsDefaultOn: Boolean = true,
+    // When true, the user's CC on/off choice is read at start and persisted on
+    // change (YouTube only) so it sticks across videos.
+    rememberCaptions: Boolean = false,
     onProgress: (positionMs: Long, durationMs: Long) -> Unit = { _, _ -> },
     onEnded: () -> Unit = {},
     showNextButton: Boolean = false,
@@ -100,10 +112,24 @@ fun PlayerScreen(
     val onExitCb by rememberUpdatedState(onExit)
     val onPlaybackErrorCb by rememberUpdatedState(onPlaybackError)
 
+    // Remembered-captions plumbing + audio-language switching state.
+    val playbackPrefs = remember {
+        (context.applicationContext as? DtApplication)?.playbackPrefs
+    }
+    val initialCaptionsOn = remember(url) {
+        (if (rememberCaptions) playbackPrefs?.captionsOn() else null) ?: captionsDefaultOn
+    }
+    // Audio switch: when the user cycles languages we swap [effectiveAudioUrl]
+    // and capture the current position into [resumeAtMs] so the rebuilt player
+    // (keyed on the audio URL) resumes exactly where it left off.
+    var audioOverrideUrl by remember(url) { mutableStateOf<String?>(null) }
+    val effectiveAudioUrl = audioOverrideUrl ?: audioUrl
+    var resumeAtMs by remember(url) { mutableStateOf(startPositionMs) }
+
     // Player is hoisted out of the AndroidView factory so the progress
     // ticker + dispose handler below can read currentPosition off it. The
     // factory only attaches it to a PlayerView.
-    val player = remember(url, audioUrl) {
+    val player = remember(url, effectiveAudioUrl) {
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
                 /* minBufferMs = */ 5_000,
@@ -120,8 +146,21 @@ fun PlayerScreen(
             .setSeekForwardIncrementMs(10_000)
             .build()
             .apply {
-                setMediaSource(buildMediaSource(url, streamKind, subtitles, audioUrl))
+                setMediaSource(
+                    buildMediaSource(url, streamKind, subtitles, effectiveAudioUrl, initialCaptionsOn),
+                )
                 addListener(object : Player.Listener {
+                    // Persist the user's CC choice (YouTube only) so it sticks
+                    // across videos. Fires on the initial selection too — that
+                    // just re-saves the current value, which is harmless.
+                    override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                        if (!rememberCaptions) return
+                        val textOn = tracks.groups.any {
+                            it.type == C.TRACK_TYPE_TEXT && it.isSelected
+                        }
+                        playbackPrefs?.setCaptionsOn(textOn)
+                    }
+
                     // Surface fatal failures instead of sitting on a black
                     // screen — the native player has no mirror-walk, so the
                     // useful move is to tell the user and bounce them back.
@@ -148,7 +187,7 @@ fun PlayerScreen(
                         if (state == Player.STATE_ENDED) onEndedCb()
                     }
                 })
-                if (startPositionMs > 0) seekTo(startPositionMs)
+                if (resumeAtMs > 0) seekTo(resumeAtMs)
                 prepare()
                 playWhenReady = true
             }
@@ -238,6 +277,26 @@ fun PlayerScreen(
                         PlayerChip("Next ▶|", onClick = onNext, onFocused = keepAlive)
                         PlayerChip("⏮ Prev", onClick = onPrev, onFocused = keepAlive)
                     }
+                    // Audio-language switch (only when the source ships >1 track).
+                    // OK cycles to the next language and resumes at the same spot.
+                    if (audioTracks.size > 1) {
+                        val curIdx = audioTracks.indexOfFirst { it.url == effectiveAudioUrl }
+                            .let { if (it < 0) 0 else it }
+                        PlayerChip(
+                            "Audio: ${audioTracks[curIdx].label}",
+                            onClick = {
+                                val next = (curIdx + 1) % audioTracks.size
+                                resumeAtMs = player.currentPosition.coerceAtLeast(0)
+                                audioOverrideUrl = audioTracks[next].url
+                                Toast.makeText(
+                                    context,
+                                    "Audio: ${audioTracks[next].label}",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            },
+                            onFocused = keepAlive,
+                        )
+                    }
                     PlayerChip(
                         speedLabel(SPEEDS[speedIdx]),
                         onClick = { speedIdx = (speedIdx + 1) % SPEEDS.size },
@@ -305,6 +364,11 @@ private fun buildMediaSource(
     kind: StreamKind,
     subtitles: List<SubtitleTrack>,
     audioUrl: String? = null,
+    // When true the subtitle track is flagged DEFAULT so ExoPlayer auto-shows
+    // it (anime/movies, or YouTube when the user's remembered CC choice is ON).
+    // When false the track is available but starts hidden — the CC button
+    // toggles it (YouTube default).
+    subtitleDefaultOn: Boolean = true,
 ): MediaSource {
     val factory = DefaultHttpDataSource.Factory()
         .setUserAgent(
@@ -319,10 +383,10 @@ private fun buildMediaSource(
     }
     val subConfigs = subtitles.map { st ->
         MediaItem.SubtitleConfiguration.Builder(Uri.parse(st.url))
-            .setMimeType(subtitleMime(st.url))
+            .setMimeType(st.mimeOverride ?: subtitleMime(st.url))
             .setLanguage(st.language)
             .setLabel(st.label)
-            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+            .setSelectionFlags(if (subtitleDefaultOn) C.SELECTION_FLAG_DEFAULT else 0)
             .build()
     }
     val item = MediaItem.Builder()

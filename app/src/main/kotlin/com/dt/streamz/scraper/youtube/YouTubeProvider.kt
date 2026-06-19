@@ -1,10 +1,12 @@
 package com.dt.streamz.scraper.youtube
 
+import com.dt.streamz.data.AudioOption
 import com.dt.streamz.data.Episode
 import com.dt.streamz.data.MediaKind
 import com.dt.streamz.data.SearchResult
 import com.dt.streamz.data.StreamKind
 import com.dt.streamz.data.StreamSource
+import com.dt.streamz.data.SubtitleTrack
 import com.dt.streamz.data.TitleDetails
 import com.dt.streamz.diag.DebugLog
 import com.dt.streamz.scraper.Provider
@@ -50,6 +52,10 @@ class YouTubeProvider(
     // grid blends with its fixed seeds. Defaults to none, so the provider still
     // works standalone (tests, cold start). See [browse].
     private val interestSeeds: suspend () -> List<String> = { emptyList() },
+    // Max video height the native extractor will pick, read live from the
+    // user's quality preference. Defaults to 1080 so the provider still works
+    // standalone (tests, cold start). See [pickVideo].
+    private val qualityCap: () -> Int = { 1080 },
 ) : Provider {
 
     override val id = "youtube"
@@ -429,6 +435,8 @@ class YouTubeProvider(
                 StreamSource(
                     url = video.content,
                     audioUrl = audio.content,
+                    audioTracks = audioOptions(info.audioStreams, defaultUrl = audio.content),
+                    subtitles = englishSubtitles(info.subtitles),
                     kind = StreamKind.Mp4,
                     serverLabel = "YouTube ${video.resolution}",
                 ),
@@ -451,14 +459,15 @@ class YouTubeProvider(
     }
 
     /**
-     * Best video-only track: cap at 1080p (the box struggles above it) and
-     * rank codecs by hardware-decode friendliness — AVC/H264 first, then VP9,
-     * then anything else, with AV1 last (most TV boxes lack AV1 HW decode and
-     * stutter on it).
+     * Best video-only track: cap at the user's quality preference ([qualityCap],
+     * default ≤1080p — the box struggles above it) and rank codecs by
+     * hardware-decode friendliness — AVC/H264 first, then VP9, then anything
+     * else, with AV1 last (most TV boxes lack AV1 HW decode and stutter on it).
      */
     private fun pickVideo(streams: List<VideoStream>): VideoStream? {
+        val cap = qualityCap().coerceAtLeast(360)
         val usable = streams.filter {
-            it.isUrl && !it.content.isNullOrBlank() && resolutionValue(it.resolution) in 1..1080
+            it.isUrl && !it.content.isNullOrBlank() && resolutionValue(it.resolution) in 1..cap
         }
         if (usable.isEmpty()) return null
         fun codecRank(s: VideoStream): Int {
@@ -512,6 +521,68 @@ class YouTubeProvider(
                 "bitrate=${pick.averageBitrate} (of ${usable.size} tracks)",
         )
         return pick
+    }
+
+    /**
+     * One selectable audio option PER language (best-bitrate track of each),
+     * for the in-player audio-language switch. The default ([defaultUrl], the
+     * English/original pick) is floated to the front so the picker starts on
+     * what's already playing. Returns empty when there's only one language —
+     * nothing to choose, so the player hides the switch.
+     */
+    private fun audioOptions(streams: List<AudioStream>, defaultUrl: String): List<AudioOption> {
+        val usable = streams.filter { it.isUrl && !it.content.isNullOrBlank() }
+        val bestPerLang = usable
+            .groupBy { (it.audioLocale?.language ?: "und").lowercase() }
+            .mapNotNull { (lang, group) -> group.maxByOrNull { it.averageBitrate }?.let { lang to it } }
+        if (bestPerLang.size < 2) return emptyList()
+        val opts = bestPerLang.map { (lang, s) ->
+            AudioOption(url = s.content, language = lang, label = languageLabel(lang, s.audioTrackType))
+        }
+        // Default (currently-playing) track first, rest alphabetical by label.
+        return opts.sortedWith(
+            compareByDescending<AudioOption> { it.url == defaultUrl }.thenBy { it.label },
+        )
+    }
+
+    /** "English", "Spanish (dubbed)", or the raw tag if Locale can't name it. */
+    private fun languageLabel(
+        lang: String,
+        type: org.schabi.newpipe.extractor.stream.AudioTrackType?,
+    ): String {
+        val base = runCatching { java.util.Locale(lang).displayLanguage }
+            .getOrNull()?.takeIf { it.isNotBlank() && it != lang } ?: lang.uppercase()
+        return if (type == org.schabi.newpipe.extractor.stream.AudioTrackType.DUBBED) "$base (dubbed)" else base
+    }
+
+    /**
+     * English caption tracks for the OPTIONAL (off-by-default) CC toggle —
+     * the app is English-only, so we never surface other languages. Prefer
+     * human-authored captions over auto-generated, and VTT format (best
+     * ExoPlayer support). Empty when the video has no English captions.
+     */
+    private fun englishSubtitles(
+        subs: List<org.schabi.newpipe.extractor.stream.SubtitlesStream>,
+    ): List<SubtitleTrack> {
+        val english = subs.filter {
+            it.isUrl && !it.content.isNullOrBlank() &&
+                (it.locale?.language?.equals("en", ignoreCase = true) == true ||
+                    it.languageTag?.startsWith("en", ignoreCase = true) == true)
+        }
+        if (english.isEmpty()) return emptyList()
+        // Prefer VTT + non-auto-generated; fall back to whatever's there.
+        val vtt = english.filter { it.format == org.schabi.newpipe.extractor.MediaFormat.VTT }
+        val pool = vtt.ifEmpty { english }
+        val chosen = pool.minByOrNull { if (it.isAutoGenerated) 1 else 0 } ?: return emptyList()
+        val label = if (chosen.isAutoGenerated) "English (auto)" else "English"
+        return listOf(
+            SubtitleTrack(
+                url = chosen.content,
+                language = "en",
+                label = label,
+                mimeOverride = chosen.format?.mimeType,
+            ),
+        )
     }
 
     /** "1080p60" / "720p" -> numeric height (0 if unparseable). */

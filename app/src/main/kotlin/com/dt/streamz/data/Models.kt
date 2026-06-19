@@ -49,12 +49,30 @@ data class StreamSource(
      * merges this audio track alongside it. Null = [url] already carries audio.
      */
     val audioUrl: String? = null,
+    /**
+     * Selectable audio tracks (one best-bitrate track per language) when the
+     * source ships multi-language audio — e.g. YouTube auto-dubs. [audioUrl]
+     * is the default (English/original) pick; this list lets the player offer
+     * an in-player language switch. Empty / single-entry = no choice to offer.
+     */
+    val audioTracks: List<AudioOption> = emptyList(),
 )
 
 enum class StreamKind { Hls, Mp4, Dash, DirectEmbed }
+
+/** One selectable audio-only track for the in-player audio-language switch. */
+data class AudioOption(
+    val url: String,
+    /** BCP-47 / ISO language code, e.g. "en", "es". Empty if unknown. */
+    val language: String,
+    /** Human-readable label shown on the picker chip, e.g. "English". */
+    val label: String,
+)
 
 data class SubtitleTrack(
     val url: String,
     val language: String,
     val label: String = language,
+    /** Explicit MIME type; when null the player infers it from [url]'s suffix. */
+    val mimeOverride: String? = null,
 )

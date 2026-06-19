@@ -52,6 +52,7 @@ fun SettingsScreen() {
     var blockerEnabled by remember { mutableStateOf(app.hostBlocker.enabled()) }
     var telemetryEnabled by remember { mutableStateOf(com.dt.streamz.diag.Telemetry.isEnabled()) }
     var personalizeEnabled by remember { mutableStateOf(app.interests.isEnabled()) }
+    var videoQuality by remember { mutableStateOf(app.playbackPrefs.quality()) }
     var debugLogOpen by remember { mutableStateOf(false) }
 
     val items = buildList<SettingItem> {
@@ -111,6 +112,21 @@ fun SettingsScreen() {
                     }
                 },
                 actionLabel = "Clear",
+            ),
+        )
+        add(
+            SettingItem(
+                title = "Video quality (YouTube)",
+                subtitle = "${videoQuality.label} · OK cycles Data saver → Auto → Max. " +
+                    "Higher uses more bandwidth; lower is smoother on a busy connection.",
+                action = {
+                    val values = com.dt.streamz.data.Quality.entries
+                    val next = values[(videoQuality.ordinal + 1) % values.size]
+                    app.playbackPrefs.setQuality(next)
+                    videoQuality = next
+                    Toast.makeText(ctx, "Video quality: ${next.label}", Toast.LENGTH_SHORT).show()
+                },
+                actionLabel = "Change",
             ),
         )
         add(
