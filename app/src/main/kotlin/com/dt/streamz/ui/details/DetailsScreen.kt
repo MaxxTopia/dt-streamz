@@ -75,7 +75,7 @@ fun DetailsScreen(
             .toSet()
     }
 
-    Box(modifier = Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 18.dp)) {
+    Box(modifier = Modifier.fillMaxSize()) {
         when (val s = state) {
             DetailsState.Loading -> CenterMessage("Loading…")
             is DetailsState.Error -> ErrorMessage(
@@ -163,63 +163,134 @@ private fun Loaded(
     resume: ResumeInfo?,
     onPlay: (Episode) -> Unit,
 ) {
-    Row(modifier = Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+    val isMovie = details.kind == com.dt.streamz.data.MediaKind.Movie
+    Box(modifier = Modifier.fillMaxSize()) {
+        // Cinematic full-bleed backdrop, dimmed + scrimmed for legibility.
+        val backdrop = details.backdrop ?: details.poster
+        if (!backdrop.isNullOrBlank()) {
+            AsyncImage(
+                model = backdrop,
+                contentDescription = null,
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                alpha = 0.35f,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
         Box(
             modifier = Modifier
-                .width(170.dp)
-                .height(255.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-            contentAlignment = Alignment.Center,
+                .fillMaxSize()
+                .background(
+                    androidx.compose.ui.graphics.Brush.horizontalGradient(
+                        0f to MaterialTheme.colorScheme.background.copy(alpha = 0.92f),
+                        0.6f to MaterialTheme.colorScheme.background.copy(alpha = 0.7f),
+                        1f to MaterialTheme.colorScheme.background.copy(alpha = 0.4f),
+                    ),
+                ),
+        )
+        Row(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 18.dp),
+            horizontalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            if (details.poster != null) {
-                AsyncImage(
-                    model = details.poster,
-                    contentDescription = details.title,
-                    modifier = Modifier.fillMaxSize(),
+            com.dt.streamz.ui.components.PosterImage(
+                model = details.poster,
+                title = details.title,
+                modifier = Modifier
+                    .width(170.dp)
+                    .height(255.dp)
+                    .clip(RoundedCornerShape(10.dp)),
+            )
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = details.title,
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = MaterialTheme.colorScheme.onBackground,
                 )
-            } else {
-                Text(details.title.take(2).uppercase(), style = MaterialTheme.typography.headlineMedium)
+                val subtitle = listOfNotNull(
+                    details.year?.toString(),
+                    if (isMovie) "Movie" else "Series",
+                ).joinToString(" · ")
+                if (subtitle.isNotBlank()) {
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
+                    )
+                }
+                if (!details.qualityNote.isNullOrBlank()) {
+                    Text(
+                        text = details.qualityNote,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color(0xFFFFB74D),
+                    )
+                }
+                if (!details.synopsis.isNullOrBlank()) {
+                    ExpandableSynopsis(details.synopsis)
+                }
+                Spacer(Modifier.height(4.dp))
+                if (isMovie) {
+                    // A movie is one thing to watch — show a single big Play /
+                    // Resume button, never an "Episodes (1)" list.
+                    val ep = details.episodes.firstOrNull()
+                    if (ep != null) {
+                        val label = if (resume != null) {
+                            "▶ Resume  ·  ${formatClock(resume.positionMs)}"
+                        } else {
+                            "▶ Play"
+                        }
+                        PrimaryPlayButton(label) { onPlay(resume?.episode ?: ep) }
+                    } else {
+                        Text(
+                            "No playable source found.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                        )
+                    }
+                } else {
+                    if (resume != null) {
+                        ResumeButton(resume, onClick = { onPlay(resume.episode) })
+                    }
+                    Text(
+                        text = "Episodes (${details.episodes.size})",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
+                    )
+                    EpisodeList(details.episodes, watchedNumbers, onPlay)
+                }
             }
         }
-        Column(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(
-                text = details.title,
-                style = MaterialTheme.typography.headlineSmall,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
-            val subtitle = listOfNotNull(details.year?.toString(), details.kind.name).joinToString(" · ")
-            if (subtitle.isNotBlank()) {
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
+    }
+}
+
+/** Big primary Play/Resume button for movies, auto-focused on open. */
+@Composable
+private fun PrimaryPlayButton(label: String, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+    androidx.compose.runtime.LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.focusRequester(focus).onFocusChanged { focused = it.isFocused },
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = MaterialTheme.colorScheme.primary,
+            focusedContainerColor = MaterialTheme.colorScheme.primary,
+        ),
+        shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(10.dp)),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onPrimary,
+            modifier = Modifier
+                .border(
+                    if (focused) 2.dp else 0.dp,
+                    if (focused) Color.White else Color.Transparent,
+                    RoundedCornerShape(10.dp),
                 )
-            }
-            if (!details.qualityNote.isNullOrBlank()) {
-                Text(
-                    text = details.qualityNote,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Color(0xFFFFB74D),
-                )
-            }
-            if (!details.synopsis.isNullOrBlank()) {
-                ExpandableSynopsis(details.synopsis)
-            }
-            if (resume != null) {
-                ResumeButton(resume, onClick = { onPlay(resume.episode) })
-            }
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = "Episodes (${details.episodes.size})",
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
-            )
-            EpisodeList(details.episodes, watchedNumbers, onPlay)
-        }
+                .padding(horizontal = 40.dp, vertical = 14.dp),
+        )
     }
 }
 
