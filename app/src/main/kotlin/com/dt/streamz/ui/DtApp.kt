@@ -513,7 +513,8 @@ fun DtApp() {
         val watching = route is Route.Player || route is Route.WebPlayer
         UpdateChip(update = update)
         NetworkIndicator(monitor = app.networkMonitor, dim = watching)
-        if (!watching) DtLogo()
+        // (DtLogo watermark removed — the viewmaxxing logo now lives in the tab
+        // bar, so a second corner mark was redundant and crowded the tabs.)
     }
     }
 }
@@ -555,7 +556,13 @@ private fun TabsDestination(
                     .size(34.dp)
                     .clip(RoundedCornerShape(8.dp)),
             )
-            TabRow(selectedTabIndex = selected.ordinal, modifier = Modifier.weight(1f)) {
+            // Small end inset so the rare network-ms pill (top-right) doesn't
+            // kiss the last tab. The DT watermark that used to crowd here is
+            // gone, so this can stay tight.
+            TabRow(
+                selectedTabIndex = selected.ordinal,
+                modifier = Modifier.weight(1f).padding(end = 8.dp),
+            ) {
                 Section.entries.forEach { section ->
                     Tab(
                         selected = selected == section,

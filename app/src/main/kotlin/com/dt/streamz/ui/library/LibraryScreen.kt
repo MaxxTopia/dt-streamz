@@ -35,7 +35,6 @@ import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
-import coil3.compose.AsyncImage
 import com.dt.streamz.data.ContinueWatchingStore
 import com.dt.streamz.data.FavoriteEntry
 import com.dt.streamz.data.FavoritesStore
@@ -176,17 +175,14 @@ private fun ContinueTile(
                 modifier = Modifier
                     .fillMaxSize()
                     .clip(RoundedCornerShape(10.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
                     .border(2.dp, border, RoundedCornerShape(10.dp)),
                 contentAlignment = Alignment.Center,
             ) {
-                if (entry.poster != null) {
-                    AsyncImage(
-                        model = entry.poster,
-                        contentDescription = entry.titleName,
-                        modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)),
-                    )
-                }
+                com.dt.streamz.ui.components.PosterImage(
+                    model = entry.poster,
+                    title = entry.titleName,
+                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)),
+                )
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
@@ -255,16 +251,13 @@ private fun FavoriteTile(
                 modifier = Modifier
                     .fillMaxSize()
                     .clip(RoundedCornerShape(10.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
                     .border(2.dp, border, RoundedCornerShape(10.dp)),
             ) {
-                if (entry.poster != null) {
-                    AsyncImage(
-                        model = entry.poster,
-                        contentDescription = entry.title,
-                        modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)),
-                    )
-                }
+                com.dt.streamz.ui.components.PosterImage(
+                    model = entry.poster,
+                    title = entry.title,
+                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)),
+                )
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopStart)

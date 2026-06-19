@@ -41,7 +41,6 @@ import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
-import coil3.compose.AsyncImage
 import com.dt.streamz.data.FavoriteEntry
 import com.dt.streamz.data.FavoritesStore
 import com.dt.streamz.data.SearchResult
@@ -645,22 +644,14 @@ private fun PosterCard(
                 modifier = Modifier
                     .fillMaxSize()
                     .clip(RoundedCornerShape(10.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
                     .border(2.dp, border, RoundedCornerShape(10.dp)),
                 contentAlignment = Alignment.Center,
             ) {
-                if (result.poster != null) {
-                    AsyncImage(
-                        model = result.poster,
-                        contentDescription = result.title,
-                        modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)),
-                    )
-                } else {
-                    Text(
-                        text = result.title.take(2).uppercase(),
-                        style = MaterialTheme.typography.headlineSmall,
-                    )
-                }
+                com.dt.streamz.ui.components.PosterImage(
+                    model = result.poster,
+                    title = result.title,
+                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)),
+                )
                 if (favorited) {
                     Box(
                         modifier = Modifier
