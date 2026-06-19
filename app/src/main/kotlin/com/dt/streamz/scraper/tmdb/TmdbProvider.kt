@@ -162,6 +162,14 @@ class TmdbProvider : Provider {
                 else -> return@mapNotNull null
             }
             if (mediaType != "movie" && mediaType != "tv") return@mapNotNull null
+            // English-only catalog: drop foreign-language titles so the
+            // Movies/TV/Must-Watch rows never surface a film/show the user
+            // can't follow. `original_language` is TMDb's authoritative
+            // content language (the displayed title is already localised to
+            // en-US, so we can't judge by the title alone). Items with no
+            // language field are kept (benefit of the doubt — rare).
+            val origLang = o.str("original_language")
+            if (origLang != null && !origLang.equals("en", ignoreCase = true)) return@mapNotNull null
             val tmdbId = o["id"]?.jsonPrimitive?.intOrNull ?: return@mapNotNull null
             val title = (if (mediaType == "movie") o.str("title") else o.str("name"))
                 ?: return@mapNotNull null

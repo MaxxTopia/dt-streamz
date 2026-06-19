@@ -2,10 +2,13 @@
 
 package com.dt.streamz.ui.player
 
+import android.content.Context
+import android.content.ContextWrapper
 import android.net.Uri
-import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
+import com.dt.streamz.MainActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,6 +29,8 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -99,11 +104,11 @@ fun PlayerScreen(
     var chatOpen by remember(twitchChannel) { mutableStateOf(twitchChannel != null) }
     var speedIdx by remember { mutableStateOf(SPEEDS.indexOf(1f)) }
 
-    // The speed / Next / Prev chips ride along with the player's transport
-    // controls: they appear when the controller is shown (any remote
-    // interaction) and vanish with it after CONTROLLER_TIMEOUT_MS of no
-    // input — instead of sitting on screen the whole time.
-    var controlsVisible by remember { mutableStateOf(false) }
+    // Player "options" panel (audio language / captions / speed / episode
+    // nav). Opens on D-pad UP as a focusable Compose overlay that GRABS focus:
+    // the ExoPlayer controller won't hand D-pad focus to sibling Compose
+    // chips, so the old always-on overlay was unreachable by remote.
+    var optionsOpen by remember { mutableStateOf(false) }
     var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
 
     // Keep the latest callbacks without restarting the player/effects.
@@ -119,6 +124,11 @@ fun PlayerScreen(
     val initialCaptionsOn = remember(url) {
         (if (rememberCaptions) playbackPrefs?.captionsOn() else null) ?: captionsDefaultOn
     }
+    // Live caption on/off, kept in sync by the player's onTracksChanged so the
+    // options panel can show "Captions: On/Off" and toggle it.
+    var captionsShown by remember(url) { mutableStateOf(initialCaptionsOn) }
+    // Brief "press ▲ for options" hint at playback start (discoverability).
+    var hintVisible by remember(url) { mutableStateOf(true) }
     // Audio switch: when the user cycles languages we swap [effectiveAudioUrl]
     // and capture the current position into [resumeAtMs] so the rebuilt player
     // (keyed on the audio URL) resumes exactly where it left off.
@@ -154,11 +164,12 @@ fun PlayerScreen(
                     // across videos. Fires on the initial selection too — that
                     // just re-saves the current value, which is harmless.
                     override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
-                        if (!rememberCaptions) return
                         val textOn = tracks.groups.any {
                             it.type == C.TRACK_TYPE_TEXT && it.isSelected
                         }
-                        playbackPrefs?.setCaptionsOn(textOn)
+                        captionsShown = textOn
+                        // Persist the choice across videos (YouTube only).
+                        if (rememberCaptions) playbackPrefs?.setCaptionsOn(textOn)
                     }
 
                     // Surface fatal failures instead of sitting on a black
@@ -203,6 +214,21 @@ fun PlayerScreen(
         runCatching { player.setPlaybackSpeed(SPEEDS[speedIdx]) }
     }
 
+    // Auto-hide the options hint a few seconds in.
+    LaunchedEffect(url) { delay(5_000); hintVisible = false }
+
+    // Route D-pad UP (while this player is on screen) to the options panel.
+    // Intercepted at the Activity because PlayerView eats D-pad keys first.
+    // Returns true (consume + open) only when the panel is closed; while it's
+    // open, UP passes through so Compose can navigate the panel's chips.
+    DisposableEffect(Unit) {
+        val activity = context.findActivity()
+        activity?.playerOptionsHandler = {
+            if (optionsOpen) false else { optionsOpen = true; true }
+        }
+        onDispose { activity?.playerOptionsHandler = null }
+    }
+
     // Periodically persist resume position while actually playing.
     LaunchedEffect(player) {
         while (true) {
@@ -241,15 +267,8 @@ fun PlayerScreen(
                         controllerShowTimeoutMs = CONTROLLER_TIMEOUT_MS
                         setShowNextButton(false)
                         setShowPreviousButton(false)
-                        // Keep subtitles visible if a track is selected.
+                        // CC button toggles the subtitle track (when present).
                         setShowSubtitleButton(subtitles.isNotEmpty())
-                        // Drive the overlay chips off the controller's own
-                        // show/hide so they share its auto-hide timeout.
-                        setControllerVisibilityListener(
-                            PlayerView.ControllerVisibilityListener { visibility ->
-                                controlsVisible = visibility == View.VISIBLE
-                            },
-                        )
                         playerViewRef = this
                     }
                 },
@@ -259,48 +278,97 @@ fun PlayerScreen(
                     if (playerViewRef === view) playerViewRef = null
                 },
             )
-            // D-pad-reachable controls, top-right under the status indicators.
-            // Next/Prev = manual outro skip + go back an episode (episodic only);
-            // speed cycles 0.5x-2x. Shown only while the transport controller
-            // is up; focusing a chip re-shows the controller so navigating the
-            // chips doesn't let them time out mid-interaction.
-            if (controlsVisible) {
-                Column(
+            // Discoverability hint: tell the user UP opens the options panel.
+            if (hintVisible && !optionsOpen) {
+                Text(
+                    text = "▲ audio · captions · speed",
+                    color = Color.White.copy(alpha = 0.85f),
+                    style = MaterialTheme.typography.labelMedium,
                     modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = 56.dp, end = 16.dp),
-                    horizontalAlignment = Alignment.End,
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    val keepAlive: () -> Unit = { playerViewRef?.showController() }
-                    if (showNextButton) {
-                        PlayerChip("Next ▶|", onClick = onNext, onFocused = keepAlive)
-                        PlayerChip("⏮ Prev", onClick = onPrev, onFocused = keepAlive)
-                    }
-                    // Audio-language switch (only when the source ships >1 track).
-                    // OK cycles to the next language and resumes at the same spot.
+                        .align(Alignment.TopCenter)
+                        .padding(top = 16.dp)
+                        .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 14.dp, vertical = 6.dp),
+                )
+            }
+
+            // Options panel — opened by D-pad UP, grabs focus so it's reliably
+            // remote-navigable (the transport controller keeps play/pause/seek
+            // + CC). BACK or DOWN closes it and hands focus back to the player.
+            if (optionsOpen) {
+                BackHandler(enabled = true) {
+                    optionsOpen = false
+                    playerViewRef?.requestFocus()
+                }
+                val panelFocus = remember { FocusRequester() }
+                LaunchedEffect(Unit) { runCatching { panelFocus.requestFocus() } }
+
+                // Build the visible options in order; the first one gets initial
+                // focus. Audio leads (it's the reason to open the panel), then
+                // captions, speed, and episode nav.
+                val rows = buildList<@Composable (Modifier) -> Unit> {
                     if (audioTracks.size > 1) {
                         val curIdx = audioTracks.indexOfFirst { it.url == effectiveAudioUrl }
                             .let { if (it < 0) 0 else it }
-                        PlayerChip(
-                            "Audio: ${audioTracks[curIdx].label}",
-                            onClick = {
+                        add { m ->
+                            PlayerChip("Audio: ${audioTracks[curIdx].label}", modifier = m) {
                                 val next = (curIdx + 1) % audioTracks.size
                                 resumeAtMs = player.currentPosition.coerceAtLeast(0)
                                 audioOverrideUrl = audioTracks[next].url
                                 Toast.makeText(
-                                    context,
-                                    "Audio: ${audioTracks[next].label}",
-                                    Toast.LENGTH_SHORT,
+                                    context, "Audio: ${audioTracks[next].label}", Toast.LENGTH_SHORT,
                                 ).show()
-                            },
-                            onFocused = keepAlive,
-                        )
+                            }
+                        }
                     }
-                    PlayerChip(
-                        speedLabel(SPEEDS[speedIdx]),
-                        onClick = { speedIdx = (speedIdx + 1) % SPEEDS.size },
-                        onFocused = keepAlive,
+                    if (subtitles.isNotEmpty()) {
+                        add { m ->
+                            PlayerChip(
+                                if (captionsShown) "Captions: On" else "Captions: Off",
+                                modifier = m,
+                            ) {
+                                val turnOn = !captionsShown
+                                player.trackSelectionParameters =
+                                    player.trackSelectionParameters.buildUpon()
+                                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !turnOn)
+                                        .apply {
+                                            if (turnOn) {
+                                                setPreferredTextLanguage(
+                                                    subtitles.first().language,
+                                                )
+                                            }
+                                        }
+                                        .build()
+                            }
+                        }
+                    }
+                    add { m ->
+                        PlayerChip(speedLabel(SPEEDS[speedIdx]), modifier = m) {
+                            speedIdx = (speedIdx + 1) % SPEEDS.size
+                        }
+                    }
+                    if (showNextButton) {
+                        add { m -> PlayerChip("Next ▶|", modifier = m, onClick = onNext) }
+                        add { m -> PlayerChip("⏮ Prev", modifier = m, onClick = onPrev) }
+                    }
+                }
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(end = 24.dp)
+                        .background(Color.Black.copy(alpha = 0.78f), RoundedCornerShape(12.dp))
+                        .padding(14.dp),
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    rows.forEachIndexed { i, row ->
+                        row(if (i == 0) Modifier.focusRequester(panelFocus) else Modifier)
+                    }
+                    Text(
+                        text = "BACK to close",
+                        color = Color.White.copy(alpha = 0.6f),
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.padding(top = 2.dp),
                     )
                 }
             }
@@ -317,20 +385,27 @@ fun PlayerScreen(
     }
 }
 
+/** Walk the ContextWrapper chain to the hosting MainActivity (or null). */
+private fun Context.findActivity(): MainActivity? {
+    var c: Context? = this
+    while (c is ContextWrapper) {
+        if (c is MainActivity) return c
+        c = c.baseContext
+    }
+    return null
+}
+
 private val SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
 
 private fun speedLabel(s: Float): String =
     (if (s % 1f == 0f) s.toInt().toString() else s.toString()) + "× speed"
 
 @Composable
-private fun PlayerChip(label: String, onClick: () -> Unit, onFocused: () -> Unit = {}) {
+private fun PlayerChip(label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     Surface(
         onClick = onClick,
-        modifier = Modifier.onFocusChanged {
-            focused = it.isFocused
-            if (it.isFocused) onFocused()
-        },
+        modifier = modifier.onFocusChanged { focused = it.isFocused },
         colors = ClickableSurfaceDefaults.colors(
             containerColor = Color.Black.copy(alpha = 0.55f),
             focusedContainerColor = Color.White.copy(alpha = 0.92f),

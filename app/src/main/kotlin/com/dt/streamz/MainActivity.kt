@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.SoundPool
 import android.os.Bundle
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedVisibility
@@ -25,6 +26,37 @@ import com.dt.streamz.ui.theme.DtTheme
 class MainActivity : ComponentActivity() {
 
     private val networkMonitor get() = (application as DtApplication).networkMonitor
+
+    /**
+     * Set by the active PlayerScreen so D-pad UP opens its options panel
+     * (audio language / captions / speed / episode nav). Returns true if it
+     * handled the press (i.e. opened the panel). Cleared when the player
+     * leaves the screen, so UP behaves normally everywhere else.
+     *
+     * This must live at the Activity level: Media3's PlayerView swallows D-pad
+     * keys in its own dispatchKeyEvent to show its transport controller, BEFORE
+     * any View OnKeyListener runs — so the only place to reliably catch UP is
+     * the Activity, which dispatches first.
+     */
+    var playerOptionsHandler: (() -> Boolean)? = null
+    private var swallowingDpadUp = false
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val handler = playerOptionsHandler
+        if (handler != null && event.keyCode == KeyEvent.KEYCODE_DPAD_UP) {
+            when (event.action) {
+                KeyEvent.ACTION_DOWN -> {
+                    // Panel closed -> open it + swallow the whole keystroke so
+                    // the PlayerView never sees it. Panel already open -> let it
+                    // through so Compose can navigate the panel's chips.
+                    if (handler()) { swallowingDpadUp = true; return true }
+                    swallowingDpadUp = false
+                }
+                KeyEvent.ACTION_UP -> if (swallowingDpadUp) { swallowingDpadUp = false; return true }
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
 
     // Run the latency-probe loop only while the app is in the foreground.
     override fun onStart() {

@@ -77,6 +77,11 @@ fun DtApp() {
     val twitchResolver = remember { TwitchStreamResolver() }
 
     var route: Route by remember { mutableStateOf(Route.Tabs) }
+    // Hoisted out of TabsDestination so the selected tab survives a trip into
+    // a player route (TabsDestination leaves composition while a video plays);
+    // otherwise BACK always dumped the user on Home instead of the tab they
+    // were browsing, and the tab highlight desynced from the content.
+    var selectedTab: Section by remember { mutableStateOf(Section.Home) }
 
     // Remembered Sub/Dub choice. When a title offers both and the user has a
     // saved preference, auto-pick it instead of showing the picker again.
@@ -204,6 +209,8 @@ fun DtApp() {
     ) {
         when (val r = route) {
             Route.Tabs -> TabsDestination(
+                selected = selectedTab,
+                onSelect = { selectedTab = it },
                 onOpenTitle = { providerId, titleId ->
                     if (providerId == "youtube") {
                         // YouTube plays through our hosted embed, which only
@@ -507,6 +514,8 @@ fun DtApp() {
 
 @Composable
 private fun TabsDestination(
+    selected: Section,
+    onSelect: (Section) -> Unit,
     onOpenTitle: (providerId: String, titleId: String) -> Unit,
     onOpenTwitchChannel: (String) -> Unit,
     onResume: (com.dt.streamz.data.WatchEntry) -> Unit,
@@ -514,7 +523,6 @@ private fun TabsDestination(
 ) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as DtApplication
-    var selected by remember { mutableStateOf(Section.Home) }
 
     val tabTint = tabTintFor(selected)
     val bgColor = MaterialTheme.colorScheme.background
@@ -534,7 +542,7 @@ private fun TabsDestination(
             Section.entries.forEach { section ->
                 Tab(
                     selected = selected == section,
-                    onFocus = { selected = section },
+                    onFocus = { onSelect(section) },
                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
                 ) {
                     TabLabel(section = section, selected = selected == section)
