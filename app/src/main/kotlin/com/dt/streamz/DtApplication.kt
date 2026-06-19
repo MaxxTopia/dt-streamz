@@ -111,23 +111,29 @@ class DtApplication : Application(), SingletonImageLoader.Factory {
         // takes over as primary anime source — its hidden-WebView resolver
         // renders JS-heavy pages and captures direct m3u8 streams.
         providerRegistry = ProviderRegistry(
-            providers = listOf(
-                FixturesProvider(),
-                TmdbProvider(),
+            providers = buildList {
+                // FixturesProvider is the offline dev/sanity catalog (Mux
+                // BipBop test stream etc.). It must NEVER ship in release —
+                // its test content polluted real browse rows + Continue
+                // Watching. Debug builds keep it for offline development.
+                if (BuildConfig.DEBUG) add(FixturesProvider())
+                add(TmdbProvider())
                 // Anime: AniList metadata + vidnest WebView embed. The
                 // scraping backends (animekai, AllAnime) both 403'd behind
                 // Cloudflare from the box's IP; this embed path plays the same
                 // way movies do (which work on the box).
-                AniListProvider(),
-                VidSrcProvider(),
-                AnicrushProvider(),
+                add(AniListProvider())
+                add(VidSrcProvider())
+                add(AnicrushProvider())
                 // Feed learned interest terms into YouTube's recommended grid
                 // so it drifts toward what you search/watch (no login needed).
-                YouTubeProvider(
-                    interestSeeds = { interests.topTerms(3) },
-                    qualityCap = { playbackPrefs.qualityCap() },
-                ),
-            ),
+                add(
+                    YouTubeProvider(
+                        interestSeeds = { interests.topTerms(3) },
+                        qualityCap = { playbackPrefs.qualityCap() },
+                    ),
+                )
+            },
         )
 
         hostBlocker = HostBlocker(this)
