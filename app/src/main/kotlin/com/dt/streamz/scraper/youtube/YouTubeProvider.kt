@@ -432,10 +432,44 @@ class YouTubeProvider(
         ).firstOrNull()
     }
 
-    /** Best audio-only track by bitrate. */
-    private fun pickAudio(streams: List<AudioStream>): AudioStream? =
-        streams.filter { it.isUrl && !it.content.isNullOrBlank() }
-            .maxByOrNull { it.averageBitrate }
+    /**
+     * Best audio-only track, **language-aware**. YouTube now ships
+     * multi-language auto-dubbed audio on many videos, so picking purely by
+     * bitrate (the old behaviour) could grab a Hindi/Spanish/etc. dub and the
+     * video would "play in a different language". We rank tracks so an English
+     * — or, failing that, the original — track always wins, then break ties by
+     * bitrate:
+     *   tier 0: English locale (the creator's native English OR an English dub)
+     *   tier 1: the ORIGINAL track (undubbed) when no English track exists
+     *   tier 2: anything else (foreign-only video, or no track metadata at all)
+     * Descriptive (audio-description) tracks are pushed to the back so they're
+     * only ever used as a last resort.
+     */
+    private fun pickAudio(streams: List<AudioStream>): AudioStream? {
+        val usable = streams.filter { it.isUrl && !it.content.isNullOrBlank() }
+        if (usable.isEmpty()) return null
+
+        fun isEnglish(s: AudioStream): Boolean =
+            s.audioLocale?.language?.equals("en", ignoreCase = true) == true
+
+        fun langTier(s: AudioStream): Int = when {
+            isEnglish(s) -> 0
+            s.audioTrackType == org.schabi.newpipe.extractor.stream.AudioTrackType.ORIGINAL -> 1
+            else -> 2
+        }
+        fun descriptivePenalty(s: AudioStream): Int =
+            if (s.audioTrackType == org.schabi.newpipe.extractor.stream.AudioTrackType.DESCRIPTIVE) 1 else 0
+
+        val pick = usable.sortedWith(
+            compareBy({ langTier(it) }, { descriptivePenalty(it) }, { -it.averageBitrate }),
+        ).first()
+        DebugLog.i(
+            TAG,
+            "audio pick: locale=${pick.audioLocale?.language} type=${pick.audioTrackType} " +
+                "bitrate=${pick.averageBitrate} (of ${usable.size} tracks)",
+        )
+        return pick
+    }
 
     /** "1080p60" / "720p" -> numeric height (0 if unparseable). */
     private fun resolutionValue(res: String?): Int {
