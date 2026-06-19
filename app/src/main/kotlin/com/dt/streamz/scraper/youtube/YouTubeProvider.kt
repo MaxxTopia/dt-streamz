@@ -479,9 +479,15 @@ class YouTubeProvider(
                 else -> 2
             }
         }
-        return usable.sortedWith(
+        val pick = usable.sortedWith(
             compareBy({ codecRank(it) }, { -resolutionValue(it.resolution) }),
         ).firstOrNull()
+        DebugLog.i(
+            TAG,
+            "video pick: res=${pick?.resolution} codec=${pick?.codec} " +
+                "bitrate=${pick?.bitrate} cap=${cap}p (of ${usable.size} usable)",
+        )
+        return pick
     }
 
     /**

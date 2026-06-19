@@ -117,8 +117,8 @@ fun SettingsScreen() {
         add(
             SettingItem(
                 title = "Video quality (YouTube)",
-                subtitle = "${videoQuality.label} · OK cycles Data saver → Auto → Max. " +
-                    "Higher uses more bandwidth; lower is smoother on a busy connection.",
+                subtitle = "${videoQuality.label} · OK cycles quality. " +
+                    "720p is the smoothest on this box; higher can buffer (YouTube throttles the stream).",
                 action = {
                     val values = com.dt.streamz.data.Quality.entries
                     val next = values[(videoQuality.ordinal + 1) % values.size]

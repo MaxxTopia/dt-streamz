@@ -48,9 +48,16 @@ class PlaybackPrefs(context: Context) {
     }
 }
 
-/** Video-quality preference; [maxHeight] caps the extractor's track pick. */
+/**
+ * Video-quality preference; [maxHeight] caps the extractor's track pick.
+ *
+ * Default is 720p, NOT 1080p: YouTube playback here is a fixed-bitrate
+ * progressive stream (no adaptive downshift), and googlevideo rate-limits
+ * those downloads — so 1080p buffers on the box. 720p sustains smoothly over
+ * the throttled stream; "Best" stays available for those who want to push it.
+ */
 enum class Quality(val maxHeight: Int, val label: String) {
     DATA_SAVER(480, "Data saver (≤480p)"),
-    AUTO(1080, "Auto (≤1080p)"),
-    MAX(2160, "Max (up to 4K)"),
+    AUTO(720, "Smooth (≤720p, recommended)"),
+    MAX(1080, "Best (≤1080p, may buffer)"),
 }

@@ -140,12 +140,17 @@ fun PlayerScreen(
     // ticker + dispose handler below can read currentPosition off it. The
     // factory only attaches it to a PlayerView.
     val player = remember(url, effectiveAudioUrl) {
+        // Deep buffers: YouTube here is a fixed-bitrate progressive stream with
+        // no adaptive downshift, and googlevideo throttles the download — so we
+        // hold a big cushion (up to 2min, keep ≥25s ahead) to ride out the
+        // throttle/dips instead of stalling. ~3s pre-roll trades a hair of
+        // startup time for far fewer rebuffers mid-watch.
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs = */ 5_000,
-                /* maxBufferMs = */ 30_000,
-                /* bufferForPlaybackMs = */ 1_500,
-                /* bufferForPlaybackAfterRebufferMs = */ 3_000,
+                /* minBufferMs = */ 25_000,
+                /* maxBufferMs = */ 120_000,
+                /* bufferForPlaybackMs = */ 3_000,
+                /* bufferForPlaybackAfterRebufferMs = */ 5_000,
             )
             .build()
         ExoPlayer.Builder(context)
