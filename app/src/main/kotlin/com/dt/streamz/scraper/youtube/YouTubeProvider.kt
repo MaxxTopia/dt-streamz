@@ -122,7 +122,12 @@ class YouTubeProvider(
         if (itResult != null && itResult.videos.isNotEmpty()) {
             val out = mutableListOf<SearchResult>()
             val seen = mutableSetOf<String>()
-            for (v in itResult.videos) if (seen.add(v.videoId)) out.add(v.toSearchResult())
+            // English-only: drop any non-English title (the box should never
+            // surface a foreign-language video). See [isLikelyEnglish].
+            for (v in itResult.videos) {
+                if (!isLikelyEnglish(v.title)) continue
+                if (seen.add(v.videoId)) out.add(v.toSearchResult())
+            }
             if (out.isNotEmpty()) return@withContext out
         }
         DebugLog.i(TAG, "InnerTube search($query) empty/null — falling back to Piped")
@@ -177,6 +182,11 @@ class YouTubeProvider(
      * better a false keep than dropping a legit clip with a stylised name.
      */
     internal fun isLikelyEnglish(title: String): Boolean {
+        // First: catch Latin-script foreign languages (Spanish/French/German/…)
+        // that the script test below can't see. High-confidence signals only,
+        // so legit English titles with the odd café/naïve accent survive.
+        if (looksForeignLatin(title)) return false
+
         var latin = 0
         var nonLatin = 0
         for (ch in title) {
@@ -196,6 +206,31 @@ class YouTubeProvider(
         // Keep when non-Latin letters are a minority. 0.30 tolerates the
         // odd accented/foreign word in an otherwise-English title.
         return nonLatin.toDouble() / total < 0.30
+    }
+
+    /**
+     * Detects Latin-script *foreign* titles (the ones [isLikelyEnglish]'s
+     * script test can't catch because Spanish/French/German/… all use the
+     * Latin alphabet). Tuned for high precision — every signal here is one
+     * that essentially never appears in a genuine English title:
+     *   - Spanish-only punctuation (¿ ¡) or letters (ñ), or German ß.
+     *   - Two or more *distinct* diacritic'd letters (English tops out at one
+     *     loanword accent like café / naïve; "vídeo completo" has several).
+     *   - A whole-word match against [FOREIGN_WORDS] (dub/language tags and
+     *     function words with no English collision — ASCII-folded so
+     *     "película"/"français" match).
+     */
+    private fun looksForeignLatin(title: String): Boolean {
+        if (title.isBlank()) return false
+        val lower = title.lowercase()
+        if (lower.any { it == 'ñ' || it == '¿' || it == '¡' || it == 'ß' }) return true
+        val accents = "áàâãäéèêëíìîïóòôõöúùûüçœæ"
+        if (lower.filter { it in accents }.toSet().size >= 2) return true
+        // Strip diacritics so "película" -> "pelicula", "français" -> "francais".
+        val folded = java.text.Normalizer.normalize(lower, java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{Mn}+"), "")
+        val tokens = folded.split(Regex("[^a-z]+")).filterTo(HashSet()) { it.isNotEmpty() }
+        return tokens.any { it in FOREIGN_WORDS }
     }
 
     private fun channelMatchesQuery(query: String, uploader: String?): Boolean {
@@ -296,8 +331,16 @@ class YouTubeProvider(
      */
     override suspend fun related(titleId: String): List<String> = withContext(Dispatchers.IO) {
         val videoId = videoIdOf(titleId)
-        runCatching { innertube.related(videoId) }.getOrNull()?.takeIf { it.isNotEmpty() }
-            ?: emptyList()
+        // Autoplay-next must also stay English-only. Derive from the richer
+        // relatedVideos() (which carries titles) so we can drop foreign and
+        // live entries, then map to IDs. We deliberately do NOT fall back to
+        // the bare-id `related()` here: an ID with no title can't be language-
+        // checked, and we'd rather stop autoplay (caller goes to Tabs) than
+        // auto-play a foreign-language video.
+        runCatching { innertube.relatedVideos(videoId) }.getOrNull().orEmpty()
+            .filterNot { it.isLive }
+            .filter { isLikelyEnglish(it.title) }
+            .map { it.videoId }
     }
 
     /**
@@ -525,6 +568,30 @@ class YouTubeProvider(
 
     companion object {
         private const val TAG = "YouTubeProvider"
+
+        // Whole-word foreign-language markers (ASCII-folded, lowercase) used by
+        // [looksForeignLatin]. Curated to never collide with English words:
+        // language/dub tags + function words distinct from English. Note we
+        // deliberately omit ambiguous tokens ("el", "los", "die", "per",
+        // "con", "episode") that appear in English titles.
+        private val FOREIGN_WORDS = setOf(
+            // Spanish
+            "pelicula", "capitulo", "temporada", "espanol", "espana", "gratis",
+            "completo", "subtitulado", "subtitulos", "doblado", "doblaje",
+            "castellano", "descargar", "espanola",
+            // Portuguese
+            "dublado", "dublada", "legendado", "voce", "nao", "portugues",
+            "episodio", "completa",
+            // French
+            "francais", "francaise", "gratuit", "complet", "vostfr", "doublage",
+            // German
+            "deutsch", "deutsche", "deutscher", "untertitel", "folge", "ganze",
+            "ganzer", "synchronisiert",
+            // Italian
+            "italiano", "sottotitolato", "doppiaggio",
+            // other dub/sub tags
+            "lektor", "napisy",
+        )
 
         // Broad seeds for the no-login "recommended" grid (see browse()).
         // Mixed categories so the merged, round-robin grid feels varied.
