@@ -76,6 +76,10 @@ fun PlayerScreen(
     showNextButton: Boolean = false,
     onNext: () -> Unit = {},
     onPrev: () -> Unit = {},
+    // Fatal-playback-error hook. When non-null it's called INSTEAD of the
+    // toast+exit (e.g. YouTube native -> drop straight to the embed). Null
+    // keeps the default "toast the error and bounce to tabs" behavior.
+    onPlaybackError: (() -> Unit)? = null,
     onExit: () -> Unit = {},
 ) {
     val context = LocalContext.current
@@ -94,6 +98,7 @@ fun PlayerScreen(
     val onProgressCb by rememberUpdatedState(onProgress)
     val onEndedCb by rememberUpdatedState(onEnded)
     val onExitCb by rememberUpdatedState(onExit)
+    val onPlaybackErrorCb by rememberUpdatedState(onPlaybackError)
 
     // Player is hoisted out of the AndroidView factory so the progress
     // ticker + dispose handler below can read currentPosition off it. The
@@ -121,12 +126,19 @@ fun PlayerScreen(
                     // screen — the native player has no mirror-walk, so the
                     // useful move is to tell the user and bounce them back.
                     override fun onPlayerError(error: PlaybackException) {
-                        Toast.makeText(
-                            context,
-                            "Playback failed: ${error.errorCodeName}",
-                            Toast.LENGTH_LONG,
-                        ).show()
-                        onExitCb()
+                        // If the host registered a fallback (YouTube -> embed),
+                        // hand off immediately — no toast, least delay.
+                        val fallback = onPlaybackErrorCb
+                        if (fallback != null) {
+                            fallback()
+                        } else {
+                            Toast.makeText(
+                                context,
+                                "Playback failed: ${error.errorCodeName}",
+                                Toast.LENGTH_LONG,
+                            ).show()
+                            onExitCb()
+                        }
                     }
 
                     // Auto-play next: when the episode finishes, let the host

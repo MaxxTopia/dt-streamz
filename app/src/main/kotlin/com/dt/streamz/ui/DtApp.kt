@@ -404,6 +404,32 @@ fun DtApp() {
                         if (isYouTube) playYouTubeRelated(r.titleId)
                         else advanceEpisode(r, delta = 1, manual = false)
                     },
+                    // YouTube native playback failed (codec/URL/box quirk) —
+                    // fall straight back to the IFrame embed for this SAME
+                    // video. No re-extraction (the embed source is built
+                    // locally), so the switch is immediate. WebPlayer then
+                    // walks to the watch page if embedding is also blocked.
+                    onPlaybackError = if (isYouTube) {
+                        {
+                            val vid = r.titleId.orEmpty()
+                            Log.i(TAG, "YT native failed -> embed fallback for $vid")
+                            route = Route.WebPlayer(
+                                embedUrl = "ytembed://$vid",
+                                title = r.title,
+                                fallbacks = listOf(
+                                    StreamSource(
+                                        url = "https://www.youtube.com/watch?v=$vid",
+                                        kind = StreamKind.DirectEmbed,
+                                        serverLabel = "YouTube (page)",
+                                        headers = mapOf("Referer" to "https://www.youtube.com/"),
+                                    ),
+                                ),
+                                providerId = "youtube",
+                                titleId = vid,
+                                episodeId = "watch",
+                            )
+                        }
+                    } else null,
                     onExit = {
                         Log.i(TAG, "PlayerScreen.onExit() called -> Tabs")
                         route = Route.Tabs
