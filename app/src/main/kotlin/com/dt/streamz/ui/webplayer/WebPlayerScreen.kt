@@ -424,12 +424,13 @@ fun WebPlayerScreen(
             DeadHostRegistry.markIfHost(activeUrl)
             loadState = LoadState.Failed(
                 "Couldn't play this title — none of the mirrors delivered video. " +
-                    "On this box that's almost always the network's DNS blocking the " +
-                    "streaming domains (mirrors fail to resolve, and the one that loads " +
-                    "can't reach its player CDN). Fix on the box: Settings → Network → " +
-                    "Private DNS → Off, or point DNS at an unfiltered resolver (1.1.1.1 / " +
-                    "8.8.8.8). The app can't override system DNS, and in-app 'Block ads in " +
-                    "player' is NOT the cause.",
+                    "Two common causes: (1) the streaming mirrors are temporarily down " +
+                    "or got taken offline (these sites die/move often) — try again, pick a " +
+                    "different title, or use 'Choose server'; (2) the box's network DNS is " +
+                    "filtering the streaming domains. If lots of titles fail, fix DNS on the " +
+                    "box: Settings → Network → Private DNS → Off, or set DNS to an unfiltered " +
+                    "resolver (1.1.1.1 / 8.8.8.8). The app can't override system DNS, and " +
+                    "in-app 'Block ads in player' is NOT the cause.",
                 0,
             )
         }

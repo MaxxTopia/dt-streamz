@@ -1,5 +1,6 @@
 package com.dt.streamz
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.SoundPool
@@ -41,6 +42,9 @@ class MainActivity : ComponentActivity() {
     var playerOptionsHandler: (() -> Boolean)? = null
     private var swallowingDpadUp = false
 
+    // super.dispatchKeyEvent() is flagged @RestrictTo by lint, but calling it from
+    // our own Activity override is the correct, intended usage.
+    @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val handler = playerOptionsHandler
         if (handler != null && event.keyCode == KeyEvent.KEYCODE_DPAD_UP) {

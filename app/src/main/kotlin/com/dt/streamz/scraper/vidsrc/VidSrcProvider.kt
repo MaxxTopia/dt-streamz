@@ -281,6 +281,11 @@ class VidSrcProvider(
         // dead post-injunction. So: resolve IMDB -> TMDb once and lead with the
         // TMDb-native players that work on the box; keep IMDB-accepting live
         // mirrors as fallbacks for when the lookup misses.
+        //
+        // 2026-06-22: vidsrc.cc went dead (origin HTTP 522) and its player CDN
+        // cloudnestra.com lost all DNS (parked at njalla) — verified from a
+        // clean network, so it was NOT a box-DNS issue. Replaced it with
+        // vidfast.pro (TMDb-native, verified live) as the second TMDb mirror.
         val tmdb = findTmdb(imdb)
         Log.i(TAG, "streams imdb=$imdb tv=$isTv s=$season e=$number tmdb=$tmdb")
 
@@ -294,22 +299,19 @@ class VidSrcProvider(
             val tid = tmdb.second
             if (isTv) {
                 out += src("vidlink", "https://vidlink.pro/tv/$tid/$season/$number")
-                out += src("vidsrc.cc", "https://vidsrc.cc/v2/embed/tv/$tid/$season/$number")
+                out += src("vidfast", "https://vidfast.pro/tv/$tid/$season/$number")
             } else {
                 out += src("vidlink", "https://vidlink.pro/movie/$tid")
-                out += src("vidsrc.cc", "https://vidsrc.cc/v2/embed/movie/$tid")
+                out += src("vidfast", "https://vidfast.pro/movie/$tid")
             }
         }
         // IMDB-accepting live mirrors (vidsrc.mov is the current live VidSrc
-        // mirror; multiembed independent). vidsrc.cc also accepts IMDB, so add
-        // it here too in case the TMDb lookup missed.
+        // mirror; multiembed independent).
         if (isTv) {
             out += src("vidsrc.mov", "https://vidsrc.mov/embed/tv/$imdb/$season/$number")
-            if (tmdb == null) out += src("vidsrc.cc", "https://vidsrc.cc/v2/embed/tv/$imdb/$season/$number")
             out += src("multiembed", "https://multiembed.mov/?video_id=$imdb&tmdb=0&s=$season&e=$number")
         } else {
             out += src("vidsrc.mov", "https://vidsrc.mov/embed/movie/$imdb")
-            if (tmdb == null) out += src("vidsrc.cc", "https://vidsrc.cc/v2/embed/movie/$imdb")
             out += src("multiembed", "https://multiembed.mov/?video_id=$imdb&tmdb=0")
         }
         out
