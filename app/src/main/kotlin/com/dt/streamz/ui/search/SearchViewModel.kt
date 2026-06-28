@@ -3,6 +3,7 @@ package com.dt.streamz.ui.search
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.dt.streamz.data.MediaKind
 import com.dt.streamz.data.SearchResult
 import com.dt.streamz.scraper.Provider
 import com.dt.streamz.scraper.ProviderRegistry
@@ -26,6 +27,11 @@ sealed interface SearchState {
 
 class SearchViewModel(
     private val registry: ProviderRegistry,
+    // Scopes results to one tab's content. The global Search tab passes the
+    // default (everything); the Anime/Movies/TV tabs pass their MediaKind so a
+    // search on those tabs returns only that kind — no movies under Anime and
+    // vice-versa.
+    private val kindFilter: (MediaKind) -> Boolean = { true },
 ) : ViewModel() {
 
     private val _query = MutableStateFlow("")
@@ -75,6 +81,7 @@ class SearchViewModel(
                 .map { p -> async { runCatching { p.search(q) } } }
                 .awaitAll()
             val merged = outcomes.mapNotNull { it.getOrNull() }.flatten()
+                .filter { kindFilter(it.kind) }
             // Distinguish "nobody had a match" (Loaded, empty -> "No results")
             // from "every source errored" (Error -> tells the user it's a
             // connection problem, not an empty catalog).
@@ -87,9 +94,12 @@ class SearchViewModel(
         }
     }
 
-    class Factory(private val registry: ProviderRegistry) : ViewModelProvider.Factory {
+    class Factory(
+        private val registry: ProviderRegistry,
+        private val kindFilter: (MediaKind) -> Boolean = { true },
+    ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            SearchViewModel(registry) as T
+            SearchViewModel(registry, kindFilter) as T
     }
 }

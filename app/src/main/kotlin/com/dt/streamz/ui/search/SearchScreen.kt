@@ -43,6 +43,7 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.dt.streamz.data.FavoriteEntry
 import com.dt.streamz.data.FavoritesStore
+import com.dt.streamz.data.MediaKind
 import com.dt.streamz.data.SearchResult
 import com.dt.streamz.scraper.ProviderRegistry
 import kotlinx.coroutines.flow.flowOf
@@ -55,8 +56,22 @@ fun SearchScreen(
     registry: ProviderRegistry,
     favorites: FavoritesStore? = null,
     onOpenTitle: (providerId: String, titleId: String) -> Unit,
+    // Scope key keeps each tab's search VM (and its query/results) separate and
+    // activity-scoped, so they don't share state and each survives a trip into
+    // the player. Default "all" = the global Search tab.
+    scopeKey: String = "all",
+    // Limits results to one kind (Anime tab -> anime only, etc.). Default = all.
+    kindFilter: (MediaKind) -> Boolean = { true },
+    placeholder: String = "🔍  Search anime, movies, TV…",
+    // Shown when no search is active (Idle). The Anime/Movies/TV tabs pass their
+    // browse rows here so the tab is "search bar on top, browse below" and only
+    // swaps to scoped results while a query is running.
+    idleContent: (@Composable () -> Unit)? = null,
 ) {
-    val vm: SearchViewModel = viewModel(factory = SearchViewModel.Factory(registry))
+    val vm: SearchViewModel = viewModel(
+        key = "search:$scopeKey",
+        factory = SearchViewModel.Factory(registry, kindFilter),
+    )
     val query by vm.query.collectAsState()
     val state by vm.state.collectAsState()
     var editorOpen by remember { mutableStateOf(false) }
@@ -121,17 +136,28 @@ fun SearchScreen(
         modifier = Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        SearchBarCard(query = query, onClick = { editorOpen = true }, focusRequester = searchBarFocus)
+        SearchBarCard(
+            query = query,
+            placeholder = placeholder,
+            onClick = { editorOpen = true },
+            focusRequester = searchBarFocus,
+        )
 
         when (val s = state) {
             SearchState.Idle -> {
-                Hint("Press OK on the search bar to type.")
-                if (recentSearches.isNotEmpty()) {
-                    RecentSearches(
-                        items = recentSearches,
-                        onPick = { runQuery(it) },
-                        onClear = { clearSearchHistory(historyPrefs); historyTick++ },
-                    )
+                if (idleContent != null) {
+                    // Content tab (Anime/Movies/TV): show the browse rows under
+                    // the search bar until the user actually searches.
+                    Box(modifier = Modifier.fillMaxSize()) { idleContent() }
+                } else {
+                    Hint("Press OK on the search bar to type.")
+                    if (recentSearches.isNotEmpty()) {
+                        RecentSearches(
+                            items = recentSearches,
+                            onPick = { runQuery(it) },
+                            onClear = { clearSearchHistory(historyPrefs); historyTick++ },
+                        )
+                    }
                 }
             }
             SearchState.Loading -> Hint("Searching…")
@@ -250,7 +276,12 @@ private fun SuggestionChip(label: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun SearchBarCard(query: String, onClick: () -> Unit, focusRequester: FocusRequester) {
+private fun SearchBarCard(
+    query: String,
+    placeholder: String,
+    onClick: () -> Unit,
+    focusRequester: FocusRequester,
+) {
     var focused by remember { mutableStateOf(false) }
     Surface(
         onClick = onClick,
@@ -278,7 +309,7 @@ private fun SearchBarCard(query: String, onClick: () -> Unit, focusRequester: Fo
             contentAlignment = Alignment.CenterStart,
         ) {
             Text(
-                text = query.ifBlank { "🔍  Search anime, movies, TV…" },
+                text = query.ifBlank { placeholder },
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (query.isBlank())
                     MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)

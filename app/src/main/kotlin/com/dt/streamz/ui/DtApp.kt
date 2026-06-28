@@ -13,6 +13,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -82,7 +83,23 @@ fun DtApp() {
     val scope = rememberCoroutineScope()
     val twitchResolver = remember { TwitchStreamResolver() }
 
-    var route: Route by remember { mutableStateOf(Route.Tabs) }
+    // Navigation back-stack. Tabs is the permanent root (index 0, never popped);
+    // pushing a Route makes it the visible screen and BACK pops one level. This
+    // replaces the old flat single-route model where EVERY screen's BACK jumped
+    // straight to Tabs — which collapsed past the episode list and the Sub/Dub
+    // picker, so BACK from an episode dumped you back on the search grid and the
+    // picker was unreachable once you'd chosen a version. With a real stack:
+    // Tabs -> Details(episodes) -> SourcePicker(sub/dub) -> Player, and BACK
+    // walks back through each.
+    val backStack = remember { mutableStateListOf<Route>(Route.Tabs) }
+    val route: Route = backStack.last()
+    fun push(to: Route) { backStack.add(to) }
+    // Swap the current top in place (no new back-entry) — used when a player
+    // rolls into the next episode / a related video / an embed fallback, so the
+    // stack doesn't grow a player-on-player chain.
+    fun replaceTop(to: Route) { backStack[backStack.lastIndex] = to }
+    fun popToTabs() { while (backStack.size > 1) backStack.removeAt(backStack.lastIndex) }
+    fun back() { if (backStack.size > 1) backStack.removeAt(backStack.lastIndex) }
     // Hoisted out of TabsDestination so the selected tab survives a trip into
     // a player route (TabsDestination leaves composition while a video plays);
     // otherwise BACK always dumped the user on Home instead of the tab they
@@ -108,14 +125,14 @@ fun DtApp() {
     fun routeForSources(
         label: String, sources: List<StreamSource>,
         pid: String?, tid: String?, eid: String?, startMs: Long = 0,
-    ): Route {
+    ): Route? {
         if (sources.isEmpty()) {
             Toast.makeText(ctx, "No source — title may be gone", Toast.LENGTH_SHORT).show()
             com.dt.streamz.diag.Telemetry.report(
                 "no_source",
                 mapOf("provider" to pid, "title" to tid, "episode" to eid, "label" to label),
             )
-            return Route.Tabs
+            return null
         }
         if (sources.size == 1) {
             return playRouteFor(sources.first(), label, sources, pid, tid, eid, startMs)
@@ -148,9 +165,13 @@ fun DtApp() {
 
     // Record + resolve + route to a specific episode (fresh start, position 0).
     // Checks the prefetch cache first so Next/auto-play feel instant.
+    // [replace] = true swaps the current player in place (Next/Prev/auto-play
+    // from inside a player), so the stack doesn't grow a player-on-player chain;
+    // false pushes a new entry (opening an episode fresh from a tab/list).
     suspend fun playEpisode(
         pid: String, tid: String, ep: com.dt.streamz.data.Episode,
         titleName: String, poster: String?, kindName: String?,
+        replace: Boolean = false,
     ) {
         Toast.makeText(ctx, "▶ Ep ${ep.number}", Toast.LENGTH_SHORT).show()
         app.interests.recordWatch(titleName)
@@ -163,7 +184,8 @@ fun DtApp() {
         )
         val sources = Binge.takeStreams(pid, tid, ep.id)
             ?: runCatching { registry.get(pid).streams(tid, ep) }.getOrDefault(emptyList())
-        route = routeForSources("$titleName · Ep ${ep.number}", sources, pid, tid, ep.id)
+        val r = routeForSources("$titleName · Ep ${ep.number}", sources, pid, tid, ep.id) ?: return
+        if (replace) replaceTop(r) else push(r)
     }
 
     // Resolve + play the episode [delta] steps from [r]'s current one
@@ -179,7 +201,7 @@ fun DtApp() {
         delta: Int, manual: Boolean,
     ) {
         if (pid == null || tid == null || eid == null) {
-            if (!manual) route = Route.Tabs
+            if (!manual) popToTabs()
             return
         }
         scope.launch {
@@ -190,10 +212,12 @@ fun DtApp() {
             if (target == null) {
                 val which = if (delta > 0) "next" else "previous"
                 if (manual) Toast.makeText(ctx, "No $which episode", Toast.LENGTH_SHORT).show()
-                else route = Route.Tabs
+                else popToTabs()
                 return@launch
             }
-            playEpisode(pid, tid, target, details?.title ?: fallbackTitle, details?.poster, details?.kind?.name)
+            // Next/Prev/auto-play swap the player in place — BACK from episode N
+            // returns to the episode list, not a stack of every prior episode.
+            playEpisode(pid, tid, target, details?.title ?: fallbackTitle, details?.poster, details?.kind?.name, replace = true)
         }
     }
 
@@ -204,15 +228,18 @@ fun DtApp() {
     // the continuity the embed used to provide, now driven from the native
     // player. No related / resolve failure -> fall back to the tabs.
     fun playYouTubeRelated(videoId: String?) {
-        if (videoId == null) { route = Route.Tabs; return }
+        if (videoId == null) { popToTabs(); return }
         scope.launch {
             val nextId = runCatching { registry.get("youtube").related(videoId) }
                 .getOrNull()?.firstOrNull()
-            if (nextId == null) { route = Route.Tabs; return@launch }
+            if (nextId == null) { popToTabs(); return@launch }
             val ep = com.dt.streamz.data.Episode(id = "watch", number = 1, title = "Watch")
             val sources = runCatching { registry.get("youtube").streams(nextId, ep) }
                 .getOrDefault(emptyList())
-            route = routeForSources("YouTube", sources, "youtube", nextId, "watch")
+            // Swap the finished video for the next in place (BACK still returns
+            // to the YouTube tab, not a chain of auto-played videos).
+            val r = routeForSources("YouTube", sources, "youtube", nextId, "watch") ?: run { popToTabs(); return@launch }
+            replaceTop(r)
         }
     }
 
@@ -251,10 +278,10 @@ fun DtApp() {
                             val sources = runCatching {
                                 registry.get("youtube").streams(titleId, ep)
                             }.getOrDefault(emptyList())
-                            route = routeForSources("YouTube", sources, "youtube", titleId, "watch")
+                            routeForSources("YouTube", sources, "youtube", titleId, "watch")?.let { push(it) }
                         }
                     } else {
-                        route = Route.Details(providerId, titleId)
+                        push(Route.Details(providerId, titleId))
                     }
                 },
                 onOpenTwitchChannel = { channel ->
@@ -273,11 +300,13 @@ fun DtApp() {
                             ).show()
                         } else {
                             Log.i(TAG, "route -> Player(twitch=$channel, urlLen=${url.length})")
-                            route = Route.Player(
-                                url = url,
-                                title = "twitch.tv/$channel",
-                                twitchChannel = channel,
-                                kind = StreamKind.Hls,
+                            push(
+                                Route.Player(
+                                    url = url,
+                                    title = "twitch.tv/$channel",
+                                    twitchChannel = channel,
+                                    kind = StreamKind.Hls,
+                                ),
                             )
                         }
                     }
@@ -314,10 +343,10 @@ fun DtApp() {
                         runCatching {
                             registry.get(entry.providerId).streams(entry.titleId, ep)
                         }.onSuccess { sources ->
-                            route = routeForSources(
+                            routeForSources(
                                 "${entry.titleName} · Ep ${entry.episodeNumber}", sources,
                                 entry.providerId, entry.titleId, entry.episodeId, resumeMs,
-                            )
+                            )?.let { push(it) }
                         }.onFailure {
                             Log.w(TAG, "resume failed", it)
                             Toast.makeText(ctx, "Couldn't resume: ${it.message}", Toast.LENGTH_SHORT).show()
@@ -326,7 +355,7 @@ fun DtApp() {
                 },
             )
             is Route.Details -> {
-                BackHandler { route = Route.Tabs }
+                BackHandler { back() }
                 DetailsScreen(
                     registry = registry,
                     providerId = r.providerId,
@@ -353,10 +382,10 @@ fun DtApp() {
                             )
                             runCatching { registry.get(providerId).streams(titleId, ep) }
                                 .onSuccess { sources ->
-                                    route = routeForSources(
+                                    routeForSources(
                                         "Ep ${ep.number}", sources,
                                         providerId, titleId, ep.id, resumeMs,
-                                    )
+                                    )?.let { push(it) }
                                 }
                                 .onFailure {
                                     Log.w(TAG, "streams() failed", it)
@@ -367,7 +396,7 @@ fun DtApp() {
                 )
             }
             is Route.SourcePicker -> {
-                BackHandler { route = Route.Tabs }
+                BackHandler { back() }
                 SourcePickerScreen(
                     title = r.title,
                     sources = r.sources,
@@ -378,20 +407,25 @@ fun DtApp() {
                             lbl.contains("dub", ignoreCase = true) -> setAudioPref("Dub")
                             lbl.contains("sub", ignoreCase = true) -> setAudioPref("Sub")
                         }
-                        route = playRouteFor(
-                            picked, r.title, r.sources,
-                            providerId = r.providerId,
-                            titleId = r.titleId,
-                            episodeId = r.episodeId,
-                            startPositionMs = r.startPositionMs,
+                        // PUSH the player on top of the picker so BACK from
+                        // playback returns here to choose the other version
+                        // (Sub <-> Dub) instead of replaying the same one.
+                        push(
+                            playRouteFor(
+                                picked, r.title, r.sources,
+                                providerId = r.providerId,
+                                titleId = r.titleId,
+                                episodeId = r.episodeId,
+                                startPositionMs = r.startPositionMs,
+                            ),
                         )
                     },
                 )
             }
             is Route.Player -> {
                 BackHandler {
-                    Log.i(TAG, "BackHandler fired from PlayerScreen -> Tabs")
-                    route = Route.Tabs
+                    Log.i(TAG, "BackHandler fired from PlayerScreen -> back()")
+                    back()
                 }
                 // Prefetch the next episode ~8s in (past this stream's startup)
                 // so Next / auto-play land instantly.
@@ -450,7 +484,7 @@ fun DtApp() {
                         {
                             val vid = r.titleId.orEmpty()
                             Log.i(TAG, "YT native failed -> embed fallback for $vid")
-                            route = Route.WebPlayer(
+                            replaceTop(Route.WebPlayer(
                                 embedUrl = "ytembed://$vid",
                                 title = r.title,
                                 fallbacks = listOf(
@@ -464,17 +498,17 @@ fun DtApp() {
                                 providerId = "youtube",
                                 titleId = vid,
                                 episodeId = "watch",
-                            )
+                            ))
                         }
                     } else null,
                     onExit = {
-                        Log.i(TAG, "PlayerScreen.onExit() called -> Tabs")
-                        route = Route.Tabs
+                        Log.i(TAG, "PlayerScreen.onExit() called -> back()")
+                        back()
                     },
                 )
             }
             is Route.WebPlayer -> {
-                BackHandler { route = Route.Tabs }
+                BackHandler { back() }
                 WebPlayerScreen(
                     embedUrl = r.embedUrl,
                     headers = r.headers,
@@ -504,13 +538,17 @@ fun DtApp() {
                     // failed (movies/TV only — not YouTube's embed/page pair).
                     onPickServer = if (r.allSources.size > 1 && r.providerId != "youtube") {
                         {
-                            route = Route.SourcePicker(
-                                r.title, r.allSources, r.providerId,
-                                r.titleId, r.episodeId, r.startPositionMs,
+                            // Replace the dead embed with the picker so BACK from
+                            // it returns to the list/tab, not the failed player.
+                            replaceTop(
+                                Route.SourcePicker(
+                                    r.title, r.allSources, r.providerId,
+                                    r.titleId, r.episodeId, r.startPositionMs,
+                                ),
                             )
                         }
                     } else null,
-                    onExit = { route = Route.Tabs },
+                    onExit = { back() },
                 )
             }
         }
@@ -609,46 +647,79 @@ private fun TabsDestination(
                 showHero = true,
                 forYou = recommenderFor(app, { true }, { true }),
             )
-            Section.Anime -> HomeScreen(
-                title = "Anime",
+            // Each content tab gets its OWN search bar, scoped to that tab's
+            // kind — searching Anime returns only anime, Movies only movies, so
+            // results never mix. Browse rows show until you search.
+            Section.Anime -> SearchScreen(
                 registry = app.providerRegistry,
-                providerFilter = { it.supportsAnime },
-                cwKind = MediaKind.Anime,
-                continueWatching = app.continueWatching,
                 favorites = app.favorites,
                 onOpenTitle = onOpenTitle,
-                onResume = onResume,
-                onRemoveContinue = onRemoveContinue,
-                forYou = recommenderFor(app, { it.supportsAnime }, { true }),
+                scopeKey = "anime",
+                kindFilter = { it == MediaKind.Anime },
+                placeholder = "🔍  Search anime…",
+                idleContent = {
+                    HomeScreen(
+                        title = "Anime",
+                        registry = app.providerRegistry,
+                        providerFilter = { it.supportsAnime },
+                        cwKind = MediaKind.Anime,
+                        continueWatching = app.continueWatching,
+                        favorites = app.favorites,
+                        onOpenTitle = onOpenTitle,
+                        onResume = onResume,
+                        onRemoveContinue = onRemoveContinue,
+                        forYou = recommenderFor(app, { it.supportsAnime }, { true }),
+                    )
+                },
             )
-            Section.Movies -> HomeScreen(
-                title = "Movies",
+            Section.Movies -> SearchScreen(
                 registry = app.providerRegistry,
-                providerFilter = { it.supportsMovies },
+                favorites = app.favorites,
+                onOpenTitle = onOpenTitle,
+                scopeKey = "movies",
                 kindFilter = { it == MediaKind.Movie },
-                cwKind = MediaKind.Movie,
-                continueWatching = app.continueWatching,
-                favorites = app.favorites,
-                onOpenTitle = onOpenTitle,
-                onResume = onResume,
-                onRemoveContinue = onRemoveContinue,
-                // Curated TMDb rows replace the single mixed Must-Watch row.
-                forYou = recommenderFor(app, { it.supportsMovies }, { it == MediaKind.Movie }),
-                curatedRows = curatedRowsFor(app, tv = false),
+                placeholder = "🔍  Search movies…",
+                idleContent = {
+                    HomeScreen(
+                        title = "Movies",
+                        registry = app.providerRegistry,
+                        providerFilter = { it.supportsMovies },
+                        kindFilter = { it == MediaKind.Movie },
+                        cwKind = MediaKind.Movie,
+                        continueWatching = app.continueWatching,
+                        favorites = app.favorites,
+                        onOpenTitle = onOpenTitle,
+                        onResume = onResume,
+                        onRemoveContinue = onRemoveContinue,
+                        // Curated TMDb rows replace the single mixed Must-Watch row.
+                        forYou = recommenderFor(app, { it.supportsMovies }, { it == MediaKind.Movie }),
+                        curatedRows = curatedRowsFor(app, tv = false),
+                    )
+                },
             )
-            Section.TV -> HomeScreen(
-                title = "TV Shows",
+            Section.TV -> SearchScreen(
                 registry = app.providerRegistry,
-                providerFilter = { it.supportsMovies },
-                kindFilter = { it == MediaKind.Series },
-                cwKind = MediaKind.Series,
-                continueWatching = app.continueWatching,
                 favorites = app.favorites,
                 onOpenTitle = onOpenTitle,
-                onResume = onResume,
-                onRemoveContinue = onRemoveContinue,
-                forYou = recommenderFor(app, { it.supportsMovies }, { it == MediaKind.Series }),
-                curatedRows = curatedRowsFor(app, tv = true),
+                scopeKey = "tv",
+                kindFilter = { it == MediaKind.Series },
+                placeholder = "🔍  Search TV shows…",
+                idleContent = {
+                    HomeScreen(
+                        title = "TV Shows",
+                        registry = app.providerRegistry,
+                        providerFilter = { it.supportsMovies },
+                        kindFilter = { it == MediaKind.Series },
+                        cwKind = MediaKind.Series,
+                        continueWatching = app.continueWatching,
+                        favorites = app.favorites,
+                        onOpenTitle = onOpenTitle,
+                        onResume = onResume,
+                        onRemoveContinue = onRemoveContinue,
+                        forYou = recommenderFor(app, { it.supportsMovies }, { it == MediaKind.Series }),
+                        curatedRows = curatedRowsFor(app, tv = true),
+                    )
+                },
             )
             Section.YouTube -> YouTubeTabScreen(
                 registry = app.providerRegistry,
