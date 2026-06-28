@@ -49,6 +49,7 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.dash.DashMediaSource
+import androidx.media3.exoplayer.dash.manifest.DashManifestParser
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
@@ -80,6 +81,12 @@ fun PlayerScreen(
     isLive: Boolean = false,
     startPositionMs: Long = 0,
     audioUrl: String? = null,
+    // Pre-built DASH manifests (YouTube wrapped-progressive). When non-null the
+    // matching track is played via DashMediaSource (ranged segment GETs) instead
+    // of a single open-ended progressive GET that googlevideo throttles into a
+    // never-ending buffer. See StreamSource.dashManifest.
+    dashManifest: String? = null,
+    audioDashManifest: String? = null,
     subtitles: List<SubtitleTrack> = emptyList(),
     // Selectable audio-language tracks (YouTube multi-audio). When >1 the
     // player shows an "Audio" chip that cycles languages, rebuilding playback
@@ -138,6 +145,11 @@ fun PlayerScreen(
     // (keyed on the audio URL) resumes exactly where it left off.
     var audioOverrideUrl by remember(url) { mutableStateOf<String?>(null) }
     val effectiveAudioUrl = audioOverrideUrl ?: audioUrl
+    // The pre-built audio DASH manifest matches only the DEFAULT audio track.
+    // Once the user switches language we have no manifest for the new track, so
+    // it plays progressively (audio is small — far less throttle-prone than
+    // video, which keeps its DASH manifest regardless).
+    val effectiveAudioManifest = if (audioOverrideUrl == null) audioDashManifest else null
     var resumeAtMs by remember(url) { mutableStateOf(startPositionMs) }
 
     // Player is hoisted out of the AndroidView factory so the progress
@@ -172,7 +184,11 @@ fun PlayerScreen(
             .build()
             .apply {
                 setMediaSource(
-                    buildMediaSource(url, streamKind, subtitles, effectiveAudioUrl, initialCaptionsOn, live),
+                    buildMediaSource(
+                        url, streamKind, subtitles, effectiveAudioUrl, initialCaptionsOn, live,
+                        videoDashManifest = dashManifest,
+                        audioDashManifest = effectiveAudioManifest,
+                    ),
                 )
                 addListener(object : Player.Listener {
                     // Persist the user's CC choice (YouTube only) so it sticks
@@ -463,6 +479,12 @@ private fun buildMediaSource(
     // player starts ~15s behind the edge (where segments exist) instead of
     // stalling pinned at the live edge. Ignored for VOD.
     isLive: Boolean = false,
+    // YouTube wrapped-progressive DASH manifests. When non-null the track plays
+    // via DashMediaSource (ranged segment GETs) instead of a throttle-prone
+    // open-ended progressive GET. On a parse/build failure we fall back to the
+    // progressive path so playback still works.
+    videoDashManifest: String? = null,
+    audioDashManifest: String? = null,
 ): MediaSource {
     val factory = DefaultHttpDataSource.Factory()
         .setUserAgent(
@@ -499,21 +521,34 @@ private fun buildMediaSource(
             }
         }
         .build()
-    val primary = if (kind == StreamKind.Hls && isLive) {
-        // Chunkless preparation lets a live HLS start without fetching every
-        // segment first — faster, more reliable start on a laggy stream.
-        HlsMediaSource.Factory(factory)
-            .setAllowChunklessPreparation(true)
-            .createMediaSource(item)
-    } else {
-        builderFn(factory, item)
+    val primary = when {
+        // YouTube wrapped-progressive: play the video itag via DASH so ExoPlayer
+        // makes ranged segment GETs (no googlevideo start-stall). Falls back to
+        // the progressive source if the manifest can't be parsed.
+        videoDashManifest != null ->
+            dashSourceFromManifest(factory, videoDashManifest, item)
+                ?: builderFn(factory, item)
+        kind == StreamKind.Hls && isLive ->
+            // Chunkless preparation lets a live HLS start without fetching every
+            // segment first — faster, more reliable start on a laggy stream.
+            HlsMediaSource.Factory(factory)
+                .setAllowChunklessPreparation(true)
+                .createMediaSource(item)
+        else -> builderFn(factory, item)
     }
     // YouTube high-quality path: [url] is a video-only track and [audioUrl] is
     // the matching audio-only track. Merge them so ExoPlayer plays one video +
     // one audio track together (the only way past YouTube's 360p muxed cap).
+    // The audio track gets the same DASH wrapping as the video when a manifest
+    // is supplied; otherwise it plays progressively.
     val audioSource = audioUrl?.takeIf { it.isNotBlank() }?.let { au ->
         val audioItem = MediaItem.Builder().setUri(au).build()
-        ProgressiveMediaSource.Factory(factory).createMediaSource(audioItem)
+        if (audioDashManifest != null) {
+            dashSourceFromManifest(factory, audioDashManifest, audioItem)
+                ?: ProgressiveMediaSource.Factory(factory).createMediaSource(audioItem)
+        } else {
+            ProgressiveMediaSource.Factory(factory).createMediaSource(audioItem)
+        }
     }
     val subSources = subConfigs.map { cfg ->
         SingleSampleMediaSource.Factory(factory).createMediaSource(cfg, C.TIME_UNSET)
@@ -539,3 +574,22 @@ private fun progressiveSource(factory: DefaultHttpDataSource.Factory, item: Medi
 
 private fun dashSource(factory: DefaultHttpDataSource.Factory, item: MediaItem): MediaSource =
     DashMediaSource.Factory(factory).createMediaSource(item)
+
+/**
+ * Build a [DashMediaSource] from a pre-generated DASH manifest XML string (the
+ * NewPipe YouTube wrapped-progressive manifest). The manifest embeds the
+ * absolute googlevideo BaseURL, so the base [android.net.Uri] passed to the
+ * parser is irrelevant. Returns null on any parse/build failure so the caller
+ * can fall back to a progressive source rather than dead-ending playback.
+ */
+private fun dashSourceFromManifest(
+    factory: DefaultHttpDataSource.Factory,
+    manifestXml: String,
+    item: MediaItem,
+): MediaSource? = runCatching {
+    val manifest = DashManifestParser().parse(
+        Uri.EMPTY,
+        java.io.ByteArrayInputStream(manifestXml.toByteArray(Charsets.UTF_8)),
+    )
+    DashMediaSource.Factory(factory).createMediaSource(manifest, item)
+}.getOrNull()

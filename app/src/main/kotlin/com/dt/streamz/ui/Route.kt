@@ -26,6 +26,13 @@ sealed interface Route {
         // time (YouTube adaptive video-only + audio-only). Null when [url]
         // already carries audio.
         val audioUrl: String? = null,
+        // Pre-built DASH manifest XML (YouTube wrapped-progressive). When set
+        // the player builds a DashMediaSource from it instead of a progressive
+        // URI — makes ExoPlayer issue ranged segment GETs so googlevideo doesn't
+        // throttle the single open-ended request (the "buffers until you seek"
+        // bug). [audioDashManifest] is the matching audio track. See StreamSource.
+        val dashManifest: String? = null,
+        val audioDashManifest: String? = null,
         // Resume-watching context. Non-null for on-demand episodes/movies so
         // the player can seek to [startPositionMs] and write progress back.
         // All null for live Twitch (no position to persist).

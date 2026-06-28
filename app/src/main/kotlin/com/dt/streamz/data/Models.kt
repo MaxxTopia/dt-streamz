@@ -52,6 +52,22 @@ data class StreamSource(
      */
     val audioUrl: String? = null,
     /**
+     * Pre-built DASH manifest XML for the video track (and [audioDashManifest]
+     * for audio). YouTube's adaptive itag URLs, played as a plain progressive
+     * GET, make ExoPlayer open ONE long open-ended request that googlevideo
+     * throttles below playback bitrate — the stream buffers forever until you
+     * seek (a seek opens a fresh ranged request that bursts at full speed).
+     * Wrapping each itag URL in a single-segment DASH manifest (NewPipe's
+     * YoutubeProgressiveDashManifestCreator) makes ExoPlayer issue short
+     * RANGED segment GETs instead, which is what googlevideo expects — killing
+     * the start-stall. When set, the player builds a DashMediaSource from this
+     * instead of treating [url] as a progressive URI. Null = play [url]/[audioUrl]
+     * progressively (non-YouTube, or manifest generation failed → graceful
+     * fallback to the old path).
+     */
+    val dashManifest: String? = null,
+    val audioDashManifest: String? = null,
+    /**
      * Selectable audio tracks (one best-bitrate track per language) when the
      * source ships multi-language audio — e.g. YouTube auto-dubs. [audioUrl]
      * is the default (English/original) pick; this list lets the player offer

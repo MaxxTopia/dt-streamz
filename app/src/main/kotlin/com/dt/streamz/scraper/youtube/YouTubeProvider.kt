@@ -444,13 +444,25 @@ class YouTubeProvider(
         val video = pickVideo(info.videoOnlyStreams)
         val audio = pickAudio(info.audioStreams)
         if (video != null && audio != null) {
+            // Wrap each adaptive itag URL in a single-segment DASH manifest so
+            // ExoPlayer makes RANGED segment requests instead of one open-ended
+            // GET — googlevideo throttles the latter below playback bitrate and
+            // the stream buffers forever until you seek (the seek opens a fresh
+            // ranged request that bursts). This is exactly what NewPipe does for
+            // its own playback. If manifest generation fails we leave the fields
+            // null and fall back to the old progressive path (kind Mp4).
+            val durationSec = info.duration
+            val videoManifest = progressiveDashManifest(video, durationSec)
+            val audioManifest = progressiveDashManifest(audio, durationSec)
             return listOf(
                 StreamSource(
                     url = video.content,
                     audioUrl = audio.content,
+                    dashManifest = videoManifest,
+                    audioDashManifest = audioManifest,
                     audioTracks = audioOptions(info.audioStreams, defaultUrl = audio.content),
                     subtitles = englishSubtitles(info.subtitles),
-                    kind = StreamKind.Mp4,
+                    kind = if (videoManifest != null) StreamKind.Dash else StreamKind.Mp4,
                     serverLabel = "YouTube ${video.resolution}",
                 ),
             )
@@ -469,6 +481,35 @@ class YouTubeProvider(
             )
         }
         return emptyList()
+    }
+
+    /**
+     * Build a single-segment DASH manifest (XML string) for a progressive
+     * adaptive itag [stream] so ExoPlayer plays it via DashMediaSource (ranged
+     * segment GETs) instead of a throttle-prone open-ended progressive GET.
+     * Only PROGRESSIVE_HTTP URL streams are wrappable here; OTF/other delivery
+     * (rare on YouTube VOD) returns null so the caller keeps the progressive
+     * fallback. Any creator failure also returns null (graceful degrade).
+     */
+    private fun progressiveDashManifest(
+        stream: org.schabi.newpipe.extractor.stream.Stream,
+        durationSec: Long,
+    ): String? {
+        if (stream.deliveryMethod !=
+            org.schabi.newpipe.extractor.stream.DeliveryMethod.PROGRESSIVE_HTTP
+        ) {
+            return null
+        }
+        val itag = stream.itagItem ?: return null
+        val content = stream.content
+        if (content.isNullOrBlank()) return null
+        return runCatching {
+            org.schabi.newpipe.extractor.services.youtube.dashmanifestcreators
+                .YoutubeProgressiveDashManifestCreator
+                .fromProgressiveStreamingUrl(content, itag, durationSec)
+        }.onFailure {
+            DebugLog.w(TAG, "DASH manifest gen failed (itag=${itag.id}) — progressive fallback", it)
+        }.getOrNull()
     }
 
     /**
@@ -703,6 +744,13 @@ class YouTubeProvider(
                 org.schabi.newpipe.extractor.localization.Localization("en", "US"),
                 org.schabi.newpipe.extractor.localization.ContentCountry("US"),
             )
+            // The progressive-DASH manifest creator keeps a static LRU of
+            // generated manifests; bound it so it can't grow unbounded across
+            // a long session (NewPipe itself caps at 500).
+            runCatching {
+                org.schabi.newpipe.extractor.services.youtube.dashmanifestcreators
+                    .YoutubeProgressiveDashManifestCreator.getCache().setMaximumSize(500)
+            }
         }
 
         @Volatile
