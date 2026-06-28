@@ -204,6 +204,14 @@ fun WebPlayerScreen(
     var attempt by remember(activeUrl) { mutableStateOf(0) }
     val blockedHosts = remember { mutableStateListOf<String>() }
     var mainFrameHost by remember { mutableStateOf<String?>(hostOf(activeUrl)) }
+    // Flips true the moment this mirror is confirmed playing (media traffic
+    // seen, or a cross-origin player iframe accepted). The HostBlocker reads
+    // it to STOP blocking once playback is live: the pre-roll ad gate is past,
+    // and a late 403 on a token/segment/heartbeat refresh (these vidsrc CDNs
+    // rotate signed tokens roughly every ~10 min) would otherwise starve the
+    // stream into an unrecoverable buffer loop — exactly the "10 min in, infinite
+    // load" symptom. Keyed on activeUrl so it auto-resets on every mirror change.
+    var playbackAccepted by remember(activeUrl) { mutableStateOf(false) }
 
     // True while the active mirror is our hosted YouTube embed (`ytembed://`).
     // Drives the D-pad handler: on our own wrapper page we seek via the
@@ -390,6 +398,7 @@ fun WebPlayerScreen(
             if (signal == "media" || signal == "video" || signal == "iframe-video") {
                 DebugLog.i(TAG, "play confirmed mirror=$mirrorIndex via $signal")
                 reportMirror(activeUrl, success = true)
+                playbackAccepted = true
                 return@LaunchedEffect
             }
             if (signal == "iframe-cross-origin") sawPlayer = true
@@ -413,6 +422,7 @@ fun WebPlayerScreen(
         //     once every mirror came back blank.
         if (lastSignal == "iframe-cross-origin") {
             DebugLog.i(TAG, "keeping mirror=$mirrorIndex — player present, no autostart traffic (press play)")
+            playbackAccepted = true
             return@LaunchedEffect
         }
         reportMirror(activeUrl, success = false)
@@ -525,10 +535,13 @@ fun WebPlayerScreen(
                 keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PLAY ||
                 keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PAUSE ||
                 keyCode == android.view.KeyEvent.KEYCODE_SPACE
-            // D-pad UP on an episodic embed opens the native control bar
-            // (Prev/Next episode + Back). Consume so it doesn't reach the embed.
+            // D-pad UP on a cross-origin embed opens the native control bar
+            // (Reconnect always; Prev/Next episode when episodic; Back).
+            // Reconnect is the escape hatch from an infinite buffer stall — it
+            // reloads the mirror with a fresh CDN token. Consume so it doesn't
+            // reach the embed. (Our own YouTube wrapper handles its own UI.)
             if (keyCode == android.view.KeyEvent.KEYCODE_DPAD_UP &&
-                showNextPrev && !controlsVisible && !railVisible
+                !ytEmbedActive.value && !controlsVisible && !railVisible
             ) {
                 if (event.action == android.view.KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                     controlsVisible = true
@@ -644,6 +657,7 @@ fun WebPlayerScreen(
                         onVideoEnded = { cycleToNextYouTube() },
                         onEmbedEnded = onEmbedEnded,
                         injectEndedHook = showNextPrev,
+                        isPlaying = { playbackAccepted },
                     )
                     val chrome = FullscreenChromeClient(
                         getActivity = { ctx.findActivity() },
@@ -747,11 +761,26 @@ fun WebPlayerScreen(
             )
         }
 
-        // Netflix-style control bar — opened with D-pad UP on episodic embeds.
-        // Prev/Next episode + Back; native Compose, owns focus while shown.
-        if (controlsVisible && showNextPrev) {
+        // Netflix-style control bar — opened with D-pad UP on any cross-origin
+        // embed. Reconnect (always) + Prev/Next episode (episodic) + Back;
+        // native Compose, owns focus while shown.
+        if (controlsVisible && !ytEmbedActive.value) {
             PlayerControlBar(
                 firstFocus = controlsFocus,
+                showNextPrev = showNextPrev,
+                onReconnect = {
+                    // Escape hatch from an infinite buffer stall: reload the
+                    // current mirror so its expired CDN token is re-minted.
+                    // (Cross-origin embeds can't restore position, so this
+                    // restarts the title — the only fix for a dead token.)
+                    DebugLog.i(TAG, "user reconnect — reloading mirror=$mirrorIndex")
+                    controlsVisible = false
+                    playbackAccepted = false
+                    blockedHosts.clear()
+                    loadState = LoadState.Loading
+                    webViewRef?.let { it.stopLoading(); it.reload() }
+                    webViewRef?.requestFocus()
+                },
                 onPrev = {
                     controlsVisible = false
                     onPrev()
@@ -908,6 +937,8 @@ private fun RelatedCard(
 @Composable
 private fun PlayerControlBar(
     firstFocus: FocusRequester,
+    showNextPrev: Boolean,
+    onReconnect: () -> Unit,
     onPrev: () -> Unit,
     onNext: () -> Unit,
     onBack: () -> Unit,
@@ -931,9 +962,14 @@ private fun PlayerControlBar(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        ControlButton("⏮  Prev", onClick = onPrev, modifier = Modifier.focusRequester(firstFocus))
+        // Reconnect is always first and takes initial focus — it's the only
+        // control on a movie/non-episodic embed and the stall escape hatch.
+        ControlButton("↻  Reconnect", onClick = onReconnect, modifier = Modifier.focusRequester(firstFocus))
+        if (showNextPrev) {
+            ControlButton("⏮  Prev", onClick = onPrev)
+            ControlButton("Next  ▶|", onClick = onNext)
+        }
         ControlButton("⟵  Back", onClick = onBack)
-        ControlButton("Next  ▶|", onClick = onNext)
     }
 }
 
@@ -1109,6 +1145,9 @@ private class EmbedWebViewClient(
     private val onEmbedEnded: () -> Unit = {},
     // Inject the embed-ended postMessage listener after page load.
     private val injectEndedHook: Boolean = false,
+    // True once the embed is confirmed playing — flips the blocker off so a
+    // late token/segment refresh can't be 403'd into a dead buffer loop.
+    private val isPlaying: () -> Boolean = { false },
 ) : WebViewClient() {
 
     override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
@@ -1207,6 +1246,13 @@ private class EmbedWebViewClient(
         val host = url.host?.lowercase() ?: return null
         // 1. Never block the main frame — that just bricks the screen.
         if (request.isForMainFrame) return null
+        // 1b. Once playback is live, stop blocking entirely. By now any pre-roll
+        //     ad gate is long past; the real risk is 403-ing a periodic CDN
+        //     token / segment / heartbeat refresh (these mirrors rotate signed
+        //     tokens ~every 10 min) and starving the stream into an infinite
+        //     buffer loop the app can't see (cross-origin <video> never reports
+        //     the stall). Correctness > a stray late beacon.
+        if (isPlaying()) return null
         // 2. Never block 1st-party requests of whatever the embed loaded.
         val main = mainFrameHost()
         if (main != null && shareEffectiveDomain(main, host)) return null
@@ -1459,7 +1505,13 @@ private val ENDED_HOOK_JS = """
           var s = (typeof d === 'string') ? d : JSON.stringify(d || '');
           if (!s) return;
           // Clear end-of-video signals only (NOT generic "complete").
-          if (/(^|[^a-z])ended([^a-z]|$)|videoended|playbackended|video[_-]?end\b/i.test(s)) {
+          // Many players post periodic status objects like {"ended":false,...}
+          // every second — the old broad match treated those as a real end and
+          // skipped to the next episode mid-show. Require a POSITIVE ended
+          // signal AND explicitly reject the negated/false form.
+          var positive = /(^|[^a-z])ended([^a-z]|$)|videoended|playbackended|video[_-]?end\b/i.test(s);
+          var negated = /ended['"]?\s*[:=]\s*(false|0|null|undefined|"false")/i.test(s) || /not[_-]?ended/i.test(s);
+          if (positive && !negated) {
             if (armed && !fired) { fired = true; window.location.href = 'dtnext://end'; }
           }
         } catch (x) {}
