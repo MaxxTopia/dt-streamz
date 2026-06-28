@@ -14,6 +14,7 @@ import com.dt.streamz.config.ScraperConfigLoader
 import com.dt.streamz.data.ContinueWatchingStore
 import com.dt.streamz.data.FavoritesStore
 import com.dt.streamz.data.InterestStore
+import com.dt.streamz.data.YouTubeInterestStore
 import com.dt.streamz.data.PlaybackPrefs
 import com.dt.streamz.data.ServerStatsStore
 import com.dt.streamz.networkmonitor.NetworkMonitor
@@ -79,6 +80,11 @@ class DtApplication : Application(), SingletonImageLoader.Factory {
         private set
     lateinit var interests: InterestStore
         private set
+    // YouTube-only interest model (searches + watched video IDs) driving the
+    // personalised YouTube grid. Kept separate from [interests] so movies/shows
+    // never influence YouTube.
+    lateinit var youtubeInterests: YouTubeInterestStore
+        private set
     lateinit var serverStats: ServerStatsStore
         private set
     lateinit var playbackPrefs: PlaybackPrefs
@@ -98,6 +104,8 @@ class DtApplication : Application(), SingletonImageLoader.Factory {
         // On-device interest model — must exist before the provider registry
         // so the YouTube provider can pull learned seeds for its grid.
         interests = InterestStore(this)
+        // YouTube-only signal store for the personalised YouTube grid.
+        youtubeInterests = YouTubeInterestStore(this)
         // Per-server reliability stats driving best-first mirror ordering.
         serverStats = ServerStatsStore(this)
         // Playback preferences (remembered captions choice + quality cap).
@@ -125,11 +133,14 @@ class DtApplication : Application(), SingletonImageLoader.Factory {
                 add(AniListProvider())
                 add(VidSrcProvider())
                 add(AnicrushProvider())
-                // Feed learned interest terms into YouTube's recommended grid
-                // so it drifts toward what you search/watch (no login needed).
+                // Personalise the YouTube grid from YOUTUBE-ONLY signals (no
+                // login): watched video IDs seed YouTube's own related-video
+                // graph, recent YouTube searches add intent. Movies/shows never
+                // touch this — see [youtubeInterests].
                 add(
                     YouTubeProvider(
-                        interestSeeds = { interests.topTerms(3) },
+                        recentWatchIds = { youtubeInterests.recentWatchIds(5) },
+                        searchSeeds = { youtubeInterests.topSearchTerms(4) },
                         qualityCap = { playbackPrefs.qualityCap() },
                     ),
                 )

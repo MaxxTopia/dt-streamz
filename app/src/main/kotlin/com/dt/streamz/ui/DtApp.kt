@@ -228,6 +228,11 @@ fun DtApp() {
                         // resolve the (network-free) embed sources and play
                         // immediately.
                         scope.launch {
+                            // YouTube-only watch signal: record the opened video
+                            // ID so the grid can pull YouTube's related-graph for
+                            // it (genuine personalisation, no login). titleId IS
+                            // the videoId.
+                            app.youtubeInterests.recordWatch(titleId)
                             val ep = com.dt.streamz.data.Episode(
                                 id = "watch", number = 1, title = "Watch",
                             )
@@ -815,14 +820,20 @@ private fun recommenderFor(
     providerFilter: (com.dt.streamz.scraper.Provider) -> Boolean,
     kindFilter: (MediaKind) -> Boolean,
 ): suspend () -> List<com.dt.streamz.data.SearchResult> = recommend@{
-    val terms = app.interests.topTerms(4)
-    if (terms.isEmpty()) return@recommend emptyList()
     // tmdb has no real search() — it feeds the Must-Watch row only.
     val provs = app.providerRegistry.all.filter(providerFilter).filter { it.id != "tmdb" }
     if (provs.isEmpty()) return@recommend emptyList()
+    val ytProv = provs.firstOrNull { it.id == "youtube" }
+    val otherProvs = provs.filter { it.id != "youtube" }
+    val terms = app.interests.topTerms(4)
+    // YouTube content (only present in the Home "For You" row) is sourced ONLY
+    // from YouTube-derived search terms, so a movie/show search can never
+    // surface a YouTube creator here. Movies/shows use the cross-app terms.
+    val ytTerms = app.youtubeInterests.topSearchTerms(4)
+    if (terms.isEmpty() && ytTerms.isEmpty()) return@recommend emptyList()
     val out = LinkedHashMap<String, com.dt.streamz.data.SearchResult>()
     for (term in terms) {
-        for (p in provs) {
+        for (p in otherProvs) {
             val res = runCatching { p.search(term) }.getOrNull().orEmpty()
             for (r in res) {
                 if (!kindFilter(r.kind)) continue
@@ -832,6 +843,17 @@ private fun recommenderFor(
             if (out.size >= 24) break
         }
         if (out.size >= 24) break
+    }
+    if (ytProv != null && out.size < 24) {
+        for (term in ytTerms) {
+            val res = runCatching { ytProv.search(term) }.getOrNull().orEmpty()
+            for (r in res) {
+                if (!kindFilter(r.kind)) continue
+                out.putIfAbsent("${r.providerId}:${r.id}", r)
+                if (out.size >= 24) break
+            }
+            if (out.size >= 24) break
+        }
     }
     // Live-only rule for streamers. YouTube creators are only ever wanted in
     // For You while they're actually broadcasting RIGHT NOW — never their old

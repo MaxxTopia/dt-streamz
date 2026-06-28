@@ -92,8 +92,11 @@ fun YouTubeTabScreen(
     fun rememberSearch(q: String) {
         val t = q.trim()
         if (t.length < 2) return
-        // Feed the on-device interest model so the YouTube grid adapts.
-        (ctx.applicationContext as? com.dt.streamz.DtApplication)?.interests?.recordSearch(t)
+        val dtApp = ctx.applicationContext as? com.dt.streamz.DtApplication
+        // YouTube-only signal: this search personalises the YouTube grid.
+        dtApp?.youtubeInterests?.recordSearch(t)
+        // Also feed the cross-app model for the (non-YouTube) "For You" rows.
+        dtApp?.interests?.recordSearch(t)
         val cur = ytPrefs.getString("queries", "").orEmpty().split("\n").filter { it.isNotBlank() }
         val next = (listOf(t) + cur.filterNot { it.equals(t, ignoreCase = true) }).take(12)
         ytPrefs.edit().putString("queries", next.joinToString("\n")).apply()

@@ -48,10 +48,16 @@ import org.schabi.newpipe.extractor.stream.VideoStream
  * continue-watching entries don't break.
  */
 class YouTubeProvider(
-    // Learned interest terms (recent searches / watched titles) the recommended
-    // grid blends with its fixed seeds. Defaults to none, so the provider still
-    // works standalone (tests, cold start). See [browse].
-    private val interestSeeds: suspend () -> List<String> = { emptyList() },
+    // YouTube videos the user actually watched (newest first), as 11-char IDs.
+    // The recommended grid pulls YouTube's OWN related-video graph for these —
+    // the real, login-free personalisation. YouTube-only signal; movies/shows
+    // never reach it. Defaults to none so the provider works standalone. See
+    // [browse].
+    private val recentWatchIds: suspend () -> List<String> = { emptyList() },
+    // Recent YouTube search phrases (explicit intent). Used as search seeds in
+    // the grid, after the related-graph results. YouTube-only signal. See
+    // [browse].
+    private val searchSeeds: suspend () -> List<String> = { emptyList() },
     // Max video height the native extractor will pick, read live from the
     // user's quality preference. Defaults to 1080 so the provider still works
     // standalone (tests, cold start). See [pickVideo].
@@ -68,42 +74,61 @@ class YouTubeProvider(
     private val cache = mutableMapOf<String, CachedItem>()
 
     override suspend fun browse(): List<SearchResult> = kotlinx.coroutines.coroutineScope {
-        // Recommended feed. YouTube's real trending/home browse is login- and
-        // session-token-gated, Piped trending now comes back empty, and
-        // NewPipe's kiosk crashes on this box's Android (java.util.stream
-        // Collectors.toUnmodifiableList is API 33+). So we synthesize a
-        // "popular" grid from InnerTube SEARCH (verified reliable, English)
-        // across a few broad seeds, run in parallel and merged. Not
-        // personalized — that's impossible without a login — but a full,
-        // English, live-free grid instead of one stray video.
-        // Personalized seeds (recent searches / watched titles) lead, so the
-        // user's tastes surface first in the round-robin interleave; the fixed
-        // seeds fill out and keep the grid varied. Cold start / personalization
-        // off -> learned is empty and this is exactly the old behavior.
-        val learned = runCatching { interestSeeds() }.getOrNull().orEmpty()
-            .map { it.trim() }
-            .filter { it.length >= 2 }
-            .take(3)
-        val seeds = (learned + RECOMMEND_SEEDS).distinct()
-        val perSeed = seeds.map { seed ->
-            async(Dispatchers.IO) {
-                runCatching { innertube.search(seed) }.getOrNull()?.videos.orEmpty()
-            }
+        // Genuinely personalised "Recommended" grid — no login needed.
+        //
+        // YouTube's real home/trending browse is login- and session-token-gated,
+        // Piped trending comes back empty, and NewPipe's kiosk crashes on this
+        // box's Android. The login-free way to get TRUE personalisation is to
+        // tap YouTube's own watch-next graph: for each video you actually
+        // watched, `relatedVideos` returns what YouTube recommends after it
+        // (collaborative-filtered by YouTube, not by us). We seed that graph
+        // with your recent YouTube watches, then add your recent YouTube
+        // searches (explicit intent), and only fall back to generic popular
+        // seeds when there's nothing personal yet (cold start / off).
+        //
+        // Signals are YOUTUBE-ONLY (see [recentWatchIds]/[searchSeeds]) — movies
+        // and shows can't drift this grid.
+        //
+        // Tiers are drained in priority order: related-from-watches first (the
+        // strongest "for you" signal), then search intent, then generic filler.
+        val watchIds = runCatching { recentWatchIds() }.getOrNull().orEmpty().distinct().take(5)
+        val searches = runCatching { searchSeeds() }.getOrNull().orEmpty()
+            .map { it.trim() }.filter { it.length >= 2 }.take(4)
+
+        // Tier 1: YouTube's own recommendations for what you watched.
+        val relatedTier = watchIds.map { id ->
+            async(Dispatchers.IO) { runCatching { innertube.relatedVideos(id) }.getOrNull().orEmpty() }
+        }.awaitAll()
+        // Tier 2: your recent YouTube searches.
+        val searchTier = searches.map { seed ->
+            async(Dispatchers.IO) { runCatching { innertube.search(seed) }.getOrNull()?.videos.orEmpty() }
+        }.awaitAll()
+        // Tier 3: generic popular filler (also the entire grid at cold start).
+        val fillerTier = RECOMMEND_SEEDS.map { seed ->
+            async(Dispatchers.IO) { runCatching { innertube.search(seed) }.getOrNull()?.videos.orEmpty() }
         }.awaitAll()
 
         val out = mutableListOf<SearchResult>()
         val seen = mutableSetOf<String>()
-        // Interleave seeds round-robin so the grid is varied (not 24 music
-        // videos because "music" resolved first).
-        val maxLen = perSeed.maxOfOrNull { it.size } ?: 0
-        for (i in 0 until maxLen) {
-            for (videos in perSeed) {
-                val v = videos.getOrNull(i) ?: continue
-                if (v.isLive || !isLikelyEnglish(v.title)) continue
-                if (seen.add(v.videoId)) out.add(v.toSearchResult())
-                if (out.size >= 24) return@coroutineScope out
+        val watched = watchIds.toSet()
+        // Round-robin within a tier (so the grid is varied, not 24 results from
+        // one seed) and drain higher tiers first. Drops your already-watched
+        // videos, live, and non-English. Returns once we've filled the grid.
+        fun drain(tier: List<List<YtVideo>>): Boolean {
+            val maxLen = tier.maxOfOrNull { it.size } ?: 0
+            for (i in 0 until maxLen) {
+                for (videos in tier) {
+                    val v = videos.getOrNull(i) ?: continue
+                    if (v.isLive || v.videoId in watched || !isLikelyEnglish(v.title)) continue
+                    if (seen.add(v.videoId)) out.add(v.toSearchResult())
+                    if (out.size >= 24) return true
+                }
             }
+            return false
         }
+        if (drain(relatedTier)) return@coroutineScope out
+        if (drain(searchTier)) return@coroutineScope out
+        drain(fillerTier)
         if (out.isNotEmpty()) return@coroutineScope out
 
         // Last-ditch fallback: Piped trending (rarely up now).

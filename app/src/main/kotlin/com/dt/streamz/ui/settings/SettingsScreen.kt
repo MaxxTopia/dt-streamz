@@ -133,12 +133,13 @@ fun SettingsScreen() {
             SettingItem(
                 title = "Personalized recommendations",
                 subtitle = if (personalizeEnabled)
-                    "ON · learns from your searches + what you watch (on-device only) to build the YouTube grid and 'For You' rows."
+                    "ON · the YouTube grid learns from your YouTube searches + watches only (via YouTube's own related videos); 'For You' rows learn from your in-app activity. On-device, no login."
                 else
                     "OFF · YouTube + tabs show the generic trending mix; nothing is learned.",
                 action = {
                     val next = !personalizeEnabled
                     app.interests.setEnabled(next)
+                    app.youtubeInterests.setEnabled(next)
                     personalizeEnabled = next
                     Toast.makeText(
                         ctx,
@@ -155,6 +156,7 @@ fun SettingsScreen() {
                 subtitle = "Wipe the on-device interest history (searches + watches). Recommendations reset to the generic mix.",
                 action = {
                     app.interests.clear()
+                    app.youtubeInterests.clear()
                     Toast.makeText(ctx, "Learned history cleared", Toast.LENGTH_SHORT).show()
                 },
                 actionLabel = "Clear",
