@@ -58,6 +58,13 @@ data class StreamSource(
      * an in-player language switch. Empty / single-entry = no choice to offer.
      */
     val audioTracks: List<AudioOption> = emptyList(),
+    /**
+     * True for a live broadcast (YouTube live, Twitch). The player gives live
+     * streams a smaller start buffer + a live target offset so they start a few
+     * seconds behind the edge instead of stalling at the live edge waiting for
+     * a buffer it can't fill (the "buffers forever until you seek" bug).
+     */
+    val isLive: Boolean = false,
 )
 
 enum class StreamKind { Hls, Mp4, Dash, DirectEmbed }

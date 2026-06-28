@@ -37,6 +37,10 @@ sealed interface Route {
         // Selectable audio-language tracks for the in-player switch (YouTube
         // multi-audio). Empty = no switch shown.
         val audioTracks: List<AudioOption> = emptyList(),
+        // True for live broadcasts (YouTube live, Twitch) — the player applies
+        // a live-tuned buffer + live target offset so it starts behind the edge
+        // instead of stalling at it.
+        val isLive: Boolean = false,
     ) : Route
     data class WebPlayer(
         val embedUrl: String,

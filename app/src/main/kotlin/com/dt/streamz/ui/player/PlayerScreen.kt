@@ -74,6 +74,10 @@ fun PlayerScreen(
     streamKind: StreamKind = StreamKind.Hls,
     title: String = "",
     twitchChannel: String? = null,
+    // True for a live broadcast (YouTube live; Twitch is also detected via
+    // twitchChannel). Drives a live-tuned buffer + live target offset so the
+    // stream starts a few seconds behind the edge instead of stalling on it.
+    isLive: Boolean = false,
     startPositionMs: Long = 0,
     audioUrl: String? = null,
     subtitles: List<SubtitleTrack> = emptyList(),
@@ -139,18 +143,24 @@ fun PlayerScreen(
     // Player is hoisted out of the AndroidView factory so the progress
     // ticker + dispose handler below can read currentPosition off it. The
     // factory only attaches it to a PlayerView.
+    // Live (YouTube live / Twitch) needs very different buffering than a
+    // throttled VOD: a live stream's window is small, so the big VOD start-gate
+    // can never be filled at the live edge and the player stalls forever in
+    // STATE_BUFFERING until a manual seek moves it into the DVR window. Live
+    // gets a small start buffer; VOD keeps the deep cushion.
+    val live = isLive || twitchChannel != null
     val player = remember(url, effectiveAudioUrl) {
-        // Deep buffers: YouTube here is a fixed-bitrate progressive stream with
-        // no adaptive downshift, and googlevideo throttles the download — so we
-        // hold a big cushion (up to 2min, keep ≥25s ahead) to ride out the
-        // throttle/dips instead of stalling. ~3s pre-roll trades a hair of
-        // startup time for far fewer rebuffers mid-watch.
+        // Deep buffers (VOD): YouTube here is a fixed-bitrate progressive stream
+        // with no adaptive downshift, and googlevideo throttles the download —
+        // so we hold a big cushion (up to 2min, keep ≥25s ahead) to ride out the
+        // throttle/dips. Live uses a small start-gate so it starts promptly a
+        // few seconds behind the edge (paired with the live target offset below).
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs = */ 25_000,
-                /* maxBufferMs = */ 120_000,
-                /* bufferForPlaybackMs = */ 3_000,
-                /* bufferForPlaybackAfterRebufferMs = */ 5_000,
+                /* minBufferMs = */ if (live) 8_000 else 25_000,
+                /* maxBufferMs = */ if (live) 50_000 else 120_000,
+                /* bufferForPlaybackMs = */ if (live) 1_500 else 3_000,
+                /* bufferForPlaybackAfterRebufferMs = */ if (live) 2_000 else 5_000,
             )
             .build()
         ExoPlayer.Builder(context)
@@ -162,7 +172,7 @@ fun PlayerScreen(
             .build()
             .apply {
                 setMediaSource(
-                    buildMediaSource(url, streamKind, subtitles, effectiveAudioUrl, initialCaptionsOn),
+                    buildMediaSource(url, streamKind, subtitles, effectiveAudioUrl, initialCaptionsOn, live),
                 )
                 addListener(object : Player.Listener {
                     // Persist the user's CC choice (YouTube only) so it sticks
@@ -449,6 +459,10 @@ private fun buildMediaSource(
     // When false the track is available but starts hidden — the CC button
     // toggles it (YouTube default).
     subtitleDefaultOn: Boolean = true,
+    // Live broadcast: attach a live target offset + chunkless HLS prep so the
+    // player starts ~15s behind the edge (where segments exist) instead of
+    // stalling pinned at the live edge. Ignored for VOD.
+    isLive: Boolean = false,
 ): MediaSource {
     val factory = DefaultHttpDataSource.Factory()
         .setUserAgent(
@@ -473,8 +487,27 @@ private fun buildMediaSource(
         .setUri(url)
         .setMimeType(mime)
         .setSubtitleConfigurations(subConfigs)
+        .apply {
+            if (isLive) {
+                // Start ~15s behind the live edge — programmatically does what
+                // the user's "seek into it and it plays" did. Ignored for VOD.
+                setLiveConfiguration(
+                    MediaItem.LiveConfiguration.Builder()
+                        .setTargetOffsetMs(15_000)
+                        .build(),
+                )
+            }
+        }
         .build()
-    val primary = builderFn(factory, item)
+    val primary = if (kind == StreamKind.Hls && isLive) {
+        // Chunkless preparation lets a live HLS start without fetching every
+        // segment first — faster, more reliable start on a laggy stream.
+        HlsMediaSource.Factory(factory)
+            .setAllowChunklessPreparation(true)
+            .createMediaSource(item)
+    } else {
+        builderFn(factory, item)
+    }
     // YouTube high-quality path: [url] is a video-only track and [audioUrl] is
     // the matching audio-only track. Merge them so ExoPlayer plays one video +
     // one audio track together (the only way past YouTube's 360p muxed cap).

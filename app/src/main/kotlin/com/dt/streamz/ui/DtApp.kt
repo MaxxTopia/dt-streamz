@@ -89,6 +89,14 @@ fun DtApp() {
     // were browsing, and the tab highlight desynced from the content.
     var selectedTab: Section by remember { mutableStateOf(Section.Home) }
 
+    // YouTube tab search state, hoisted here (like selectedTab) so it survives
+    // the player route — without this, BACK from a searched YouTube video drops
+    // to the recommended grid instead of the search results you came from.
+    var ytSearchQuery by remember { mutableStateOf("") }
+    var ytSearchResults by remember {
+        mutableStateOf<List<com.dt.streamz.data.SearchResult>?>(null)
+    }
+
     // Remembered Sub/Dub choice. When a title offers both and the user has a
     // saved preference, auto-pick it instead of showing the picker again.
     val audioPrefs = remember { ctx.getSharedPreferences("ui", android.content.Context.MODE_PRIVATE) }
@@ -217,6 +225,10 @@ fun DtApp() {
             Route.Tabs -> TabsDestination(
                 selected = selectedTab,
                 onSelect = { selectedTab = it },
+                ytQuery = ytSearchQuery,
+                onYtQueryChange = { ytSearchQuery = it },
+                ytResults = ytSearchResults,
+                onYtResultsChange = { ytSearchResults = it },
                 onOpenTitle = { providerId, titleId ->
                     if (providerId == "youtube") {
                         // YouTube plays through our hosted embed, which only
@@ -398,6 +410,7 @@ fun DtApp() {
                     streamKind = r.kind,
                     title = r.title,
                     twitchChannel = r.twitchChannel,
+                    isLive = r.isLive,
                     startPositionMs = r.startPositionMs,
                     audioUrl = r.audioUrl,
                     subtitles = r.subtitles,
@@ -532,6 +545,10 @@ private fun TabsDestination(
     onOpenTwitchChannel: (String) -> Unit,
     onResume: (com.dt.streamz.data.WatchEntry) -> Unit,
     onRemoveContinue: (com.dt.streamz.data.WatchEntry) -> Unit,
+    ytQuery: String,
+    onYtQueryChange: (String) -> Unit,
+    ytResults: List<com.dt.streamz.data.SearchResult>?,
+    onYtResultsChange: (List<com.dt.streamz.data.SearchResult>?) -> Unit,
 ) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as DtApplication
@@ -636,6 +653,10 @@ private fun TabsDestination(
             Section.YouTube -> YouTubeTabScreen(
                 registry = app.providerRegistry,
                 onOpenTitle = onOpenTitle,
+                query = ytQuery,
+                onQueryChange = onYtQueryChange,
+                results = ytResults,
+                onResultsChange = onYtResultsChange,
             )
             Section.Library -> LibraryScreen(
                 continueWatching = app.continueWatching,
@@ -729,6 +750,7 @@ private fun playRouteFor(
         audioUrl = source.audioUrl,
         subtitles = source.subtitles,
         audioTracks = source.audioTracks,
+        isLive = source.isLive,
     )
     StreamKind.DirectEmbed -> {
         // Auto-fallback list = every other DirectEmbed source we know about,

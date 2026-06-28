@@ -54,10 +54,6 @@ class YouTubeProvider(
     // never reach it. Defaults to none so the provider works standalone. See
     // [browse].
     private val recentWatchIds: suspend () -> List<String> = { emptyList() },
-    // Recent YouTube search phrases (explicit intent). Used as search seeds in
-    // the grid, after the related-graph results. YouTube-only signal. See
-    // [browse].
-    private val searchSeeds: suspend () -> List<String> = { emptyList() },
     // Max video height the native extractor will pick, read live from the
     // user's quality preference. Defaults to 1080 so the provider still works
     // standalone (tests, cold start). See [pickVideo].
@@ -81,29 +77,22 @@ class YouTubeProvider(
         // box's Android. The login-free way to get TRUE personalisation is to
         // tap YouTube's own watch-next graph: for each video you actually
         // watched, `relatedVideos` returns what YouTube recommends after it
-        // (collaborative-filtered by YouTube, not by us). We seed that graph
-        // with your recent YouTube watches, then add your recent YouTube
-        // searches (explicit intent), and only fall back to generic popular
-        // seeds when there's nothing personal yet (cold start / off).
+        // (collaborative-filtered by YouTube, not by us). The grid is driven
+        // entirely by WHAT YOU WATCH on YouTube; we only fall back to generic
+        // popular seeds when there's nothing watched yet (cold start / off).
         //
-        // Signals are YOUTUBE-ONLY (see [recentWatchIds]/[searchSeeds]) — movies
-        // and shows can't drift this grid.
+        // The watch signal is YOUTUBE-ONLY (see [recentWatchIds]) — movies and
+        // shows can't drift this grid.
         //
-        // Tiers are drained in priority order: related-from-watches first (the
-        // strongest "for you" signal), then search intent, then generic filler.
+        // Tiers drained in priority order: related-from-watches first (your
+        // "for you"), then generic filler only to top up / cold-start.
         val watchIds = runCatching { recentWatchIds() }.getOrNull().orEmpty().distinct().take(5)
-        val searches = runCatching { searchSeeds() }.getOrNull().orEmpty()
-            .map { it.trim() }.filter { it.length >= 2 }.take(4)
 
         // Tier 1: YouTube's own recommendations for what you watched.
         val relatedTier = watchIds.map { id ->
             async(Dispatchers.IO) { runCatching { innertube.relatedVideos(id) }.getOrNull().orEmpty() }
         }.awaitAll()
-        // Tier 2: your recent YouTube searches.
-        val searchTier = searches.map { seed ->
-            async(Dispatchers.IO) { runCatching { innertube.search(seed) }.getOrNull()?.videos.orEmpty() }
-        }.awaitAll()
-        // Tier 3: generic popular filler (also the entire grid at cold start).
+        // Tier 2: generic popular filler (also the entire grid at cold start).
         val fillerTier = RECOMMEND_SEEDS.map { seed ->
             async(Dispatchers.IO) { runCatching { innertube.search(seed) }.getOrNull()?.videos.orEmpty() }
         }.awaitAll()
@@ -127,7 +116,6 @@ class YouTubeProvider(
             return false
         }
         if (drain(relatedTier)) return@coroutineScope out
-        if (drain(searchTier)) return@coroutineScope out
         drain(fillerTier)
         if (out.isNotEmpty()) return@coroutineScope out
 
@@ -448,7 +436,7 @@ class YouTubeProvider(
             val hls = info.hlsUrl
             if (!hls.isNullOrBlank()) {
                 return listOf(
-                    StreamSource(url = hls, kind = StreamKind.Hls, serverLabel = "YouTube Live"),
+                    StreamSource(url = hls, kind = StreamKind.Hls, serverLabel = "YouTube Live", isLive = true),
                 )
             }
         }

@@ -133,14 +133,12 @@ class DtApplication : Application(), SingletonImageLoader.Factory {
                 add(AniListProvider())
                 add(VidSrcProvider())
                 add(AnicrushProvider())
-                // Personalise the YouTube grid from YOUTUBE-ONLY signals (no
-                // login): watched video IDs seed YouTube's own related-video
-                // graph, recent YouTube searches add intent. Movies/shows never
-                // touch this — see [youtubeInterests].
+                // Personalise the YouTube grid from WHAT YOU WATCH on YouTube
+                // (no login): watched video IDs seed YouTube's own related-video
+                // graph. Movies/shows never touch this — see [youtubeInterests].
                 add(
                     YouTubeProvider(
                         recentWatchIds = { youtubeInterests.recentWatchIds(5) },
-                        searchSeeds = { youtubeInterests.topSearchTerms(4) },
                         qualityCap = { playbackPrefs.qualityCap() },
                     ),
                 )

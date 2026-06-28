@@ -55,6 +55,13 @@ import kotlinx.coroutines.launch
 fun YouTubeTabScreen(
     registry: ProviderRegistry,
     onOpenTitle: (providerId: String, titleId: String) -> Unit,
+    // Search state is hoisted to DtApp scope so it survives the player route —
+    // without this, BACK from a searched video lands on the recommended grid
+    // instead of the search results you opened the video from.
+    query: String,
+    onQueryChange: (String) -> Unit,
+    results: List<SearchResult>?,
+    onResultsChange: (List<SearchResult>?) -> Unit,
 ) {
     val provider = remember { registry.all.firstOrNull { it.supportsYouTube } }
     if (provider == null) {
@@ -71,10 +78,8 @@ fun YouTubeTabScreen(
         return
     }
 
-    var query by remember { mutableStateOf("") }
     var editorOpen by remember { mutableStateOf(false) }
     var trending by remember { mutableStateOf<List<SearchResult>?>(null) }
-    var results by remember { mutableStateOf<List<SearchResult>?>(null) }
     var searching by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     var searchJob by remember { mutableStateOf<Job?>(null) }
@@ -117,7 +122,7 @@ fun YouTubeTabScreen(
     fun runSearch(q: String) {
         searchJob?.cancel()
         if (q.length < 2) {
-            results = null
+            onResultsChange(null)
             searching = false
             return
         }
@@ -125,7 +130,7 @@ fun YouTubeTabScreen(
         searchJob = scope.launch {
             delay(300)
             val out = runCatching { provider.search(q) }.getOrDefault(emptyList())
-            results = out
+            onResultsChange(out)
             searching = false
         }
     }
@@ -145,8 +150,8 @@ fun YouTubeTabScreen(
             )
             if (query.isNotBlank()) {
                 ClearButton(onClick = {
-                    query = ""
-                    results = null
+                    onQueryChange("")
+                    onResultsChange(null)
                     searching = false
                     searchJob?.cancel()
                 })
@@ -191,7 +196,7 @@ fun YouTubeTabScreen(
             initialQuery = query,
             onDismiss = { editorOpen = false },
             onSubmit = { text ->
-                query = text
+                onQueryChange(text)
                 editorOpen = false
                 rememberSearch(text)
                 runSearch(text)
