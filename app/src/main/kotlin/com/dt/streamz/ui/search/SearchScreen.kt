@@ -49,6 +49,7 @@ import com.dt.streamz.scraper.ProviderRegistry
 import kotlinx.coroutines.flow.flowOf
 import com.dt.streamz.ui.theme.focusGlow
 import com.dt.streamz.ui.onMenuKeyUp
+import com.dt.streamz.ui.pointerClickable
 import kotlinx.coroutines.launch
 
 @Composable
@@ -236,7 +237,8 @@ private fun RecentChip(label: String, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     Surface(
         onClick = onClick,
-        modifier = Modifier.onFocusChanged { focused = it.isFocused },
+        modifier = Modifier.onFocusChanged { focused = it.isFocused }
+            .pointerClickable(onClick),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = MaterialTheme.colorScheme.surface,
             focusedContainerColor = MaterialTheme.colorScheme.primary,
@@ -257,7 +259,8 @@ private fun SuggestionChip(label: String, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     Surface(
         onClick = onClick,
-        modifier = Modifier.onFocusChanged { focused = it.isFocused },
+        modifier = Modifier.onFocusChanged { focused = it.isFocused }
+            .pointerClickable(onClick),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
             focusedContainerColor = MaterialTheme.colorScheme.primary,
@@ -289,7 +292,8 @@ private fun SearchBarCard(
             .fillMaxWidth(0.5f)
             .height(44.dp)
             .focusRequester(focusRequester)
-            .onFocusChanged { focused = it.isFocused },
+            .onFocusChanged { focused = it.isFocused }
+            .pointerClickable(onClick),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = MaterialTheme.colorScheme.surface,
             focusedContainerColor = MaterialTheme.colorScheme.surface,
@@ -546,7 +550,8 @@ private fun KeyCell(
         modifier = modifier
             .height(44.dp)
             .let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
-            .onFocusChanged { focused = it.isFocused },
+            .onFocusChanged { focused = it.isFocused }
+            .pointerClickable(onClick),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
             focusedContainerColor = MaterialTheme.colorScheme.primary,
@@ -581,7 +586,8 @@ private fun PrimaryActionCell(
         onClick = { if (enabled) onClick() },
         modifier = modifier
             .height(50.dp)
-            .onFocusChanged { focused = it.isFocused },
+            .onFocusChanged { focused = it.isFocused }
+            .pointerClickable { if (enabled) onClick() },
         colors = ClickableSurfaceDefaults.colors(
             containerColor = if (enabled) MaterialTheme.colorScheme.primary
                              else MaterialTheme.colorScheme.surfaceVariant,
@@ -658,7 +664,10 @@ private fun PosterCard(
         verticalArrangement = Arrangement.spacedBy(4.dp),
         modifier = Modifier
             .onFocusChanged { focused = it.isFocused }
-            .onMenuKeyUp(focused, onToggleFavorite),
+            .onMenuKeyUp(focused, onToggleFavorite)
+            // Air-mouse cursor click support — the TV Surface below only fires
+            // on D-pad CENTER, so search-result cards were dead to the mouse.
+            .pointerClickable(onClick),
     ) {
         Surface(
             onClick = onClick,

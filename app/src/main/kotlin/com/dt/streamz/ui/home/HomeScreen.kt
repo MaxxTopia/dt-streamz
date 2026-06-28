@@ -52,6 +52,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.flowOf
 import com.dt.streamz.ui.theme.focusGlow
 import com.dt.streamz.ui.onMenuKeyUp
+import com.dt.streamz.ui.pointerClickable
 import kotlinx.coroutines.launch
 
 @Composable
@@ -278,7 +279,8 @@ private fun HomeHero(
         modifier = Modifier
             .fillMaxWidth()
             .height(250.dp)
-            .onFocusChanged { focused = it.isFocused },
+            .onFocusChanged { focused = it.isFocused }
+            .pointerClickable { onOpenTitle(item.providerId, item.id) },
         colors = ClickableSurfaceDefaults.colors(
             containerColor = Color.Transparent,
             focusedContainerColor = Color.Transparent,
@@ -525,7 +527,8 @@ private fun ContinueCard(
         modifier = Modifier
             .width(168.dp)
             .onFocusChanged { focused = it.isFocused }
-            .onMenuKeyUp(focused, onRequestRemove),
+            .onMenuKeyUp(focused, onRequestRemove)
+            .pointerClickable(onClick),
     ) {
         Surface(
             onClick = onClick,
@@ -678,7 +681,8 @@ private fun RandomPickCard(
             .width(232.dp)
             .height(120.dp)
             .onFocusChanged { focused = it.isFocused }
-            .onMenuKeyUp(focused) { kind = kind.next() },
+            .onMenuKeyUp(focused) { kind = kind.next() }
+            .pointerClickable { pickRandom() },
         shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(14.dp)),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = MaterialTheme.colorScheme.surface,
@@ -719,7 +723,8 @@ internal fun PosterCard(
         modifier = Modifier
             .width(132.dp)
             .onFocusChanged { focused = it.isFocused }
-            .onMenuKeyUp(focused, onToggleFavorite),
+            .onMenuKeyUp(focused, onToggleFavorite)
+            .pointerClickable(onClick),
     ) {
         Surface(
             onClick = onClick,

@@ -43,6 +43,7 @@ import com.dt.streamz.data.Episode
 import com.dt.streamz.data.TitleDetails
 import com.dt.streamz.data.WatchEntry
 import com.dt.streamz.scraper.ProviderRegistry
+import com.dt.streamz.ui.pointerClickable
 import kotlinx.coroutines.flow.flowOf
 
 @Composable
@@ -272,7 +273,8 @@ private fun PrimaryPlayButton(label: String, onClick: () -> Unit) {
     androidx.compose.runtime.LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
     Surface(
         onClick = onClick,
-        modifier = Modifier.focusRequester(focus).onFocusChanged { focused = it.isFocused },
+        modifier = Modifier.focusRequester(focus).onFocusChanged { focused = it.isFocused }
+            .pointerClickable(onClick),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = MaterialTheme.colorScheme.primary,
             focusedContainerColor = MaterialTheme.colorScheme.primary,
@@ -309,7 +311,8 @@ private fun ResumeButton(resume: ResumeInfo, onClick: () -> Unit) {
     }
     Surface(
         onClick = onClick,
-        modifier = Modifier.focusRequester(resumeFocus).onFocusChanged { focused = it.isFocused },
+        modifier = Modifier.focusRequester(resumeFocus).onFocusChanged { focused = it.isFocused }
+            .pointerClickable(onClick),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = MaterialTheme.colorScheme.primary,
             focusedContainerColor = MaterialTheme.colorScheme.primary,
@@ -427,7 +430,8 @@ private fun EpisodeSquare(ep: Episode, watched: Boolean, onPlay: (Episode) -> Un
         modifier = Modifier
             .fillMaxWidth()
             .height(44.dp)
-            .onFocusChanged { focused = it.isFocused },
+            .onFocusChanged { focused = it.isFocused }
+            .pointerClickable { onPlay(ep) },
         colors = ClickableSurfaceDefaults.colors(
             containerColor = baseColor,
             focusedContainerColor = focusColor,
@@ -461,7 +465,8 @@ private fun EpisodeRow(ep: Episode, watched: Boolean, onPlay: (Episode) -> Unit)
         onClick = { onPlay(ep) },
         modifier = Modifier
             .fillMaxWidth()
-            .onFocusChanged { focused = it.isFocused },
+            .onFocusChanged { focused = it.isFocused }
+            .pointerClickable { onPlay(ep) },
         colors = ClickableSurfaceDefaults.colors(
             containerColor = MaterialTheme.colorScheme.surface,
             focusedContainerColor = MaterialTheme.colorScheme.primary,

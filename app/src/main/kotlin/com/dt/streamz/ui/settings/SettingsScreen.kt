@@ -33,6 +33,7 @@ import com.dt.streamz.BuildConfig
 import com.dt.streamz.DtApplication
 import com.dt.streamz.adblock.HostBlocker
 import com.dt.streamz.diag.DebugLog
+import com.dt.streamz.ui.pointerClickable
 import com.dt.streamz.updater.ApkInstaller
 import com.dt.streamz.updater.UpdateChecker
 import kotlinx.coroutines.launch
@@ -409,7 +410,8 @@ private fun SettingRow(item: SettingItem) {
             onClick = { item.action?.invoke() },
             modifier = Modifier
                 .fillMaxWidth()
-                .onFocusChanged { focused = it.isFocused },
+                .onFocusChanged { focused = it.isFocused }
+                .pointerClickable { item.action?.invoke() },
             colors = ClickableSurfaceDefaults.colors(
                 containerColor = MaterialTheme.colorScheme.surface,
                 focusedContainerColor = MaterialTheme.colorScheme.primary,

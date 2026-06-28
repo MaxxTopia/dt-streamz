@@ -31,6 +31,7 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.dt.streamz.data.StreamKind
 import com.dt.streamz.data.StreamSource
+import com.dt.streamz.ui.pointerClickable
 
 @Composable
 fun SourcePickerScreen(
@@ -81,7 +82,8 @@ private fun SourceRow(
         onClick = onClick,
         modifier = modifier
             .fillMaxWidth()
-            .onFocusChanged { focused = it.isFocused },
+            .onFocusChanged { focused = it.isFocused }
+            .pointerClickable(onClick),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = MaterialTheme.colorScheme.surface,
             focusedContainerColor = MaterialTheme.colorScheme.primary,
