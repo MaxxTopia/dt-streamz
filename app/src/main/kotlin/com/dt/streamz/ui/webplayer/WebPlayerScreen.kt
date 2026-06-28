@@ -1314,6 +1314,12 @@ private class FullscreenChromeClient(
             cb.onCustomViewHidden()
             return
         }
+        // Diagnostic marker for the "D-pad does nothing during anime playback"
+        // report: when the embed enters HTML5 fullscreen the WebView is hidden
+        // and the video custom view takes the remote's keys, so our D-pad key
+        // listener (on the now-hidden WebView) never fires. If this line shows
+        // up in the debug log right before the D-pad goes dead, that's the cause.
+        DebugLog.i(TAG, "fullscreen ENTER — embed took a custom view; d-pad now routes to the video surface, not our key listener")
         customView = view
         callback = cb
         getWebView()?.visibility = View.GONE
@@ -1341,6 +1347,7 @@ private class FullscreenChromeClient(
 
     override fun onHideCustomView() {
         val view = customView ?: return
+        DebugLog.i(TAG, "fullscreen EXIT — WebView visible again, d-pad listener restored")
         val activity = getActivity()
         (view.parent as? ViewGroup)?.removeView(view)
         getWebView()?.let {
