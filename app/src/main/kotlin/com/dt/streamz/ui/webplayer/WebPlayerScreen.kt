@@ -519,12 +519,12 @@ fun WebPlayerScreen(
         webViewRef?.requestFocus()
     }
 
-    // D-pad seek policy. Cross-origin embeds (anime/movies): Left/Right pass
-    // straight through so a single press seeks via the embed's own player —
-    // the native feel the site provides. Our YouTube wrapper has no native
-    // seek bar, so there a SINGLE Left/Right is swallowed (avoids accidental
-    // jumps while moving toward the gear/volume) and a DOUBLE-tap within
-    // DPAD_DOUBLE_MS drives a ±10s seek through the IFrame API.
+    // D-pad seek policy. Cross-origin embeds (anime/movies): Left/Right are
+    // swallowed so the embed never seeks on them — the user drives the
+    // player's own on-screen controls with the remote's air-mouse (hover +
+    // OK). Our YouTube wrapper has no reachable native controls, so there a
+    // SINGLE Left/Right is swallowed (avoids accidental jumps) and a DOUBLE-tap
+    // within DPAD_DOUBLE_MS drives a ±10s seek through the IFrame API.
     val dpadState = remember { DpadSeekState() }
     val dpadListener = remember {
         android.view.View.OnKeyListener { _, keyCode, event ->
@@ -581,12 +581,15 @@ fun WebPlayerScreen(
             val isLR = keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT ||
                 keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT
             if (!isLR) return@OnKeyListener false // up/down pass through
-            // Cross-origin embeds (anime/movies): let Left/Right fall straight
-            // through to the embed's OWN player so a SINGLE press seeks the way
-            // the site natively handles it. The double-press guard only applies
-            // to our YouTube wrapper, where a stray single press would fire a
-            // 10s IFrame-API jump with no native seek-bar feel to soften it.
-            if (!ytEmbedActive.value) return@OnKeyListener false
+            // Cross-origin embeds (anime/movies): SWALLOW Left/Right so the
+            // embed's player never seeks on them. These players bind arrows to
+            // +-seek, which the user doesn't want — they operate the player's
+            // own on-screen buttons with the remote's air-mouse (hover + OK to
+            // click; the cursor is left enabled over cross-origin embeds for
+            // exactly this). A stray D-pad arrow should never jump the video.
+            // (Our YouTube wrapper has no reachable native controls, so it
+            // keeps the double-press +-10s seek through the IFrame API.)
+            if (!ytEmbedActive.value) return@OnKeyListener true
             if (event.action != android.view.KeyEvent.ACTION_DOWN) return@OnKeyListener true
             if (event.repeatCount > 0) return@OnKeyListener true // ignore key-repeat
             val dir = if (keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT) 1 else -1
