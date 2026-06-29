@@ -164,6 +164,11 @@ fun WebPlayerScreen(
     // Shown as a last-resort "Choose server" action on the failure overlay
     // when every ranked mirror failed. Null hides it (single source / YouTube).
     onPickServer: (() -> Unit)? = null,
+    // Re-opens the Sub/Dub picker from the in-player control bar (D-pad UP).
+    // Non-null only when this title actually has a Sub *and* a Dub variant, so
+    // a user who started in the wrong audio can switch mid-watch instead of
+    // being locked in by the remembered audio preference. Null hides it.
+    onSwitchAudio: (() -> Unit)? = null,
     onExit: () -> Unit = {},
 ) {
     val ctx = LocalContext.current
@@ -514,12 +519,12 @@ fun WebPlayerScreen(
         webViewRef?.requestFocus()
     }
 
-    // D-pad seek policy (the user's "double-press to seek"): a SINGLE Left/
-    // Right is swallowed so you don't seek by accident while moving toward the
-    // gear/volume; a DOUBLE-tap within DPAD_DOUBLE_MS seeks ±10s. On our own
-    // YouTube wrapper (same-origin) we drive the seek through the IFrame API;
-    // on a cross-origin embed we can't reach its player, so the second tap is
-    // passed through to let the embed perform its own seek.
+    // D-pad seek policy. Cross-origin embeds (anime/movies): Left/Right pass
+    // straight through so a single press seeks via the embed's own player —
+    // the native feel the site provides. Our YouTube wrapper has no native
+    // seek bar, so there a SINGLE Left/Right is swallowed (avoids accidental
+    // jumps while moving toward the gear/volume) and a DOUBLE-tap within
+    // DPAD_DOUBLE_MS drives a ±10s seek through the IFrame API.
     val dpadState = remember { DpadSeekState() }
     val dpadListener = remember {
         android.view.View.OnKeyListener { _, keyCode, event ->
@@ -576,6 +581,12 @@ fun WebPlayerScreen(
             val isLR = keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT ||
                 keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT
             if (!isLR) return@OnKeyListener false // up/down pass through
+            // Cross-origin embeds (anime/movies): let Left/Right fall straight
+            // through to the embed's OWN player so a SINGLE press seeks the way
+            // the site natively handles it. The double-press guard only applies
+            // to our YouTube wrapper, where a stray single press would fire a
+            // 10s IFrame-API jump with no native seek-bar feel to soften it.
+            if (!ytEmbedActive.value) return@OnKeyListener false
             if (event.action != android.view.KeyEvent.ACTION_DOWN) return@OnKeyListener true
             if (event.repeatCount > 0) return@OnKeyListener true // ignore key-repeat
             val dir = if (keyCode == android.view.KeyEvent.KEYCODE_DPAD_RIGHT) 1 else -1
@@ -585,12 +596,8 @@ fun WebPlayerScreen(
             dpadState.lastTime = now
             if (!isDouble) return@OnKeyListener true // single tap: swallow
             dpadState.lastKey = 0 // consume the pair so a 3rd tap starts fresh
-            if (ytEmbedActive.value) {
-                webViewRef?.evaluateJavascript("ytSeek(${dir * 10});", null)
-                true
-            } else {
-                false // cross-origin: let this 2nd tap reach the embed
-            }
+            webViewRef?.evaluateJavascript("ytSeek(${dir * 10});", null)
+            true
         }
     }
 
@@ -768,6 +775,12 @@ fun WebPlayerScreen(
             PlayerControlBar(
                 firstFocus = controlsFocus,
                 showNextPrev = showNextPrev,
+                onSwitchAudio = onSwitchAudio?.let {
+                    {
+                        controlsVisible = false
+                        it()
+                    }
+                },
                 onReconnect = {
                     // Escape hatch from an infinite buffer stall: reload the
                     // current mirror so its expired CDN token is re-minted.
@@ -943,6 +956,7 @@ private fun PlayerControlBar(
     onNext: () -> Unit,
     onBack: () -> Unit,
     onDismiss: () -> Unit,
+    onSwitchAudio: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -968,6 +982,9 @@ private fun PlayerControlBar(
         if (showNextPrev) {
             ControlButton("⏮  Prev", onClick = onPrev)
             ControlButton("Next  ▶|", onClick = onNext)
+        }
+        if (onSwitchAudio != null) {
+            ControlButton("Audio  (Sub/Dub)", onClick = onSwitchAudio)
         }
         ControlButton("⟵  Back", onClick = onBack)
     }

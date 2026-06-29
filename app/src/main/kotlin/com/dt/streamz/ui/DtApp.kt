@@ -550,6 +550,25 @@ fun DtApp() {
                             )
                         }
                     } else null,
+                    // Mid-watch Sub<->Dub switch from the control bar. Only when
+                    // this title actually has both a sub and a dub variant —
+                    // otherwise there's nothing to switch to. Re-opens the picker
+                    // (replacing the live player); the picker re-pushes the new
+                    // player, so BACK from it lands back on the picker.
+                    onSwitchAudio = run {
+                        val hasSub = r.allSources.any { (it.serverLabel ?: "").contains("sub", ignoreCase = true) }
+                        val hasDub = r.allSources.any { (it.serverLabel ?: "").contains("dub", ignoreCase = true) }
+                        if (hasSub && hasDub && r.providerId != "youtube") {
+                            {
+                                replaceTop(
+                                    Route.SourcePicker(
+                                        r.title, r.allSources, r.providerId,
+                                        r.titleId, r.episodeId, r.startPositionMs,
+                                    ),
+                                )
+                            }
+                        } else null
+                    },
                     onExit = { back() },
                 )
             }
