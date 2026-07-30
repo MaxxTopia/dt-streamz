@@ -648,7 +648,9 @@ private fun TabsDestination(
                     Tab(
                         selected = selected == section,
                         onFocus = { onSelect(section) },
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                        modifier = Modifier
+                            .padding(horizontal = 6.dp, vertical = 4.dp)
+                            .pointerClickable { onSelect(section) },
                     ) {
                         TabLabel(section = section, selected = selected == section)
                     }

@@ -2,7 +2,7 @@
 
 Scope: Android APK for VSeebox V3 (Android 11 TV, 64-bit ARM). Aggregates movie/anime streams + Twitch live (Twire-style, ad-free) + YouTube ad-free in one sideloaded app. Display name "viewmaxxing"; internal package + keystore + GitHub-update repo still keyed on `dt-streamz` / `com.dt.streamz` (don't rename — would break sign-in-place updates).
 
-> **CURRENT (2026-06) — supersedes the dated phase table below.** Live as of writing: v0.4.39 (versionCode 53; don't hardcode — check `app/build.gradle.kts`). Min SDK **26** / target+compile **35** (NOT the "30/34" below). Freshest detail: auto-memory `project_vseebox_apk_resume_2026_06_16` + `project_viewmaxxing_v0_4_3_resume`.
+> **CURRENT (2026-07-29) — supersedes the dated phase table below.** Release prepared: v0.4.49 (versionCode 63; don't hardcode — check `app/build.gradle.kts`). Min SDK **26** / target+compile **35** (NOT the "30/34" below). v0.4.49 restores physical-keyboard typing, Backspace, and Enter in the shared search editor while retaining the TV on-screen keyboard; it also adds explicit pointer clicks to the top tabs and YouTube search, clear, and video-card controls. Verified on the API-30 TV emulator with hardware-key injection, D-pad input, pointer-open, live suggestions, and real YouTube search results. Real-box behavior remains a human-only check.
 >
 > ### Build / run
 > - Build: `./gradlew :app:assembleDebug` (→ `app/build/outputs/apk/debug/app-debug.apk`, pkg `com.dt.streamz.debug`) or `:app:assembleRelease` (auto-signed via committed `keystore/dt-streamz.jks`).

@@ -31,7 +31,14 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.nativeKeyCode
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.utf16CodePoint
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -332,7 +339,9 @@ private fun SearchBarCard(
  * the IME entirely — same approach Netflix / Prime / YouTube TV use.
  *
  * Layout: A-Z grid (6 cols), 0-9 row, special row (space/del/clear),
- * action row (Search/Close). First letter cell auto-focuses.
+ * action row (Search/Close). First letter cell auto-focuses. Physical
+ * keyboard input is intercepted at the dialog root, so PC emulators can type
+ * without handing focus to the broken TV IME path.
  */
 @Composable
 internal fun SearchEditorDialog(
@@ -386,7 +395,35 @@ internal fun SearchEditorDialog(
                 .fillMaxWidth(0.82f)
                 .padding(16.dp)
                 .clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.surface),
+                .background(MaterialTheme.colorScheme.surface)
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) {
+                        return@onPreviewKeyEvent false
+                    }
+                    when (event.key.nativeKeyCode) {
+                        android.view.KeyEvent.KEYCODE_ENTER,
+                        android.view.KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+                            if (text.isNotBlank()) onSubmit(text.trim())
+                            true
+                        }
+                        android.view.KeyEvent.KEYCODE_DEL -> {
+                            text = text.dropLast(1)
+                            true
+                        }
+                        else -> {
+                            val codePoint = event.utf16CodePoint
+                            if (codePoint > 0 && !Character.isISOControl(codePoint)) {
+                                text = appendSearchText(
+                                    current = text,
+                                    addition = String(Character.toChars(codePoint)),
+                                )
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                    }
+                },
         ) {
             Column(
                 modifier = Modifier.padding(16.dp),
@@ -410,8 +447,10 @@ internal fun SearchEditorDialog(
                         contentAlignment = Alignment.CenterStart,
                     ) {
                         Text(
-                            text = if (text.isEmpty()) "type below…" else "$text|",
+                            text = if (text.isEmpty()) "Type here or use the keys below…" else "$text|",
                             style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                             color = if (text.isEmpty())
                                 MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                             else MaterialTheme.colorScheme.onSurface,
@@ -473,7 +512,7 @@ internal fun SearchEditorDialog(
                         row.forEach { ch ->
                             KeyCell(
                                 label = ch.toString(),
-                                onClick = { text = text + ch },
+                                onClick = { text = appendSearchText(text, ch.toString()) },
                                 focusRequester = if (rowIdx == 0 && ch == 'A') firstKeyFocus else null,
                                 modifier = Modifier.weight(1f),
                             )
@@ -492,7 +531,7 @@ internal fun SearchEditorDialog(
                     for (n in '0'..'9') {
                         KeyCell(
                             label = n.toString(),
-                            onClick = { text = text + n },
+                            onClick = { text = appendSearchText(text, n.toString()) },
                             modifier = Modifier.weight(1f),
                         )
                     }
@@ -504,7 +543,7 @@ internal fun SearchEditorDialog(
                 ) {
                     KeyCell(
                         label = "SPACE",
-                        onClick = { text = text + " " },
+                        onClick = { text = appendSearchText(text, " ") },
                         modifier = Modifier.weight(2f),
                     )
                     KeyCell(
@@ -520,7 +559,7 @@ internal fun SearchEditorDialog(
                 }
 
                 Text(
-                    text = "D-pad to move · OK to type · BACK to close · Search/Close are up top",
+                    text = "Keyboard: type, Backspace, Enter · Remote: D-pad + OK · BACK closes",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
                 )
@@ -528,6 +567,11 @@ internal fun SearchEditorDialog(
         }
     }
 }
+
+private const val MAX_SEARCH_QUERY_LENGTH = 160
+
+private fun appendSearchText(current: String, addition: String): String =
+    (current + addition).take(MAX_SEARCH_QUERY_LENGTH)
 
 private val LETTER_ROWS: List<List<Char>> = listOf(
     listOf('A', 'B', 'C', 'D', 'E', 'F'),

@@ -38,6 +38,7 @@ import com.dt.streamz.data.SearchResult
 import com.dt.streamz.scraper.BrowseCache
 import com.dt.streamz.scraper.Provider
 import com.dt.streamz.scraper.ProviderRegistry
+import com.dt.streamz.ui.pointerClickable
 import com.dt.streamz.ui.search.SearchEditorDialog
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -218,7 +219,8 @@ private fun YouTubeSearchBar(
         onClick = onClick,
         modifier = modifier
             .height(46.dp)
-            .onFocusChanged { focused = it.isFocused },
+            .onFocusChanged { focused = it.isFocused }
+            .pointerClickable(onClick),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = MaterialTheme.colorScheme.surface,
             focusedContainerColor = MaterialTheme.colorScheme.surface,
@@ -263,7 +265,8 @@ private fun ClearButton(onClick: () -> Unit) {
         onClick = onClick,
         modifier = Modifier
             .height(46.dp)
-            .onFocusChanged { focused = it.isFocused },
+            .onFocusChanged { focused = it.isFocused }
+            .pointerClickable(onClick),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = MaterialTheme.colorScheme.surface,
             focusedContainerColor = MaterialTheme.colorScheme.surface,
@@ -328,7 +331,8 @@ private fun VideoCard(
     Column(
         verticalArrangement = Arrangement.spacedBy(6.dp),
         modifier = Modifier
-            .onFocusChanged { focused = it.isFocused },
+            .onFocusChanged { focused = it.isFocused }
+            .pointerClickable(onClick),
     ) {
         Surface(
             onClick = onClick,
