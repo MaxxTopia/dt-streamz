@@ -81,3 +81,19 @@ to catch buffering; and confirm no popup or external window appears.
 - The physical box remains the release boundary for remote focus, actual audio
   output, DNS, and long-session buffering. No live APK publication was made
   from this local verification pass.
+
+## v0.4.66 live release checkpoint (2026-08-03)
+
+- The reviewed episode-title and playback-flow changes are committed as
+  `36b13ea`, pushed to `main`, and tagged `v0.4.66`.
+- The local release gate passed debug and release assembly, `lintDebug`,
+  `testDebugUnitTest`, and `git diff --cached --check`. The only build warning
+  remains the existing deprecated WebView `databaseEnabled` API.
+- GitHub Actions run `30861217260` completed successfully in 4m34s. The
+  non-draft, non-prerelease release contains the signed `dt-streamz.apk` asset:
+  `https://github.com/MaxxTopia/dt-streamz/releases/tag/v0.4.66`.
+- The APK is version `0.4.66` / versionCode `80`. The physical VSeeBox was not
+  directly ADB-connected during publication, so its updater or manual update
+  check remains the final device-side step. A previously installed debug
+  package may appear separately because the release package uses the non-debug
+  application ID.
