@@ -131,18 +131,17 @@ class TmdbProvider : Provider {
         fun src(label: String, url: String, referer: String) =
             StreamSource(url = url, kind = StreamKind.DirectEmbed, serverLabel = label,
                 headers = mapOf("Referer" to referer))
-        // vidlink (TMDb-native, proven on the box) leads. vidsrc.to is dead
-        // post-injunction; vidsrc.mov is the current live VidSrc mirror.
+        // vidlink (TMDb-native, proven on the box) leads. The old vidsrc.cc
+        // origin is dead; vidfast is the current clean PC mirror and
+        // vidsrc.mov remains the IMDB/TMDb fallback.
         return if (isMovie) listOf(
             src("vidlink", "https://vidlink.pro/movie/$tmdbId", "https://vidlink.pro/"),
-            src("vidsrc.cc", "https://vidsrc.cc/v2/embed/movie/$tmdbId", "https://vidsrc.cc/"),
+            src("vidfast", "https://vidfast.pro/movie/$tmdbId", "https://vidfast.pro/"),
             src("vidsrc.mov", "https://vidsrc.mov/embed/movie/$tmdbId", "https://vidsrc.mov/"),
-            src("multiembed", "https://multiembed.mov/?video_id=$tmdbId&tmdb=1", "https://multiembed.mov/"),
         ) else listOf(
             src("vidlink", "https://vidlink.pro/tv/$tmdbId/$season/$ep", "https://vidlink.pro/"),
-            src("vidsrc.cc", "https://vidsrc.cc/v2/embed/tv/$tmdbId/$season/$ep", "https://vidsrc.cc/"),
+            src("vidfast", "https://vidfast.pro/tv/$tmdbId/$season/$ep", "https://vidfast.pro/"),
             src("vidsrc.mov", "https://vidsrc.mov/embed/tv/$tmdbId/$season/$ep", "https://vidsrc.mov/"),
-            src("multiembed", "https://multiembed.mov/?video_id=$tmdbId&tmdb=1&s=$season&e=$ep", "https://multiembed.mov/"),
         )
     }
 

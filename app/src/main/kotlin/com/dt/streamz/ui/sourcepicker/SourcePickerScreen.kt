@@ -41,16 +41,40 @@ fun SourcePickerScreen(
 ) {
     val firstFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { firstFocus.requestFocus() } }
+    val hasAudioVariants = sources.any {
+        val label = it.serverLabel ?: ""
+        label.contains("sub", ignoreCase = true) || label.contains("dub", ignoreCase = true)
+    }
+    val hasDub = sources.any { (it.serverLabel ?: "").contains("dub", ignoreCase = true) }
+    // Keep English Dub at the first focus stop whenever a provider exposes
+    // language variants. This also covers the in-player audio switch route,
+    // which can open this screen directly instead of going through DtApp.
+    val displaySources = if (hasAudioVariants) {
+        sources.sortedWith(
+            compareByDescending<StreamSource> {
+                (it.serverLabel ?: "").contains("dub", ignoreCase = true)
+            }.thenBy { it.serverLabel ?: "" },
+        )
+    } else {
+        sources
+    }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(horizontal = 28.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text(
-            text = "Pick a source",
+            text = if (hasAudioVariants) "Choose audio" else "Pick a source",
             style = MaterialTheme.typography.headlineSmall,
             color = MaterialTheme.colorScheme.onBackground,
         )
+        if (hasDub) {
+            Text(
+                text = "English Dub available — listed first",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
         Text(
             text = title,
             style = MaterialTheme.typography.bodyMedium,
@@ -60,7 +84,7 @@ fun SourcePickerScreen(
             verticalArrangement = Arrangement.spacedBy(6.dp),
             modifier = Modifier.fillMaxSize(),
         ) {
-            itemsIndexed(sources, key = { _, s -> "${s.url}:${s.kind}" }) { index, source ->
+            itemsIndexed(displaySources, key = { _, s -> "${s.url}:${s.kind}" }) { index, source ->
                 SourceRow(
                     source = source,
                     modifier = if (index == 0) Modifier.focusRequester(firstFocus) else Modifier,

@@ -1147,7 +1147,10 @@ private fun WebView.configureForEmbedPlayback() {
         mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         userAgentString = DESKTOP_UA
         javaScriptCanOpenWindowsAutomatically = false
-        setSupportMultipleWindows(true)
+        // Keep the single-window contract explicit. onCreateWindow also
+        // rejects attempts, but false prevents the WebView from allocating a
+        // secondary window before that callback is reached.
+        setSupportMultipleWindows(false)
     }
 }
 

@@ -89,16 +89,19 @@ class AniListProvider : Provider {
 
     override suspend fun streams(titleId: String, episode: Episode): List<StreamSource> {
         val ep = episode.id.removePrefix("ep:").toIntOrNull() ?: episode.number
-        // vidnest anime embed (AniList id). Offer Sub + Dub; the picker's
-        // remembered audio preference auto-picks after the first time.
+        // VidNest anime embed (AniList id). Keep language as an explicit,
+        // visible choice and put the English track first in the picker.
         fun src(label: String, type: String) = StreamSource(
             url = "https://vidnest.fun/anime/$titleId/$ep/$type",
             kind = StreamKind.DirectEmbed,
             serverLabel = label,
             headers = mapOf("Referer" to "https://vidnest.fun/"),
         )
-        DebugLog.i(TAG, "streams($titleId ep=$ep) -> vidnest sub+dub")
-        return listOf(src("anime · Sub", "sub"), src("anime · Dub", "dub"))
+        DebugLog.i(TAG, "streams($titleId ep=$ep) -> vidnest English Dub + original audio")
+        return listOf(
+            src("English Dub", "dub"),
+            src("Original Japanese Audio + Subtitles", "sub"),
+        )
     }
 
     // --- helpers ---

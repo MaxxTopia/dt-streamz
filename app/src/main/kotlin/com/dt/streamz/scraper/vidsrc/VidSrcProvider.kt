@@ -288,6 +288,9 @@ class VidSrcProvider(
         // cloudnestra.com lost all DNS (parked at njalla) — verified from a
         // clean network, so it was NOT a box-DNS issue. Replaced it with
         // vidfast.pro (TMDb-native, verified live) as the second TMDb mirror.
+        // Once a TMDb id is available, keep only the two current native
+        // players selectable. The older VidSrc.to/VidSrc.me pages can stall or
+        // challenge, so they must not be offered as a user-facing fallback.
         val tmdb = findTmdb(imdb)
         Log.i(TAG, "streams imdb=$imdb tv=$isTv s=$season e=$number tmdb=$tmdb")
 
@@ -302,30 +305,21 @@ class VidSrcProvider(
         if (tmdb != null) {
             val tid = tmdb.second
             if (isAnime) {
-                out += src("vidsrc.to (Anime/HD)", "https://vidsrc.to/embed/tv/$tid/$season/$number")
-                out += src("vidsrc.me (Sub/Dub)", "https://vidsrcme.ru/embed/tv?tmdb=$tid&season=$season&episode=$number")
-                out += src("2embed", "https://www.2embed.cc/embedtvfull/$imdb&s=$season&e=$number")
                 out += src("vidfast", "https://vidfast.pro/tv/$tid/$season/$number")
                 out += src("vidlink", "https://vidlink.pro/tv/$tid/$season/$number")
             } else if (isTv) {
                 out += src("vidfast (HD Series)", "https://vidfast.pro/tv/$tid/$season/$number")
                 out += src("vidlink", "https://vidlink.pro/tv/$tid/$season/$number")
-                out += src("vidsrc.to", "https://vidsrc.to/embed/tv/$tid/$season/$number")
-                out += src("vidsrc.me", "https://vidsrcme.ru/embed/tv?tmdb=$tid&season=$season&episode=$number")
             } else {
                 out += src("vidfast (HD Movies)", "https://vidfast.pro/movie/$tid")
                 out += src("vidlink", "https://vidlink.pro/movie/$tid")
-                out += src("vidsrc.to", "https://vidsrc.to/embed/movie/$tid")
-                out += src("vidsrc.me", "https://vidsrcme.ru/embed/movie?tmdb=$tid")
             }
         }
         // IMDB-accepting live mirrors
         if (isTv) {
             out += src("vidsrc.mov", "https://vidsrc.mov/embed/tv/$imdb/$season/$number")
-            out += src("multiembed", "https://multiembed.mov/?video_id=$imdb&tmdb=0&s=$season&e=$number")
         } else {
             out += src("vidsrc.mov", "https://vidsrc.mov/embed/movie/$imdb")
-            out += src("multiembed", "https://multiembed.mov/?video_id=$imdb&tmdb=0")
         }
         out
     }

@@ -114,14 +114,10 @@ fun DtApp() {
         mutableStateOf<List<com.dt.streamz.data.SearchResult>?>(null)
     }
 
-    // Remembered Sub/Dub choice. When a title offers both and the user has a
-    // saved preference, auto-pick it instead of showing the picker again.
-    val audioPrefs = remember { ctx.getSharedPreferences("ui", android.content.Context.MODE_PRIVATE) }
-    fun audioPref(): String? = audioPrefs.getString("audio_pref", null)
-    fun setAudioPref(v: String) { audioPrefs.edit().putString("audio_pref", v).apply() }
-
-    // Central source -> route: single source plays; a remembered Sub/Dub
-    // choice auto-picks its variant; otherwise show the picker. Empty toasts.
+    // Central source -> route: single source plays; explicit Sub/Dub variants
+    // always stay a user choice. Older builds stored a global audio preference
+    // and used it to skip this picker, which could hide English Dub forever
+    // after a user had once chosen Sub on a different title.
     fun routeForSources(
         label: String, sources: List<StreamSource>,
         pid: String?, tid: String?, eid: String?, startMs: Long = 0,
@@ -143,10 +139,6 @@ fun DtApp() {
         // show the Sub/Dub-style source picker for it.
         if (pid == "youtube") {
             return playRouteFor(sources.first(), label, sources, pid, tid, eid, startMs)
-        }
-        audioPref()?.let { pref ->
-            val match = sources.firstOrNull { (it.serverLabel ?: "").contains(pref, ignoreCase = true) }
-            if (match != null) return playRouteFor(match, label, sources, pid, tid, eid, startMs)
         }
         // Sub/Dub is a real user choice -> keep the picker. Otherwise the
         // multiple entries are just servers (movies/TV): auto-play the most
@@ -401,12 +393,6 @@ fun DtApp() {
                     title = r.title,
                     sources = r.sources,
                     onPick = { picked ->
-                        // Remember Sub/Dub so we can skip the picker next time.
-                        val lbl = picked.serverLabel ?: ""
-                        when {
-                            lbl.contains("dub", ignoreCase = true) -> setAudioPref("Dub")
-                            lbl.contains("sub", ignoreCase = true) -> setAudioPref("Sub")
-                        }
                         // PUSH the player on top of the picker so BACK from
                         // playback returns here to choose the other version
                         // (Sub <-> Dub) instead of replaying the same one.
