@@ -172,7 +172,11 @@ fun YouTubeTabScreen(
                     list.isEmpty() -> Hint(
                         "Trending unavailable on this network — open the search bar above to look up a video by name.",
                     )
-                    else -> ResultsGrid(list, onOpenTitle)
+                    else -> ResultsGrid(
+                        list,
+                        onOpenTitle,
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                    )
                 }
             }
             searching && results == null -> Hint("Searching YouTube for \"$query\"…")
@@ -186,7 +190,11 @@ fun YouTubeTabScreen(
                 when {
                     r == null -> Hint("Searching…")
                     r.isEmpty() -> Hint("No results.")
-                    else -> ResultsGrid(r, onOpenTitle)
+                    else -> ResultsGrid(
+                        r,
+                        onOpenTitle,
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                    )
                 }
             }
         }
@@ -306,12 +314,13 @@ private fun Hint(text: String) {
 private fun ResultsGrid(
     results: List<SearchResult>,
     onOpen: (String, String) -> Unit,
+    modifier: Modifier = Modifier.fillMaxWidth(),
 ) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(4),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
-        modifier = Modifier.fillMaxSize(),
+        modifier = modifier,
     ) {
         items(results, key = { "${it.providerId}:${it.id}" }) { result ->
             VideoCard(

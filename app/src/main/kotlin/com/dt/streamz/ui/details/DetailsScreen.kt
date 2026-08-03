@@ -42,6 +42,7 @@ import com.dt.streamz.DtApplication
 import com.dt.streamz.data.Episode
 import com.dt.streamz.data.TitleDetails
 import com.dt.streamz.data.WatchEntry
+import com.dt.streamz.data.displayLabel
 import com.dt.streamz.scraper.ProviderRegistry
 import com.dt.streamz.ui.pointerClickable
 import kotlinx.coroutines.flow.flowOf
@@ -490,7 +491,7 @@ private fun EpisodeSquare(ep: Episode, watched: Boolean, onPlay: (Episode) -> Un
         onClick = { onPlay(ep) },
         modifier = Modifier
             .fillMaxWidth()
-            .height(44.dp)
+            .height(68.dp)
             .onFocusChanged { focused = it.isFocused }
             .pointerClickable { onPlay(ep) },
         colors = ClickableSurfaceDefaults.colors(
@@ -509,12 +510,29 @@ private fun EpisodeSquare(ep: Episode, watched: Boolean, onPlay: (Episode) -> Un
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            Text(
-                text = ep.episodeNumber.toString(),
-                style = MaterialTheme.typography.titleSmall,
-                color = if (watched || focused) Color.White
-                else MaterialTheme.colorScheme.onSurface,
-            )
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+            ) {
+                Text(
+                    text = if (ep.season > 1 || ep.episodeNumber != ep.number) {
+                        "S${ep.season} E${ep.episodeNumber}"
+                    } else {
+                        "Ep ${ep.number}"
+                    },
+                    style = MaterialTheme.typography.titleSmall,
+                    color = if (watched || focused) Color.White
+                    else MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = ep.title?.takeIf { it.isNotBlank() } ?: "Episode ${ep.episodeNumber}",
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 2,
+                    color = if (watched || focused) Color.White.copy(alpha = 0.9f)
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+                )
+            }
         }
     }
 }
@@ -540,21 +558,7 @@ private fun EpisodeRow(ep: Episode, watched: Boolean, onPlay: (Episode) -> Unit)
                 .border(1.dp, if (focused) Color.White else Color.Transparent, RoundedCornerShape(6.dp)),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            val label = buildString {
-                if (ep.season > 1 || ep.episodeNumber != ep.number) {
-                    append("S")
-                    append(ep.season)
-                    append(" E")
-                    append(ep.episodeNumber)
-                } else {
-                    append("Ep ")
-                    append(ep.number)
-                }
-                if (!ep.title.isNullOrBlank()) {
-                    append(" · ")
-                    append(ep.title)
-                }
-            }
+            val label = ep.displayLabel()
             Text(
                 text = label,
                 style = MaterialTheme.typography.bodyMedium,
@@ -574,4 +578,3 @@ private fun EpisodeRow(ep: Episode, watched: Boolean, onPlay: (Episode) -> Unit)
         }
     }
 }
-

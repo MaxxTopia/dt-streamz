@@ -70,6 +70,9 @@ fun SearchScreen(
     scopeKey: String = "all",
     // Limits results to one kind (Anime tab -> anime only, etc.). Default = all.
     kindFilter: (MediaKind) -> Boolean = { true },
+    // Optional provider-aware guard. Category tabs use this to keep YouTube's
+    // loose video metadata out even when it is reported as Movie.
+    resultFilter: (SearchResult) -> Boolean = { kindFilter(it.kind) },
     placeholder: String = "🔍  Search anime, movies, TV…",
     // Shown when no search is active (Idle). The Anime/Movies/TV tabs pass their
     // browse rows here so the tab is "search bar on top, browse below" and only
@@ -78,7 +81,7 @@ fun SearchScreen(
 ) {
     val vm: SearchViewModel = viewModel(
         key = "search:$scopeKey",
-        factory = SearchViewModel.Factory(registry, kindFilter),
+        factory = SearchViewModel.Factory(registry, resultFilter),
     )
     val query by vm.query.collectAsState()
     val state by vm.state.collectAsState()
@@ -156,7 +159,7 @@ fun SearchScreen(
                 if (idleContent != null) {
                     // Content tab (Anime/Movies/TV): show the browse rows under
                     // the search bar until the user actually searches.
-                    Box(modifier = Modifier.fillMaxSize()) { idleContent() }
+                    Box(modifier = Modifier.fillMaxWidth().weight(1f)) { idleContent() }
                 } else {
                     Hint("Press OK on the search bar to type.")
                     if (recentSearches.isNotEmpty()) {
@@ -175,6 +178,7 @@ fun SearchScreen(
                 favoriteKeys = favoriteKeys,
                 onOpen = onOpenTitle,
                 onToggleFavorite = toggleFav,
+                modifier = Modifier.fillMaxWidth().weight(1f),
             )
         }
     }
@@ -358,8 +362,20 @@ internal fun SearchEditorDialog(
     recentSearches: List<String> = emptyList(),
 ) {
     var text by remember { mutableStateOf(initialQuery) }
+    // Opening an existing query is treated like selecting the text in a
+    // normal search field: the first new character starts a fresh search.
+    // Backspace/DEL still enters edit mode so users can refine the old query.
+    var replaceOnFirstInput by remember { mutableStateOf(initialQuery.isNotBlank()) }
     var suggestions by remember { mutableStateOf<List<String>>(emptyList()) }
     val firstKeyFocus = remember { FocusRequester() }
+
+    fun appendEditorText(addition: String) {
+        text = appendSearchText(
+            current = if (replaceOnFirstInput) "" else text,
+            addition = addition,
+        )
+        replaceOnFirstInput = false
+    }
 
     LaunchedEffect(Unit) {
         kotlinx.coroutines.delay(80)
@@ -408,15 +424,13 @@ internal fun SearchEditorDialog(
                         }
                         android.view.KeyEvent.KEYCODE_DEL -> {
                             text = text.dropLast(1)
+                            replaceOnFirstInput = false
                             true
                         }
                         else -> {
                             val codePoint = event.utf16CodePoint
                             if (codePoint > 0 && !Character.isISOControl(codePoint)) {
-                                text = appendSearchText(
-                                    current = text,
-                                    addition = String(Character.toChars(codePoint)),
-                                )
+                                appendEditorText(String(Character.toChars(codePoint)))
                                 true
                             } else {
                                 false
@@ -512,7 +526,7 @@ internal fun SearchEditorDialog(
                         row.forEach { ch ->
                             KeyCell(
                                 label = ch.toString(),
-                                onClick = { text = appendSearchText(text, ch.toString()) },
+                                onClick = { appendEditorText(ch.toString()) },
                                 focusRequester = if (rowIdx == 0 && ch == 'A') firstKeyFocus else null,
                                 modifier = Modifier.weight(1f),
                             )
@@ -531,7 +545,7 @@ internal fun SearchEditorDialog(
                     for (n in '0'..'9') {
                         KeyCell(
                             label = n.toString(),
-                            onClick = { text = appendSearchText(text, n.toString()) },
+                            onClick = { appendEditorText(n.toString()) },
                             modifier = Modifier.weight(1f),
                         )
                     }
@@ -543,17 +557,23 @@ internal fun SearchEditorDialog(
                 ) {
                     KeyCell(
                         label = "SPACE",
-                        onClick = { text = appendSearchText(text, " ") },
+                        onClick = { appendEditorText(" ") },
                         modifier = Modifier.weight(2f),
                     )
                     KeyCell(
                         label = "DEL",
-                        onClick = { text = text.dropLast(1) },
+                        onClick = {
+                            text = text.dropLast(1)
+                            replaceOnFirstInput = false
+                        },
                         modifier = Modifier.weight(1f),
                     )
                     KeyCell(
                         label = "CLEAR",
-                        onClick = { text = "" },
+                        onClick = {
+                            text = ""
+                            replaceOnFirstInput = false
+                        },
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -673,6 +693,7 @@ private fun ResultsGrid(
     favoriteKeys: Set<String>,
     onOpen: (String, String) -> Unit,
     onToggleFavorite: (SearchResult) -> Unit,
+    modifier: Modifier = Modifier.fillMaxWidth(),
 ) {
     if (results.isEmpty()) {
         Hint("No results.")
@@ -682,7 +703,7 @@ private fun ResultsGrid(
         columns = GridCells.Fixed(7),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
-        modifier = Modifier.fillMaxSize(),
+        modifier = modifier,
     ) {
         items(results, key = { "${it.providerId}:${it.id}" }) { result ->
             PosterCard(

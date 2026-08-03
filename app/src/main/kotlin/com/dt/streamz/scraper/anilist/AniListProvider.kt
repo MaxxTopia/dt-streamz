@@ -78,12 +78,20 @@ class AniListProvider : Provider {
             ?: media?.path("nextAiringEpisode")?.get("episode").int()?.let { it - 1 }
             ?: 12
         val n = epCount.coerceIn(1, 2000)
+        val streamingTitles = media?.get("streamingEpisodes") as? JsonArray
+        val episodeTitles = fetchTvMazeEpisodeTitles(title) + mapStreamingTitles(streamingTitles, n)
         DebugLog.i(TAG, "details($titleId) -> $n episodes")
         TitleDetails(
             providerId = id, id = titleId, title = title, poster = poster, backdrop = banner,
             synopsis = desc, year = media?.get("seasonYear").int(),
             kind = MediaKind.Anime,
-            episodes = (1..n).map { Episode(id = "ep:$it", number = it, title = "Episode $it") },
+            episodes = (1..n).map {
+                Episode(
+                    id = "ep:$it",
+                    number = it,
+                    title = episodeTitles[it] ?: "Episode $it",
+                )
+            },
         )
     }
 
@@ -122,6 +130,64 @@ class AniListProvider : Provider {
         val t = media["title"] as? JsonObject
         return t?.get("english")?.str() ?: t?.get("romaji")?.str() ?: "Anime"
     }
+
+    /**
+     * AniList exposes streaming episode names as strings such as
+     * "Episode 13 - You Aren't E-Rank, Are You?". Some seasonal entries use
+     * absolute episode numbers, so when the provider returns exactly the
+     * local season count we map them in numeric order to local 1..N.
+     */
+    private fun mapStreamingTitles(streaming: JsonArray?, episodeCount: Int): Map<Int, String> {
+        val parsed = streaming.orEmpty()
+            .mapNotNull { item ->
+                val raw = (item as? JsonObject)?.get("title").str()?.trim()
+                    ?: return@mapNotNull null
+                val number = Regex("(?:episode|ep\\.?)\\s*(\\d+)", RegexOption.IGNORE_CASE)
+                    .find(raw)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                val clean = raw.replace(
+                    Regex("^\\s*(?:episode|ep\\.?)\\s*\\d+\\s*(?:-|:|\\|)\\s*", RegexOption.IGNORE_CASE),
+                    "",
+                ).trim()
+                if (clean.isBlank()) null else number to clean
+            }
+            .sortedBy { it.first ?: 0 }
+
+        if (parsed.size == episodeCount) {
+            return parsed.mapIndexed { index, (_, title) -> index + 1 to title }.toMap()
+        }
+        return parsed.mapNotNull { (number, title) ->
+            number?.takeIf { it in 1..episodeCount }?.let { it to title }
+        }.toMap()
+    }
+
+    /** TVMaze fills the gaps for anime whose AniList stream metadata is empty. */
+    private fun fetchTvMazeEpisodeTitles(title: String): Map<Int, String> = runCatching {
+        val seasonHint = Regex("\\bseason\\s+(\\d+)", RegexOption.IGNORE_CASE)
+            .find(title)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1
+        val queryTitle = title.replace(
+            Regex("\\s+season\\s+\\d+.*$", RegexOption.IGNORE_CASE),
+            "",
+        ).trim()
+        val encoded = java.net.URLEncoder.encode(queryTitle, "UTF-8").replace("+", "%20")
+        val req = Request.Builder()
+            .url("https://api.tvmaze.com/singlesearch/shows?q=$encoded&embed=episodes")
+            .header("Accept", "application/json")
+            .header("User-Agent", Http.DESKTOP_UA)
+            .build()
+        Http.client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) return@use emptyMap()
+            val root = Http.json.parseToJsonElement(resp.body?.string() ?: return@use emptyMap()).jsonObject
+            val episodes = root.path("_embedded")?.get("episodes") as? JsonArray ?: return@use emptyMap()
+            episodes.mapNotNull { raw ->
+                val episode = raw as? JsonObject ?: return@mapNotNull null
+                val season = episode["season"].int() ?: return@mapNotNull null
+                val number = episode["number"].int() ?: return@mapNotNull null
+                val name = episode["name"].str()?.trim() ?: return@mapNotNull null
+                if (season == seasonHint) number to name else null
+            }.toMap()
+        }
+    }.onFailure { DebugLog.w(TAG, "TVMaze episode names unavailable: ${it.message}") }
+        .getOrDefault(emptyMap())
 
     private fun graphql(query: String, variables: String): JsonObject? = runCatching {
         val body = """{"query":${query.q()},"variables":$variables}"""
@@ -165,6 +231,6 @@ class AniListProvider : Provider {
         private const val SEARCH_Q =
             "query(\$s:String){ Page(perPage:24){ media(search:\$s, type:ANIME, sort:SEARCH_MATCH, isAdult:false){ $MEDIA_FIELDS } } }"
         private const val DETAILS_Q =
-            "query(\$id:Int){ Media(id:\$id, type:ANIME){ $MEDIA_FIELDS bannerImage description(asHtml:false) nextAiringEpisode{episode} } }"
+            "query(\$id:Int){ Media(id:\$id, type:ANIME){ $MEDIA_FIELDS bannerImage description(asHtml:false) nextAiringEpisode{episode} streamingEpisodes{title} } }"
     }
 }

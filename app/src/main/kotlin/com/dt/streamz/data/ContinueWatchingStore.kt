@@ -19,6 +19,9 @@ data class WatchEntry(
     val poster: String?,
     val episodeId: String,
     val episodeNumber: Int,
+    // Provider-supplied episode name. Older saved entries deserialize with
+    // null and retain the normal "Ep N" fallback.
+    val episodeTitle: String? = null,
     val timestamp: Long,
     // Stored as MediaKind.name (Anime / Movie / Series). Default null lets
     // entries persisted before this field shipped deserialize cleanly; they

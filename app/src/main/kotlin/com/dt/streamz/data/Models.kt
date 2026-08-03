@@ -58,6 +58,33 @@ data class Episode(
     }
 }
 
+/** Human-readable position + provider title for every episode surface. */
+fun Episode.displayLabel(): String {
+    val position = if (season > 1 || episodeNumber != number) {
+        "S$season E$episodeNumber"
+    } else {
+        "Episode $number"
+    }
+    val name = title?.trim().takeIf { !it.isNullOrBlank() }
+    return if (name == null || name.equals(position, ignoreCase = true) ||
+        name.equals("Episode $number", ignoreCase = true)
+    ) {
+        position
+    } else {
+        "$position · $name"
+    }
+}
+
+/** Continue-watching entries only store the flat episode number. */
+fun WatchEntry.displayEpisodeLabel(): String {
+    val name = episodeTitle?.trim().takeIf { !it.isNullOrBlank() }
+    return if (name == null || name.equals("Episode $episodeNumber", ignoreCase = true)) {
+        "Ep $episodeNumber"
+    } else {
+        "Ep $episodeNumber · $name"
+    }
+}
+
 
 data class StreamSource(
     val url: String,

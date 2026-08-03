@@ -43,6 +43,7 @@ import com.dt.streamz.data.FavoriteEntry
 import com.dt.streamz.data.FavoritesStore
 import com.dt.streamz.data.MediaKind
 import com.dt.streamz.data.SearchResult
+import com.dt.streamz.data.displayEpisodeLabel
 import com.dt.streamz.data.WatchEntry
 import com.dt.streamz.scraper.BrowseCache
 import com.dt.streamz.scraper.Provider
@@ -77,6 +78,9 @@ fun HomeScreen(
     // On-device "For You" recommender for this tab. Returns titles matched to
     // the user's learned interests; null or empty -> the row is hidden.
     forYou: (suspend () -> List<SearchResult>)? = null,
+    // Final display guard for personalized results. This stays at the UI
+    // boundary so stale/late provider results cannot cross category tabs.
+    forYouFilter: (SearchResult) -> Boolean = { true },
     // Curated TMDb-fed rows (Popular / Top Rated / Trending / …) for the Movies
     // and TV tabs so they're full browsable listings, not one mixed row.
     curatedRows: List<CuratedRow> = emptyList(),
@@ -142,6 +146,7 @@ fun HomeScreen(
         if (forYou != null) {
             ForYouRow(
                 load = forYou,
+                resultFilter = forYouFilter,
                 watchedKeys = watchedKeys,
                 favoriteKeys = favoriteKeys,
                 onOpenTitle = onOpenTitle,
@@ -216,7 +221,7 @@ fun HomeScreen(
             title = { androidx.compose.material3.Text("Remove from Continue Watching?") },
             text = {
                 androidx.compose.material3.Text(
-                    "${target.titleName} · Ep ${target.episodeNumber}",
+                    "${target.titleName} · ${target.displayEpisodeLabel()}",
                 )
             },
             confirmButton = {
@@ -396,6 +401,7 @@ private fun CuratedRowView(
 @Composable
 private fun ForYouRow(
     load: suspend () -> List<SearchResult>,
+    resultFilter: (SearchResult) -> Boolean,
     watchedKeys: Set<String>,
     favoriteKeys: Set<String>,
     onOpenTitle: (String, String) -> Unit,
@@ -408,7 +414,8 @@ private fun ForYouRow(
     LaunchedEffect(Unit) {
         results = runCatching { load() }.getOrDefault(emptyList())
     }
-    val list = results ?: return
+    val rawList = results ?: return
+    val list = rawList.filter(resultFilter)
     if (list.isEmpty()) return
     Text(
         text = "✨ For You",
@@ -477,7 +484,7 @@ internal fun ContinueOptionsDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 MenuButton(
-                    "▶  Resume · Ep ${entry.episodeNumber}",
+                    "▶  Resume · ${entry.displayEpisodeLabel()}",
                     onClick = onResume,
                     modifier = Modifier.focusRequester(firstFocus),
                 )
@@ -559,7 +566,7 @@ private fun ContinueCard(
                         .padding(horizontal = 6.dp, vertical = 3.dp),
                 ) {
                     Text(
-                        text = "▶ Ep ${entry.episodeNumber}",
+                        text = "▶ ${entry.displayEpisodeLabel()}",
                         style = MaterialTheme.typography.labelSmall,
                         color = Color.White,
                     )
@@ -797,4 +804,3 @@ internal fun PosterCard(
         )
     }
 }
-

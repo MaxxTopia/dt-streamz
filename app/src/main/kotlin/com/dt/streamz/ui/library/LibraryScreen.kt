@@ -39,6 +39,7 @@ import com.dt.streamz.data.ContinueWatchingStore
 import com.dt.streamz.data.FavoriteEntry
 import com.dt.streamz.data.FavoritesStore
 import com.dt.streamz.data.WatchEntry
+import com.dt.streamz.data.displayEpisodeLabel
 import com.dt.streamz.ui.onMenuKeyUp
 import kotlinx.coroutines.launch
 
@@ -123,7 +124,7 @@ fun LibraryScreen(
         AlertDialog(
             onDismissRequest = { pendingRemoval = null },
             title = { androidx.compose.material3.Text("Remove from Continue Watching?") },
-            text = { androidx.compose.material3.Text("${target.titleName} · Ep ${target.episodeNumber}") },
+            text = { androidx.compose.material3.Text("${target.titleName} · ${target.displayEpisodeLabel()}") },
             confirmButton = {
                 TextButton(onClick = {
                     onRemoveContinue(target); pendingRemoval = null
@@ -190,7 +191,7 @@ private fun ContinueTile(
                         .padding(horizontal = 6.dp, vertical = 3.dp),
                 ) {
                     Text(
-                        text = "▶ Ep ${entry.episodeNumber}",
+                        text = "▶ ${entry.displayEpisodeLabel()}",
                         style = MaterialTheme.typography.labelSmall,
                         color = Color.White,
                     )

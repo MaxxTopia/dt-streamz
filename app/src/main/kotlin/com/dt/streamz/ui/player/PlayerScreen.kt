@@ -309,6 +309,19 @@ fun PlayerScreen(
                     if (playerViewRef === view) playerViewRef = null
                 },
             )
+            if (title.isNotBlank()) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = Color.White,
+                    maxLines = 2,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(16.dp)
+                        .background(Color.Black.copy(alpha = 0.72f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                )
+            }
             // Discoverability hint: tell the user UP opens the options panel.
             if (hintVisible && !optionsOpen) {
                 Text(

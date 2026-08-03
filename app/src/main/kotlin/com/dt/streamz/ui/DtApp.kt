@@ -4,6 +4,7 @@ import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -34,11 +35,17 @@ import androidx.compose.ui.res.painterResource
 import com.dt.streamz.R
 import androidx.tv.material3.Text
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.nativeKeyCode
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import com.dt.streamz.DtApplication
 import com.dt.streamz.data.MediaKind
 import com.dt.streamz.data.StreamKind
 import com.dt.streamz.data.StreamSource
 import com.dt.streamz.data.WatchEntry
+import com.dt.streamz.data.displayLabel
 import com.dt.streamz.networkmonitor.NetworkIndicator
 import com.dt.streamz.scraper.Binge
 import com.dt.streamz.ui.brand.DtLogo
@@ -165,18 +172,20 @@ fun DtApp() {
         titleName: String, poster: String?, kindName: String?,
         replace: Boolean = false,
     ) {
-        Toast.makeText(ctx, "▶ Ep ${ep.number}", Toast.LENGTH_SHORT).show()
+        val episodeLabel = ep.displayLabel()
+        Toast.makeText(ctx, "▶ $episodeLabel", Toast.LENGTH_SHORT).show()
         app.interests.recordWatch(titleName)
         app.continueWatching.record(
             WatchEntry(
                 providerId = pid, titleId = tid, titleName = titleName, poster = poster,
                 episodeId = ep.id, episodeNumber = ep.number,
+                episodeTitle = ep.title,
                 timestamp = System.currentTimeMillis(), kind = kindName,
             ),
         )
         val sources = Binge.takeStreams(pid, tid, ep.id)
             ?: runCatching { registry.get(pid).streams(tid, ep) }.getOrDefault(emptyList())
-        val r = routeForSources("$titleName · Ep ${ep.number}", sources, pid, tid, ep.id) ?: return
+        val r = routeForSources("$titleName · $episodeLabel", sources, pid, tid, ep.id) ?: return
         if (replace) replaceTop(r) else push(r)
     }
 
@@ -329,14 +338,14 @@ fun DtApp() {
                         val ep = com.dt.streamz.data.Episode(
                             id = entry.episodeId,
                             number = entry.episodeNumber,
-                            title = null,
+                            title = entry.episodeTitle,
                         )
                         val resumeMs = resumeStartMs(entry, entry.episodeId)
                         runCatching {
                             registry.get(entry.providerId).streams(entry.titleId, ep)
                         }.onSuccess { sources ->
                             routeForSources(
-                                "${entry.titleName} · Ep ${entry.episodeNumber}", sources,
+                                "${entry.titleName} · ${ep.displayLabel()}", sources,
                                 entry.providerId, entry.titleId, entry.episodeId, resumeMs,
                             )?.let { push(it) }
                         }.onFailure {
@@ -366,6 +375,7 @@ fun DtApp() {
                                     poster = poster,
                                     episodeId = ep.id,
                                     episodeNumber = ep.number,
+                                    episodeTitle = ep.title,
                                     timestamp = System.currentTimeMillis(),
                                     kind = kind.name,
                                     positionMs = resumeMs,
@@ -375,7 +385,7 @@ fun DtApp() {
                             runCatching { registry.get(providerId).streams(titleId, ep) }
                                 .onSuccess { sources ->
                                     routeForSources(
-                                        "Ep ${ep.number}", sources,
+                                        "$titleName · ${ep.displayLabel()}", sources,
                                         providerId, titleId, ep.id, resumeMs,
                                     )?.let { push(it) }
                                 }
@@ -499,6 +509,7 @@ fun DtApp() {
                 BackHandler { back() }
                 WebPlayerScreen(
                     embedUrl = r.embedUrl,
+                    title = r.title,
                     headers = r.headers,
                     fallbacks = r.fallbacks,
                     // YouTube-style autoplay: resolve related videos for the
@@ -560,7 +571,7 @@ fun DtApp() {
             }
         }
     }
-    androidx.compose.foundation.layout.Row(
+    if (route !is Route.Tabs) androidx.compose.foundation.layout.Row(
         modifier = Modifier
             .align(Alignment.TopEnd)
             .statusBarsPadding()
@@ -623,19 +634,38 @@ private fun TabsDestination(
                     .size(34.dp)
                     .clip(RoundedCornerShape(8.dp)),
             )
-            // Small end inset so the rare network-ms pill (top-right) doesn't
-            // kiss the last tab. The DT watermark that used to crowd here is
-            // gone, so this can stay tight.
+            // Status chips stay off this row so every tab, including Settings,
+            // remains visible and fully clickable.
             TabRow(
                 selectedTabIndex = selected.ordinal,
-                modifier = Modifier.weight(1f).padding(end = 8.dp),
+                // Keep focus traversal inside the tab strip before it falls
+                // back to content. A scrolled grid must never land on a tab
+                // and silently change the section.
+                modifier = Modifier.weight(1f).padding(end = 8.dp).focusGroup(),
             ) {
                 Section.entries.forEach { section ->
                     Tab(
                         selected = selected == section,
-                        onFocus = { onSelect(section) },
+                        // TabRow's TV Tab requires an onFocus callback, but
+                        // activating from focus made a stray focus jump after
+                        // search/scroll switch sections unexpectedly.
+                        onFocus = {},
                         modifier = Modifier
                             .padding(horizontal = 6.dp, vertical = 4.dp)
+                            .onPreviewKeyEvent { event ->
+                                if (event.type == KeyEventType.KeyDown &&
+                                    event.key.nativeKeyCode in setOf(
+                                        android.view.KeyEvent.KEYCODE_ENTER,
+                                        android.view.KeyEvent.KEYCODE_NUMPAD_ENTER,
+                                        android.view.KeyEvent.KEYCODE_DPAD_CENTER,
+                                    )
+                                ) {
+                                    onSelect(section)
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
                             .pointerClickable { onSelect(section) },
                     ) {
                         TabLabel(section = section, selected = selected == section)
@@ -655,6 +685,7 @@ private fun TabsDestination(
                 showMustWatch = true,
                 showHero = true,
                 forYou = recommenderFor(app, { true }, { true }),
+                forYouFilter = { it.providerId != "youtube" },
             )
             // Each content tab gets its OWN search bar, scoped to that tab's
             // kind — searching Anime returns only anime, Movies only movies, so
@@ -665,19 +696,22 @@ private fun TabsDestination(
                 onOpenTitle = onOpenTitle,
                 scopeKey = "anime",
                 kindFilter = { it == MediaKind.Anime },
+                resultFilter = { it.kind == MediaKind.Anime && it.providerId != "youtube" },
                 placeholder = "🔍  Search anime…",
                 idleContent = {
                     HomeScreen(
                         title = "Anime",
                         registry = app.providerRegistry,
                         providerFilter = { it.supportsAnime },
+                        kindFilter = { it == MediaKind.Anime },
                         cwKind = MediaKind.Anime,
                         continueWatching = app.continueWatching,
                         favorites = app.favorites,
                         onOpenTitle = onOpenTitle,
                         onResume = onResume,
                         onRemoveContinue = onRemoveContinue,
-                        forYou = recommenderFor(app, { it.supportsAnime }, { true }),
+                        forYou = recommenderFor(app, { it.supportsAnime }, { it == MediaKind.Anime }),
+                        forYouFilter = { it.kind == MediaKind.Anime && it.providerId != "youtube" },
                     )
                 },
             )
@@ -687,6 +721,7 @@ private fun TabsDestination(
                 onOpenTitle = onOpenTitle,
                 scopeKey = "movies",
                 kindFilter = { it == MediaKind.Movie },
+                resultFilter = { it.kind == MediaKind.Movie && it.providerId != "youtube" },
                 placeholder = "🔍  Search movies…",
                 idleContent = {
                     HomeScreen(
@@ -702,6 +737,7 @@ private fun TabsDestination(
                         onRemoveContinue = onRemoveContinue,
                         // Curated TMDb rows replace the single mixed Must-Watch row.
                         forYou = recommenderFor(app, { it.supportsMovies }, { it == MediaKind.Movie }),
+                        forYouFilter = { it.kind == MediaKind.Movie && it.providerId != "youtube" },
                         curatedRows = curatedRowsFor(app, tv = false),
                     )
                 },
@@ -712,6 +748,7 @@ private fun TabsDestination(
                 onOpenTitle = onOpenTitle,
                 scopeKey = "tv",
                 kindFilter = { it == MediaKind.Series },
+                resultFilter = { it.kind == MediaKind.Series && it.providerId != "youtube" },
                 placeholder = "🔍  Search TV shows…",
                 idleContent = {
                     HomeScreen(
@@ -726,6 +763,7 @@ private fun TabsDestination(
                         onResume = onResume,
                         onRemoveContinue = onRemoveContinue,
                         forYou = recommenderFor(app, { it.supportsMovies }, { it == MediaKind.Series }),
+                        forYouFilter = { it.kind == MediaKind.Series && it.providerId != "youtube" },
                         curatedRows = curatedRowsFor(app, tv = true),
                     )
                 },
@@ -924,20 +962,18 @@ private fun recommenderFor(
     providerFilter: (com.dt.streamz.scraper.Provider) -> Boolean,
     kindFilter: (MediaKind) -> Boolean,
 ): suspend () -> List<com.dt.streamz.data.SearchResult> = recommend@{
-    // tmdb has no real search() — it feeds the Must-Watch row only.
-    val provs = app.providerRegistry.all.filter(providerFilter).filter { it.id != "tmdb" }
+    // tmdb has no real search() — it feeds the Must-Watch row only. YouTube
+    // has its own tab and must never bleed into a catalog For You row; its
+    // loose video metadata can otherwise look like a movie to a category.
+    val provs = app.providerRegistry.all
+        .filter(providerFilter)
+        .filter { it.id != "tmdb" && it.id != "youtube" }
     if (provs.isEmpty()) return@recommend emptyList()
-    val ytProv = provs.firstOrNull { it.id == "youtube" }
-    val otherProvs = provs.filter { it.id != "youtube" }
     val terms = app.interests.topTerms(4)
-    // YouTube content (only present in the Home "For You" row) is sourced ONLY
-    // from YouTube-derived search terms, so a movie/show search can never
-    // surface a YouTube creator here. Movies/shows use the cross-app terms.
-    val ytTerms = app.youtubeInterests.topSearchTerms(4)
-    if (terms.isEmpty() && ytTerms.isEmpty()) return@recommend emptyList()
+    if (terms.isEmpty()) return@recommend emptyList()
     val out = LinkedHashMap<String, com.dt.streamz.data.SearchResult>()
     for (term in terms) {
-        for (p in otherProvs) {
+        for (p in provs) {
             val res = runCatching { p.search(term) }.getOrNull().orEmpty()
             for (r in res) {
                 if (!kindFilter(r.kind)) continue
@@ -948,28 +984,11 @@ private fun recommenderFor(
         }
         if (out.size >= 24) break
     }
-    if (ytProv != null && out.size < 24) {
-        for (term in ytTerms) {
-            val res = runCatching { ytProv.search(term) }.getOrNull().orEmpty()
-            for (r in res) {
-                if (!kindFilter(r.kind)) continue
-                out.putIfAbsent("${r.providerId}:${r.id}", r)
-                if (out.size >= 24) break
-            }
-            if (out.size >= 24) break
-        }
-    }
-    // Live-only rule for streamers. YouTube creators are only ever wanted in
-    // For You while they're actually broadcasting RIGHT NOW — never their old
-    // uploads/VODs (e.g. don't surface "RD On The Scene" videos unless he's
-    // live this exact moment). So every YouTube result is re-checked live-now
-    // and dropped unless it's a current broadcast — regardless of its (stale,
-    // VOD=false) search-time `isLive` flag.
-    //
     // For on-demand catalogs (movies / anime / TV), `isLive` only ever marks a
     // genuine livestream; those pass through, and any live-flagged one is
     // re-confirmed live-now so an ended broadcast doesn't linger. Everything
-    // non-live there passes straight through.
+    // non-live there passes straight through. YouTube is intentionally absent
+    // above because it has its own dedicated tab and recommendation surface.
     val provById = provs.associateBy { it.id }
     suspend fun liveNow(r: com.dt.streamz.data.SearchResult): Boolean =
         provById[r.providerId]

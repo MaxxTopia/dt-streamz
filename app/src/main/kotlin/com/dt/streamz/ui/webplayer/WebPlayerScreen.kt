@@ -144,6 +144,7 @@ private val TRANSPORT_ERROR_CODES = setOf(
 @Composable
 fun WebPlayerScreen(
     embedUrl: String,
+    title: String = "",
     headers: Map<String, String> = emptyMap(),
     fallbacks: List<StreamSource> = emptyList(),
     // Related-video resolver for YouTube autoplay. Given the current videoId,
@@ -650,6 +651,19 @@ fun WebPlayerScreen(
                                 blockedHosts.add(host)
                             }
                         },
+                        onAdGateDetected = { view ->
+                            DebugLog.w(TAG, "mirror returned an ad/verification page mirror=$mirrorIndex")
+                            view.stopLoading()
+                            DeadHostRegistry.markIfHost(activeUrl)
+                            reportMirror(activeUrl, success = false)
+                            if (mirrorIndex + 1 < totalMirrors) {
+                                mirrorIndex += 1
+                            } else {
+                                loadState = LoadState.Failed(
+                                    "This mirror returned an ad or verification page instead of video.",
+                                )
+                            }
+                        },
                         onEmbedBlocked = {
                             // YT IFrame API reported the uploader disabled
                             // embedding (error 101/150). Walk to the next
@@ -728,8 +742,22 @@ fun WebPlayerScreen(
             },
         )
 
-        // Mirror-walk indicator while auto-advancing — gives a brief
-        // "Trying mirror N of M" so the user knows the screen isn't dead.
+        // Keep the selected show and episode visible over the embedded player.
+        if (title.isNotBlank()) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelLarge,
+                color = Color.White,
+                maxLines = 2,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(start = 16.dp, top = if (mirrorIndex > 0) 64.dp else 16.dp)
+                    .background(Color.Black.copy(alpha = 0.72f), androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+            )
+        }
+
+        // Mirror-walk indicator while auto-advancing so the user knows the screen isn't dead.
         if (mirrorIndex > 0 && loadState is LoadState.Loading) {
             MirrorWalkChip(
                 modifier = Modifier.align(Alignment.TopStart).padding(16.dp),
@@ -745,7 +773,7 @@ fun WebPlayerScreen(
             val mirrorSuffix = if (totalMirrors > 1)
                 "\n\nTried ${totalMirrors} mirror" +
                     (if (totalMirrors == 1) "" else "s") +
-                    " — all unreachable."
+                    " — all unavailable or unusable."
             else ""
             val reason = baseReason + codeSuffix + mirrorSuffix +
                 if (blockedHosts.isEmpty()) ""
@@ -1094,7 +1122,9 @@ private fun ErrorOverlay(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.82f)),
+            // Never leave a failed embed/ad wall visible behind the error
+            // message. A failed mirror is a clean, opaque app state.
+            .background(Color.Black),
         contentAlignment = Alignment.Center,
     ) {
         Column(
@@ -1162,6 +1192,7 @@ private class EmbedWebViewClient(
     private val onMainFrameFinished: () -> Unit,
     private val onMainFrameError: (Int, String, String?) -> Unit,
     private val onResourceBlocked: (String) -> Unit,
+    private val onAdGateDetected: (WebView) -> Unit = {},
     private val onEmbedBlocked: () -> Unit = {},
     private val onVideoEnded: () -> Unit = {},
     // Best-effort "video ended" from a non-YouTube embed (postMessage hook).
@@ -1188,7 +1219,14 @@ private class EmbedWebViewClient(
         // Only the top document's onPageFinished fires with the WebView's own URL.
         if (url != null && url != "about:blank" && url == view.url) {
             DebugLog.i(TAG, "page-finish ${truncUrl(url)}")
-            onMainFrameFinished()
+            view.evaluateJavascript(AD_GATE_DETECT_JS) { result ->
+                if (result?.trim() == "true") {
+                    DebugLog.w(TAG, "ad/verification gate detected ${truncUrl(url)}")
+                    onAdGateDetected(view)
+                } else {
+                    onMainFrameFinished()
+                }
+            }
         }
         if (injectEndedHook) {
             view.evaluateJavascript(ENDED_HOOK_JS, null)
@@ -1500,7 +1538,7 @@ private val CDN_ALLOWLIST_SUFFIXES = setOf(
 
 private val ALLOWED_EMBED_DOMAINS = setOf(
     "vidsrc.to", "vidsrc.cc", "vidsrc.mov", "vidsrc.me", "vidsrc.xyz", "vidsrc.in", "vidsrc.pm", "vidsrc.net",
-    "vidlink.pro", "vidfast.pro", "multiembed.mov", "2embed.cc", "2embed.skin", "megacloud.tv",
+    "vidlink.pro", "vidfast.pro", "vidfast.vc", "multiembed.mov", "2embed.cc", "2embed.skin", "megacloud.tv",
     "animekai.to", "anikai.to", "gogoanime.by", "gogoanime.cl", "megavid.buzz", "youtube.com", "youtube-nocookie.com"
 )
 
@@ -1524,6 +1562,32 @@ private val ANTI_REDIRECT_JS = """
           target = target.parentNode;
         }
       }, true);
+    })();
+""".trimIndent()
+
+/**
+ * Mirrors sometimes return an ad/verification wall with HTTP 200, so WebView
+ * reports a successful page load even though there is no player. Detect the
+ * known gate language before marking the mirror usable; this keeps the wall
+ * from flashing behind the error UI or being mistaken for playback.
+ */
+private val AD_GATE_DETECT_JS = """
+    (function(){
+      var text = ((document.title || '') + ' ' + ((document.body && document.body.innerText) || '')).toLowerCase();
+      var markers = [
+        'enjoy ad-free access',
+        'generate your unlock code',
+        'unlockr',
+        'free 2-day trial',
+        'i want to continue with ads',
+        'continue with google',
+        'disable your ad blocker',
+        'adblock detected'
+      ];
+      for (var i = 0; i < markers.length; i++) {
+        if (text.indexOf(markers[i]) !== -1) return true;
+      }
+      return false;
     })();
 """.trimIndent()
 

@@ -36,3 +36,48 @@ to catch buffering; and confirm no popup or external window appears.
 - v0.4.65 is now published as the non-draft `dt-streamz.apk` GitHub release asset. The repository moved to `MaxxTopia/dt-streamz`; the old `dtman-gif/dt-streamz` updater API redirects to the same v0.4.65 release.
 - A live read-only check confirmed the VidNest Naruto Shippuden routes for AniList 1735 episode 1 return HTTP 200, and both current provider endpoints return encrypted source payloads for `dub` and `sub`. This is provider-route evidence, not physical-box playback proof.
 - Diggy-owned verification remains: install the rebuilt APK on the VSeeBox, open Naruto Shippuden, select `English Dub`, confirm English voices and duration, press the in-player audio switch, and confirm no popup or external window appears. Titles without an upstream English dub must remain honestly unavailable rather than being labeled dubbed.
+
+## Section and playback audit checkpoint (2026-08-03)
+
+- Search and scroll no longer activate a tab from incidental focus. Tabs require an explicit OK/Enter or pointer activation, and search grids keep their focus geometry inside the content area.
+- Movies, TV, and Anime search now apply both the catalog kind and a non-YouTube provider guard. Each section's For You row applies the same section-aware filter, while YouTube remains in its dedicated tab.
+- The search editor replaces the previous query on the first new input after reopening, so changing sections does not silently concatenate stale text.
+- The WebView accepts the current VidFast domain migration, detects known ad or verification gates, blocks the failed mirror, and continues through the ordered fallback list. Failure overlays are opaque so an ad page cannot remain visible behind an error message.
+- Emulator evidence covered Movies `venom` search and scroll, Anime `naruto` search, TV `office` search, global Search scroll, section For You rows, and Naruto Shippuden's English-Dub-first picker. Venom playback reached the VidFast player after VidLink was blank and displayed a real movie frame; no popup or ad page was visible in the successful path.
+- The reviewed tree passed debug and release assembly, `lintDebug`, `testDebugUnitTest` (the project currently has no unit-test sources), and `git diff --check`.
+- Remaining boundary: the physical VSeeBox remote, DNS, audio output, subtitles, long-session buffering, and every upstream mirror still require a human box smoke test. No live release was pushed from this audit pass.
+
+## Cross-surface playback audit checkpoint (2026-08-03)
+
+- The reviewed debug APK was installed on the API-30 `Television_1080p`
+  emulator after the full debug/release assembly, lint, and unit-test gate.
+- A fresh search for Naruto Shippuden opened the details view, then the audio
+  picker. `English Dub` was the first visible choice and the route was
+  `https://vidnest.fun/anime/1735/1/dub`; the original-audio/subtitle route was
+  also present.
+- The embedded VidNest player reported a 23:34 duration. After pressing Play,
+  the emulator UI reported 25 seconds of elapsed playback after the startup
+  wait. No ad/verification page, popup, second window, fatal exception, or app
+  ANR marker appeared in the smoke run.
+- The physical VSeeBox remains the release boundary for remote focus, actual
+  English audio output, DNS, long-session buffering, and non-emulator display
+  performance. The app's existing hardware-accelerated WebView, late playback
+  acceptance, host-blocker passthrough, and reconnect control remain in place;
+  no speculative renderer change was made without physical-box evidence.
+
+## Episode-title propagation checkpoint (2026-08-03)
+
+- AniList streaming episode names are now combined with a TVMaze fallback for
+  anime and series. Missing upstream names remain honest as `Episode N` rather
+  than blocking the details screen.
+- The title is carried through the episode list/grid, audio picker, player
+  overlay, Continue Watching, and Library labels. Saved watch entries preserve
+  the title while remaining compatible with older entries.
+- The rebuilt debug APK was installed on the API-30 TV emulator. Solo Leveling
+  showed `Episode 1 · I'm Used to It` and additional real episode names; the
+  audio picker listed `English Dub` first and the player overlay retained the
+  full show and episode title. The VidNest player reached 7 seconds of a
+  23:40 stream with controls visible.
+- The physical box remains the release boundary for remote focus, actual audio
+  output, DNS, and long-session buffering. No live APK publication was made
+  from this local verification pass.
