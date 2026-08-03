@@ -24,15 +24,15 @@ required before changing the box-proven default.
 
 ## Release boundary
 
-No APK release, commit, push, or deployment is performed by this repair. The
-physical VSeeBox smoke test remains user-owned: open a movie, a series episode,
-and an anime episode; confirm controls and duration; wait long enough to catch
-buffering; and confirm no popup or external window appears.
+The physical VSeeBox smoke test remains user-owned: open a movie, a series
+episode, and an anime episode; confirm controls and duration; wait long enough
+to catch buffering; and confirm no popup or external window appears.
 
 ## Audio-language repair checkpoint (2026-08-03)
 
 - AniList anime now exposes `English Dub` and `Original Japanese Audio + Subtitles` as explicit choices. The picker always presents English Dub first, including when opened from the in-player audio switch.
 - The old global `audio_pref` shortcut was removed from routing so a previous Sub selection cannot hide the English-Dub option on Naruto Shippuden or another anime.
-- Local verification passed before this release bump: debug and release APK assembly, `lintDebug`, `git diff --check`, and `testDebugUnitTest` (the project currently has no unit-test sources). This release is 0.4.65 / versionCode 79; the tag and live release still need verification.
+- Local verification passed before this release bump: debug and release APK assembly, `lintDebug`, `git diff --check`, and `testDebugUnitTest` (the project currently has no unit-test sources). This release is 0.4.65 / versionCode 79.
+- v0.4.65 is now published as the non-draft `dt-streamz.apk` GitHub release asset. The repository moved to `MaxxTopia/dt-streamz`; the old `dtman-gif/dt-streamz` updater API redirects to the same v0.4.65 release.
 - A live read-only check confirmed the VidNest Naruto Shippuden routes for AniList 1735 episode 1 return HTTP 200, and both current provider endpoints return encrypted source payloads for `dub` and `sub`. This is provider-route evidence, not physical-box playback proof.
 - Diggy-owned verification remains: install the rebuilt APK on the VSeeBox, open Naruto Shippuden, select `English Dub`, confirm English voices and duration, press the in-player audio switch, and confirm no popup or external window appears. Titles without an upstream English dub must remain honestly unavailable rather than being labeled dubbed.
