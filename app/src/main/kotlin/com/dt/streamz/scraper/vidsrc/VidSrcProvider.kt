@@ -300,20 +300,25 @@ class VidSrcProvider(
         if (tmdb != null) {
             val tid = tmdb.second
             if (isTv) {
-                out += src("vidlink", "https://vidlink.pro/tv/$tid/$season/$number")
+                out += src("vidsrc.to (Anime/HD)", "https://vidsrc.to/embed/tv/$tid/$season/$number")
+                out += src("vidsrc.me (Sub/Dub)", "https://vidsrcme.ru/embed/tv?tmdb=$tid&season=$season&episode=$number")
                 out += src("vidfast", "https://vidfast.pro/tv/$tid/$season/$number")
+                out += src("vidlink", "https://vidlink.pro/tv/$tid/$season/$number")
             } else {
-                out += src("vidlink", "https://vidlink.pro/movie/$tid")
+                out += src("vidsrc.to (Anime/HD)", "https://vidsrc.to/embed/movie/$tid")
+                out += src("vidsrc.me (Sub/Dub)", "https://vidsrcme.ru/embed/movie?tmdb=$tid")
                 out += src("vidfast", "https://vidfast.pro/movie/$tid")
+                out += src("vidlink", "https://vidlink.pro/movie/$tid")
             }
         }
-        // IMDB-accepting live mirrors (vidsrc.mov is the current live VidSrc
-        // mirror; multiembed independent).
+        // IMDB-accepting live mirrors
         if (isTv) {
             out += src("vidsrc.mov", "https://vidsrc.mov/embed/tv/$imdb/$season/$number")
+            out += src("2embed", "https://www.2embed.cc/embedtvfull/$imdb&s=$season&e=$number")
             out += src("multiembed", "https://multiembed.mov/?video_id=$imdb&tmdb=0&s=$season&e=$number")
         } else {
             out += src("vidsrc.mov", "https://vidsrc.mov/embed/movie/$imdb")
+            out += src("2embed", "https://www.2embed.cc/embed/$imdb")
             out += src("multiembed", "https://multiembed.mov/?video_id=$imdb&tmdb=0")
         }
         out
