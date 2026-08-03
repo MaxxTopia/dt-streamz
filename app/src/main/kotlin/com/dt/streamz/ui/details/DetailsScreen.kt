@@ -253,8 +253,14 @@ private fun Loaded(
                     if (resume != null) {
                         ResumeButton(resume, onClick = { onPlay(resume.episode) })
                     }
+                    val seasons = remember(details.episodes) { details.episodes.map { it.season }.distinct().sorted() }
+                    val episodeLabel = if (seasons.size > 1) {
+                        "Episodes (${details.episodes.size} across ${seasons.size} seasons)"
+                    } else {
+                        "Episodes (${details.episodes.size})"
+                    }
                     Text(
-                        text = "Episodes (${details.episodes.size})",
+                        text = episodeLabel,
                         style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
                     )
@@ -367,6 +373,47 @@ private fun ExpandableSynopsis(text: String) {
 }
 
 @Composable
+private fun SeasonChips(
+    seasons: List<Int>,
+    selectedSeason: Int,
+    onSelectSeason: (Int) -> Unit,
+) {
+    androidx.compose.foundation.lazy.LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+    ) {
+        items(seasons, key = { it }) { season ->
+            var focused by remember { mutableStateOf(false) }
+            val isSelected = season == selectedSeason
+            Surface(
+                onClick = { onSelectSeason(season) },
+                modifier = Modifier
+                    .onFocusChanged { focused = it.isFocused }
+                    .pointerClickable { onSelectSeason(season) },
+                colors = ClickableSurfaceDefaults.colors(
+                    containerColor = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
+                    focusedContainerColor = MaterialTheme.colorScheme.primary,
+                ),
+                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+            ) {
+                Text(
+                    text = "Season $season",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (isSelected || focused) Color.White else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier
+                        .border(
+                            width = if (focused) 2.dp else 0.dp,
+                            color = if (focused) Color.White else Color.Transparent,
+                            shape = RoundedCornerShape(8.dp),
+                        )
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun EpisodeList(
     episodes: List<Episode>,
     watchedNumbers: Set<Int>,
@@ -376,13 +423,27 @@ private fun EpisodeList(
         Text("No episodes found.", style = MaterialTheme.typography.bodyMedium)
         return
     }
-    // Long catalogs (Shippuuden: 499 eps) are unreadable as bars — switch
-    // to a dense numbered grid above a threshold. Bars still win below it
-    // because they show the episode title inline.
-    if (episodes.size <= 50) {
-        EpisodeBars(episodes, watchedNumbers, onPlay)
-    } else {
-        EpisodeGrid(episodes, watchedNumbers, onPlay)
+    val seasons = remember(episodes) { episodes.map { it.season }.distinct().sorted() }
+    var selectedSeason by remember(episodes) {
+        mutableStateOf(seasons.firstOrNull() ?: 1)
+    }
+    val currentSeasonEpisodes = remember(episodes, selectedSeason) {
+        if (seasons.size <= 1) episodes else episodes.filter { it.season == selectedSeason }
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        if (seasons.size > 1) {
+            SeasonChips(
+                seasons = seasons,
+                selectedSeason = selectedSeason,
+                onSelectSeason = { selectedSeason = it },
+            )
+        }
+        if (currentSeasonEpisodes.size <= 50) {
+            EpisodeBars(currentSeasonEpisodes, watchedNumbers, onPlay)
+        } else {
+            EpisodeGrid(currentSeasonEpisodes, watchedNumbers, onPlay)
+        }
     }
 }
 
@@ -396,7 +457,7 @@ private fun EpisodeBars(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
-        items(episodes, key = { "${it.number}:${it.id}" }) { ep ->
+        items(episodes, key = { "${it.season}:${it.episodeNumber}:${it.id}" }) { ep ->
             EpisodeRow(ep, watched = ep.number in watchedNumbers, onPlay = onPlay)
         }
     }
@@ -414,7 +475,7 @@ private fun EpisodeGrid(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
-        gridItems(episodes, key = { "${it.number}:${it.id}" }) { ep ->
+        gridItems(episodes, key = { "${it.season}:${it.episodeNumber}:${it.id}" }) { ep ->
             EpisodeSquare(ep, watched = ep.number in watchedNumbers, onPlay = onPlay)
         }
     }
@@ -449,7 +510,7 @@ private fun EpisodeSquare(ep: Episode, watched: Boolean, onPlay: (Episode) -> Un
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                text = ep.number.toString(),
+                text = ep.episodeNumber.toString(),
                 style = MaterialTheme.typography.titleSmall,
                 color = if (watched || focused) Color.White
                 else MaterialTheme.colorScheme.onSurface,
@@ -480,8 +541,15 @@ private fun EpisodeRow(ep: Episode, watched: Boolean, onPlay: (Episode) -> Unit)
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val label = buildString {
-                append("Ep ")
-                append(ep.number)
+                if (ep.season > 1 || ep.episodeNumber != ep.number) {
+                    append("S")
+                    append(ep.season)
+                    append(" E")
+                    append(ep.episodeNumber)
+                } else {
+                    append("Ep ")
+                    append(ep.number)
+                }
                 if (!ep.title.isNullOrBlank()) {
                     append(" · ")
                     append(ep.title)
@@ -506,3 +574,4 @@ private fun EpisodeRow(ep: Episode, watched: Boolean, onPlay: (Episode) -> Unit)
         }
     }
 }
+

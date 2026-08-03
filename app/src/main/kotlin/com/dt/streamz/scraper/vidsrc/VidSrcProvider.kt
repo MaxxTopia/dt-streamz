@@ -232,6 +232,8 @@ class VidSrcProvider(
                     number = absoluteEpisodeNumber(season, number, epArr),
                     title = epTitle,
                     runtimeSeconds = runtime?.times(60),
+                    season = season,
+                    episodeNumber = number,
                 )
             }
             .sortedBy { it.number }

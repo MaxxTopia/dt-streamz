@@ -34,7 +34,30 @@ data class Episode(
     val title: String?,
     val thumbnail: String? = null,
     val runtimeSeconds: Int? = null,
-)
+    val season: Int = parseSeasonFromId(id),
+    val episodeNumber: Int = parseEpisodeNumberFromId(id, number),
+) {
+    companion object {
+        fun parseSeasonFromId(id: String): Int {
+            val lower = id.lowercase()
+            if (lower.matches(Regex("s\\d+e\\d+.*"))) {
+                val s = lower.substringAfter('s').substringBefore('e').toIntOrNull()
+                if (s != null && s in 1..99) return s
+            }
+            return 1
+        }
+
+        fun parseEpisodeNumberFromId(id: String, fallbackNumber: Int): Int {
+            val lower = id.lowercase()
+            if (lower.matches(Regex("s\\d+e\\d+.*"))) {
+                val e = lower.substringAfter('e').toIntOrNull()
+                if (e != null && e in 1..999) return e
+            }
+            return fallbackNumber
+        }
+    }
+}
+
 
 data class StreamSource(
     val url: String,

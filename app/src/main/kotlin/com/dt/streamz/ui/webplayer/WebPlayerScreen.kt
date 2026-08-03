@@ -1146,8 +1146,8 @@ private fun WebView.configureForEmbedPlayback() {
         useWideViewPort = true
         mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         userAgentString = DESKTOP_UA
-        javaScriptCanOpenWindowsAutomatically = true
-        setSupportMultipleWindows(false)
+        javaScriptCanOpenWindowsAutomatically = false
+        setSupportMultipleWindows(true)
     }
 }
 
@@ -1172,6 +1172,7 @@ private class EmbedWebViewClient(
 
     override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
         super.onPageStarted(view, url, favicon)
+        view.evaluateJavascript(ANTI_REDIRECT_JS, null)
         if (url != null && url != "about:blank") {
             DebugLog.d(TAG, "page-start ${truncUrl(url)}")
             onMainFrameStarted(url)
@@ -1180,24 +1181,12 @@ private class EmbedWebViewClient(
 
     override fun onPageFinished(view: WebView, url: String?) {
         super.onPageFinished(view, url)
+        view.evaluateJavascript(ANTI_REDIRECT_JS, null)
         // Only the top document's onPageFinished fires with the WebView's own URL.
         if (url != null && url != "about:blank" && url == view.url) {
             DebugLog.i(TAG, "page-finish ${truncUrl(url)}")
             onMainFrameFinished()
         }
-        // NOTE: we deliberately do NOT intercept D-pad keys anymore. The
-        // embed players (vidnest / vidlink / YouTube) have their own on-screen
-        // control bars — play/pause, a volume control, a settings gear — that
-        // you reach by navigating with the remote. Hijacking arrows for
-        // ±10s seek trapped focus and made the gear/volume unreachable, so
-        // keys now pass straight through to the player's native controls.
-
-        // Best-effort auto-play-next: many embed players postMessage a
-        // player-event to the top window when the video ends. We can't read
-        // the cross-origin <video>, but we CAN catch that message. Conservative
-        // match (only clear "ended" signals) + a 60s arm window so it can't
-        // fire on an early ad/buffer event and skip mid-episode. If the embed
-        // doesn't emit anything, the manual Next button (DPAD UP) covers it.
         if (injectEndedHook) {
             view.evaluateJavascript(ENDED_HOOK_JS, null)
         }
@@ -1251,9 +1240,20 @@ private class EmbedWebViewClient(
             return true
         }
         if (scheme != "http" && scheme != "https") return true
-        // Let WebView handle navigations natively. Intercepting and calling
-        // view.loadUrl() hoists iframe targets into the main frame, which
-        // breaks nested embeds like vidsrc.to -> vsembed.ru -> cloudnestra.
+
+        // Intercept top-level main frame navigation hijacks (e.g. ad popups redirecting to investing pages)
+        if (request.isForMainFrame) {
+            val reqHost = url.host?.lowercase() ?: ""
+            val mainHost = mainFrameHost()
+            if (mainHost != null && reqHost.isNotBlank() && !shareEffectiveDomain(mainHost, reqHost)) {
+                val isAllowed = CDN_ALLOWLIST_SUFFIXES.any { reqHost == it || reqHost.endsWith(".$it") } ||
+                    ALLOWED_EMBED_DOMAINS.any { reqHost == it || reqHost.endsWith(".$it") }
+                if (!isAllowed) {
+                    DebugLog.w(TAG, "Blocked top-level ad redirect to $reqHost from $mainHost")
+                    return true
+                }
+            }
+        }
         return false
     }
 
@@ -1301,18 +1301,7 @@ private class EmbedWebViewClient(
 }
 
 /**
- * HTML5 fullscreen handler. The previous implementation just stored the
- * custom view without attaching it, which left the embed's `<video>`
- * reparented to an orphaned surface — the player thought it was
- * fullscreen, the WebView kept focus, and the activity ended up with no
- * way to recover (BACK never reached Compose). The Snowfall freeze that
- * needed a hard reboot was almost certainly this path.
- *
- * Correct behaviour:
- *   onShow  -> hide the WebView, attach `view` to the activity's content
- *              frame, set immersive system-UI flags
- *   onHide  -> reverse all of that, restore system-UI flags, return focus
- *              to the WebView
+ * HTML5 fullscreen handler + window creation suppressor.
  */
 private class FullscreenChromeClient(
     private val getActivity: () -> Activity?,
@@ -1321,6 +1310,16 @@ private class FullscreenChromeClient(
     private var customView: View? = null
     private var callback: CustomViewCallback? = null
     private var savedSystemUi: Int = 0
+
+    override fun onCreateWindow(
+        view: WebView?,
+        isDialog: Boolean,
+        isUserGesture: Boolean,
+        resultMsg: android.os.Message?,
+    ): Boolean {
+        DebugLog.w(TAG, "onCreateWindow suppressed (popup attempt blocked, gesture=$isUserGesture)")
+        return false
+    }
 
     override fun onShowCustomView(view: View, cb: CustomViewCallback) {
         if (customView != null) {
@@ -1495,6 +1494,35 @@ private val CDN_ALLOWLIST_SUFFIXES = setOf(
     "mixdrop.co",
     "upcloud.to",
 )
+
+private val ALLOWED_EMBED_DOMAINS = setOf(
+    "vidsrc.to", "vidsrc.cc", "vidsrc.mov", "vidsrc.me", "vidsrc.xyz", "vidsrc.in", "vidsrc.pm", "vidsrc.net",
+    "vidlink.pro", "vidfast.pro", "multiembed.mov", "2embed.cc", "2embed.skin", "megacloud.tv",
+    "animekai.to", "anikai.to", "gogoanime.by", "gogoanime.cl", "megavid.buzz", "youtube.com", "youtube-nocookie.com"
+)
+
+private val ANTI_REDIRECT_JS = """
+    (function(){
+      if (window.__dtAntiRedirect) return; window.__dtAntiRedirect = true;
+      try {
+        window.open = function() { console.log('[viewmaxxing] Blocked window.open popup'); return null; };
+      } catch (x) {}
+      try {
+        Object.defineProperty(window, 'onbeforeunload', { get: function(){ return null; }, set: function(){} });
+      } catch (x) {}
+      document.addEventListener('click', function(e) {
+        var target = e.target;
+        while (target && target !== document) {
+          if (target.tagName === 'A') {
+            if (target.getAttribute('target') === '_blank') {
+              target.removeAttribute('target');
+            }
+          }
+          target = target.parentNode;
+        }
+      }, true);
+    })();
+""".trimIndent()
 
 private const val TAG = "WebPlayer"
 private const val DESKTOP_UA =
