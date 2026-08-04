@@ -20,6 +20,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
@@ -27,6 +28,7 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.SurfaceDefaults
 import androidx.tv.material3.Tab
 import androidx.tv.material3.TabRow
+import androidx.tv.material3.TabRowDefaults
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -611,6 +613,10 @@ private fun TabsDestination(
 
     val tabTint = tabTintFor(selected)
     val bgColor = MaterialTheme.colorScheme.background
+    // Keep the content selection separate from the D-pad highlight. The
+    // highlight must follow the tab under the remote before OK is pressed,
+    // while content should still change only on an explicit activation.
+    var focusedTab by remember { mutableStateOf<Section?>(null) }
     val tintBrush = remember(tabTint, bgColor) {
         androidx.compose.ui.graphics.Brush.verticalGradient(
             0f to tabTint.copy(alpha = 0.28f),
@@ -642,16 +648,30 @@ private fun TabsDestination(
                 // back to content. A scrolled grid must never land on a tab
                 // and silently change the section.
                 modifier = Modifier.weight(1f).padding(end = 8.dp).focusGroup(),
+                indicator = { tabPositions, doesTabRowHaveFocus ->
+                    val indicatorSection = focusedTab ?: selected
+                    val indicatorIndex = indicatorSection.ordinal
+                    if (indicatorIndex in tabPositions.indices) {
+                        TabRowDefaults.PillIndicator(
+                            currentTabPosition = tabPositions[indicatorIndex],
+                            doesTabRowHaveFocus = doesTabRowHaveFocus,
+                        )
+                    }
+                },
             ) {
                 Section.entries.forEach { section ->
                     Tab(
                         selected = selected == section,
-                        // TabRow's TV Tab requires an onFocus callback, but
-                        // activating from focus made a stray focus jump after
-                        // search/scroll switch sections unexpectedly.
-                        onFocus = {},
+                        onFocus = { focusedTab = section },
                         modifier = Modifier
                             .padding(horizontal = 6.dp, vertical = 4.dp)
+                            .onFocusChanged { state ->
+                                if (state.isFocused) {
+                                    focusedTab = section
+                                } else if (focusedTab == section) {
+                                    focusedTab = null
+                                }
+                            }
                             .onPreviewKeyEvent { event ->
                                 if (event.type == KeyEventType.KeyDown &&
                                     event.key.nativeKeyCode in setOf(

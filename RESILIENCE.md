@@ -97,3 +97,16 @@ to catch buffering; and confirm no popup or external window appears.
   check remains the final device-side step. A previously installed debug
   package may appear separately because the release package uses the non-debug
   application ID.
+
+## Top-tab focus indicator checkpoint (2026-08-03)
+
+- The top tab strip now keeps content selection separate from remote focus.
+  Left/Right moves the focus highlight and the white pill follows the focused
+  tab; the section changes only after OK/Enter or pointer activation.
+- The custom indicator preserves the full tab-row geometry, including the
+  far-right Settings tab, and clears stale focus when the remote returns to
+  content. This avoids the old invisible-focus state without restoring the
+  accidental tab switches caused by scrolling.
+- API-30 `Television_1080p` emulator verification covered Home -> tab focus,
+  focus on Anime while Movies content remained active, OK selection into Movies,
+  and traversal through Settings. The release gate is pending for v0.4.67.
