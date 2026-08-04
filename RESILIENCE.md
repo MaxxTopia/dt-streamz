@@ -110,3 +110,18 @@ to catch buffering; and confirm no popup or external window appears.
 - API-30 `Television_1080p` emulator verification covered Home -> tab focus,
   focus on Anime while Movies content remained active, OK selection into Movies,
   and traversal through Settings. The release gate is pending for v0.4.67.
+
+## v0.4.67 live release checkpoint (2026-08-04)
+
+- The tab-focus repair is committed as `494b299`, pushed to `main`, and tagged
+  `v0.4.67`.
+- The release gate passed debug and release assembly, `lintDebug`,
+  `testDebugUnitTest`, and `git diff --check`. The existing deprecated WebView
+  `databaseEnabled` warning remains the only build warning.
+- GitHub Actions run `30880406830` completed successfully in 4m38s. The
+  non-draft, non-prerelease release contains `dt-streamz.apk` and its download
+  URL returned HTTP 200:
+  `https://github.com/MaxxTopia/dt-streamz/releases/tag/v0.4.67`.
+- The APK is version `0.4.67` / versionCode `81`. The physical VSeeBox was not
+  directly ADB-connected, so it must complete its normal updater or manual
+  install step before the fix is physically installed on that device.
