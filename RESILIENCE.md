@@ -125,3 +125,33 @@ to catch buffering; and confirm no popup or external window appears.
 - The APK is version `0.4.67` / versionCode `81`. The physical VSeeBox was not
   directly ADB-connected, so it must complete its normal updater or manual
   install step before the fix is physically installed on that device.
+
+## v0.4.68 playback-label and buffering release (2026-08-04)
+
+- Playback keeps the show and episode title for routing, watch history, and
+  episode navigation, but no longer renders that label over the native player
+  or the embedded WebView player. Common embed-host `You're Watching / title`
+  headers are also hidden after late provider re-renders using sparse delayed
+  checks; the repair is bounded so it does not continuously scan the player
+  during playback.
+- Native VOD playback now keeps a 30-second minimum / 180-second maximum
+  cushion and waits up to 8 seconds after a rebuffer before resuming. Segment
+  connections remain alive for short Wi-Fi dips with 15-second connect and
+  30-second read timeouts. Live playback keeps its separate low-latency buffer.
+- Local verification passed debug and release assembly, `lintDebug`,
+  `testDebugUnitTest` (no unit-test sources), and `git diff --check`. The API-30
+  TV emulator showed a real VidFast player frame with the provider title absent
+  from the rendered screen and accessibility tree; the physical box and a
+  long continuous playback soak remain the release boundary.
+- The change is committed as `c91c1a3`, pushed to `main`, and published as
+  `v0.4.68`. GitHub Actions run `30888511978` succeeded. The signed
+  `dt-streamz.apk` asset is live at
+  `https://github.com/MaxxTopia/dt-streamz/releases/tag/v0.4.68`, returned HTTP
+  200, and has SHA-256
+  `f90b3ad3ba964fe56b03682d81d38217030155fd89be973a3824012a5085b683`.
+- The default native YouTube choice remains `Smooth (<=720p, recommended)`;
+  it is a box-safe cap, not universal adaptive bitrate. Movie/anime embeds
+  choose quality upstream, so sustained throughput and low packet loss are
+  still required. If the physical box continues to buffer, test `Settings ->
+  Video quality -> Data saver`, then compare 5 GHz or Ethernet against the
+  current Wi-Fi path and record the exact title/server.
