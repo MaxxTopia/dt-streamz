@@ -742,21 +742,6 @@ fun WebPlayerScreen(
             },
         )
 
-        // Keep the selected show and episode visible over the embedded player.
-        if (title.isNotBlank()) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.labelLarge,
-                color = Color.White,
-                maxLines = 2,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(start = 16.dp, top = if (mirrorIndex > 0) 64.dp else 16.dp)
-                    .background(Color.Black.copy(alpha = 0.72f), androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-            )
-        }
-
         // Mirror-walk indicator while auto-advancing so the user knows the screen isn't dead.
         if (mirrorIndex > 0 && loadState is LoadState.Loading) {
             MirrorWalkChip(
@@ -1207,6 +1192,7 @@ private class EmbedWebViewClient(
     override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
         super.onPageStarted(view, url, favicon)
         view.evaluateJavascript(ANTI_REDIRECT_JS, null)
+        view.evaluateJavascript(HIDE_PLAYER_TITLE_JS, null)
         if (url != null && url != "about:blank") {
             DebugLog.d(TAG, "page-start ${truncUrl(url)}")
             onMainFrameStarted(url)
@@ -1216,6 +1202,7 @@ private class EmbedWebViewClient(
     override fun onPageFinished(view: WebView, url: String?) {
         super.onPageFinished(view, url)
         view.evaluateJavascript(ANTI_REDIRECT_JS, null)
+        view.evaluateJavascript(HIDE_PLAYER_TITLE_JS, null)
         // Only the top document's onPageFinished fires with the WebView's own URL.
         if (url != null && url != "about:blank" && url == view.url) {
             DebugLog.i(TAG, "page-finish ${truncUrl(url)}")
@@ -1562,6 +1549,50 @@ private val ANTI_REDIRECT_JS = """
           target = target.parentNode;
         }
       }, true);
+    })();
+""".trimIndent()
+
+/**
+ * Some embed hosts render their own "You're Watching / title" banner inside
+ * the WebView. The app already owns title presentation everywhere outside the
+ * player, so hide only a small, top-of-player element with that exact marker.
+ * A short retry window covers pages that add the header after the first load.
+ */
+private val HIDE_PLAYER_TITLE_JS = """
+    (function(){
+      if (window.__dtHidePlayerTitle) return;
+      window.__dtHidePlayerTitle = true;
+      function hideTitle() {
+        try {
+          var nodes = document.querySelectorAll('body *');
+          for (var i = 0; i < nodes.length; i++) {
+            var el = nodes[i];
+            var text = (el.innerText || '').replace(/\s+/g, ' ').trim();
+            if (!/^you'?re watching\b/i.test(text) || text.length > 220) continue;
+            var rect = el.getBoundingClientRect();
+            if (rect.top > 240 || rect.height > 160 || rect.width < 120) continue;
+            var target = el;
+            while (target.parentElement) {
+              var parent = target.parentElement;
+              var parentText = (parent.innerText || '').replace(/\s+/g, ' ').trim();
+              var parentRect = parent.getBoundingClientRect();
+              if (!/^you'?re watching\b/i.test(parentText) || parentText.length > 220 ||
+                  parentRect.top > 240 || parentRect.height > 160) break;
+              target = parent;
+            }
+            target.style.setProperty('display', 'none', 'important');
+            return;
+          }
+        } catch (e) {}
+      }
+      // Providers often replace their fetching shell with the real player
+      // controls well after the first page-finished callback. Use sparse
+      // retries instead of a permanent DOM poll so this cosmetic repair cannot
+      // become a source of playback jank on a low-power box.
+      var delays = [0, 1000, 2000, 4000, 8000, 16000, 32000, 64000];
+      for (var i = 0; i < delays.length; i++) {
+        setTimeout(hideTitle, delays[i]);
+      }
     })();
 """.trimIndent()
 

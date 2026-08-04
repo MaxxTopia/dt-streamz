@@ -164,15 +164,16 @@ fun PlayerScreen(
     val player = remember(url, effectiveAudioUrl) {
         // Deep buffers (VOD): YouTube here is a fixed-bitrate progressive stream
         // with no adaptive downshift, and googlevideo throttles the download —
-        // so we hold a big cushion (up to 2min, keep ≥25s ahead) to ride out the
-        // throttle/dips. Live uses a small start-gate so it starts promptly a
-        // few seconds behind the edge (paired with the live target offset below).
+        // so we hold a large cushion (up to 3min, keep ≥30s ahead) to ride out
+        // short Wi-Fi throughput dips. Live uses a small start-gate so it starts
+        // promptly a few seconds behind the edge (paired with the live target
+        // offset below).
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs = */ if (live) 8_000 else 25_000,
-                /* maxBufferMs = */ if (live) 50_000 else 120_000,
+                /* minBufferMs = */ if (live) 8_000 else 30_000,
+                /* maxBufferMs = */ if (live) 50_000 else 180_000,
                 /* bufferForPlaybackMs = */ if (live) 1_500 else 3_000,
-                /* bufferForPlaybackAfterRebufferMs = */ if (live) 2_000 else 5_000,
+                /* bufferForPlaybackAfterRebufferMs = */ if (live) 2_000 else 8_000,
             )
             .build()
         ExoPlayer.Builder(context)
@@ -309,19 +310,6 @@ fun PlayerScreen(
                     if (playerViewRef === view) playerViewRef = null
                 },
             )
-            if (title.isNotBlank()) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = Color.White,
-                    maxLines = 2,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(16.dp)
-                        .background(Color.Black.copy(alpha = 0.72f), RoundedCornerShape(8.dp))
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                )
-            }
             // Discoverability hint: tell the user UP opens the options panel.
             if (hintVisible && !optionsOpen) {
                 Text(
@@ -500,6 +488,12 @@ private fun buildMediaSource(
     audioDashManifest: String? = null,
 ): MediaSource {
     val factory = DefaultHttpDataSource.Factory()
+        // A weak or busy box connection can pause for several seconds without
+        // being genuinely dead. Keep the segment request alive so the larger
+        // VOD buffer can absorb the dip instead of turning it into a fatal
+        // playback error.
+        .setConnectTimeoutMs(15_000)
+        .setReadTimeoutMs(30_000)
         .setUserAgent(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
                 "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
