@@ -204,3 +204,28 @@ failure would require removing third-party embeds or adding server-side media
 fingerprinting; this release closes the reproduced identity collision and the
 known unsafe-content paths without claiming that uncontrolled upstream HTML is
 infallible.
+
+## v0.4.92 fail-closed release checkpoint (2026-08-08)
+
+- Release contents: the provider identity guard, strict Continue Watching
+  validation, always-on unsafe WebView boundary, and the adult-marked TMDb
+  rejection shipped as commit `eb13af1` / tag `v0.4.92`. No unrelated telemetry
+  worker or untracked workspace files were included.
+- Local gate: debug and release APK assembly, `lintDebug`,
+  `testDebugUnitTest`, and `git diff --cached --check` passed. The local
+  release metadata is version `0.4.92` / versionCode `106`; the only compiler
+  warning is the existing deprecated WebView `databaseEnabled` API.
+- Hosted gate: GitHub Actions run `31286780014` completed successfully. The
+  non-draft, non-prerelease release is live at
+  `https://github.com/MaxxTopia/dt-streamz/releases/tag/v0.4.92` and the
+  `dt-streamz.apk` asset returned HTTP 200 at
+  `https://github.com/MaxxTopia/dt-streamz/releases/download/v0.4.92/dt-streamz.apk`.
+- Device boundary: the physical VSeeBox has not been updated or tested from
+  this session. Diggy's final field check is to install v0.4.92, cold-launch
+  the app, select the existing Rick and Morty Continue Watching card, verify
+  the exact saved episode opens, and confirm that a provider failure now shows
+  a blocked/unavailable message instead of opening an unrelated player.
+- Next best move: after that test, record the exact device result, provider
+  mirror, and whether playback reached the selected episode. If a mirror is
+  still wrong, keep the entry blocked and capture the WebView log rather than
+  weakening the identity guard.
