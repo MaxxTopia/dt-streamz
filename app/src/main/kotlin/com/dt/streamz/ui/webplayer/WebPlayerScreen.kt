@@ -38,6 +38,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -147,6 +148,10 @@ fun WebPlayerScreen(
     title: String = "",
     headers: Map<String, String> = emptyMap(),
     fallbacks: List<StreamSource> = emptyList(),
+    // Some providers mark English captions DEFAULT even on their English Dub
+    // route. Apply this only to the selected source; the provider controls
+    // remain available so the user can turn captions back on.
+    captionsDefaultOn: Boolean = true,
     // Related-video resolver for YouTube autoplay. Given the current videoId,
     // returns related IDs (most-relevant first). Only used for `ytembed://`
     // sources; null disables cycling.
@@ -180,13 +185,14 @@ fun WebPlayerScreen(
 
     // Active mirror walks: 0 = original embedUrl, 1.. = fallbacks[i-1].
     var mirrorIndex by remember(embedUrl) { mutableStateOf(0) }
-    val activeSource = remember(embedUrl, mirrorIndex, fallbacks) {
-        if (mirrorIndex == 0) ActiveSource(embedUrl, headers)
+    val activeSource = remember(embedUrl, mirrorIndex, fallbacks, captionsDefaultOn) {
+        if (mirrorIndex == 0) ActiveSource(embedUrl, headers, captionsDefaultOn)
         else fallbacks.getOrNull(mirrorIndex - 1)
-            ?.let { ActiveSource(it.url, it.headers) }
-            ?: ActiveSource(embedUrl, headers)
+            ?.let { ActiveSource(it.url, it.headers, it.captionsDefaultOn) }
+            ?: ActiveSource(embedUrl, headers, captionsDefaultOn)
     }
     val activeUrl = activeSource.url
+    val activeCaptionsDefaultOn = rememberUpdatedState(activeSource.captionsDefaultOn)
     val totalMirrors = 1 + fallbacks.size
 
     val effectiveHeaders = remember(activeUrl, activeSource.headers) {
@@ -617,6 +623,7 @@ fun WebPlayerScreen(
                         blocker = blocker,
                         cosmeticCss = cosmeticCss,
                         mainFrameHost = { mainFrameHost },
+                        captionsDefaultOn = { activeCaptionsDefaultOn.value },
                         onMainFrameStarted = { url ->
                             hostOf(url)?.let { mainFrameHost = it }
                         },
@@ -851,7 +858,11 @@ fun WebPlayerScreen(
     }
 }
 
-private data class ActiveSource(val url: String, val headers: Map<String, String>)
+private data class ActiveSource(
+    val url: String,
+    val headers: Map<String, String>,
+    val captionsDefaultOn: Boolean,
+)
 
 @Composable
 private fun MirrorWalkChip(modifier: Modifier, index: Int, total: Int) {
@@ -1179,6 +1190,7 @@ private class EmbedWebViewClient(
     private val blocker: HostBlocker?,
     private val cosmeticCss: String,
     private val mainFrameHost: () -> String?,
+    private val captionsDefaultOn: () -> Boolean,
     private val onMainFrameStarted: (String) -> Unit,
     private val onMainFrameFinished: () -> Unit,
     private val onMainFrameError: (Int, String, String?) -> Unit,
@@ -1197,6 +1209,7 @@ private class EmbedWebViewClient(
         super.onPageStarted(view, url, favicon)
         view.evaluateJavascript(ANTI_REDIRECT_JS, null)
         view.evaluateJavascript(HIDE_PLAYER_TITLE_JS, null)
+        if (!captionsDefaultOn()) view.evaluateJavascript(DISABLE_CAPTIONS_JS, null)
         if (url != null && url != "about:blank") {
             DebugLog.d(TAG, "page-start ${truncUrl(url)}")
             onMainFrameStarted(url)
@@ -1207,6 +1220,7 @@ private class EmbedWebViewClient(
         super.onPageFinished(view, url)
         view.evaluateJavascript(ANTI_REDIRECT_JS, null)
         view.evaluateJavascript(HIDE_PLAYER_TITLE_JS, null)
+        if (!captionsDefaultOn()) view.evaluateJavascript(DISABLE_CAPTIONS_JS, null)
         // Only the top document's onPageFinished fires with the WebView's own URL.
         if (url != null && url != "about:blank" && url == view.url) {
             DebugLog.i(TAG, "page-finish ${truncUrl(url)}")
@@ -1628,6 +1642,43 @@ private val HIDE_PLAYER_TITLE_JS = """
       var delays = [0, 1000, 2000, 4000, 8000, 16000, 32000, 64000];
       for (var i = 0; i < delays.length; i++) {
         setTimeout(hideTitle, delays[i]);
+      }
+    })();
+""".trimIndent()
+
+/**
+ * VidNest currently marks an English text track DEFAULT even on `/dub`.
+ * Disable only the initial selection for an English Dub source, then stop;
+ * this is deliberately bounded so a later user click can turn captions on.
+ */
+private val DISABLE_CAPTIONS_JS = """
+    (function(){
+      if (window.__dtDisableCaptionsByDefault) return;
+      window.__dtDisableCaptionsByDefault = true;
+      function disableCaptions() {
+        try {
+          var tracks = document.querySelectorAll('track');
+          for (var i = 0; i < tracks.length; i++) {
+            var kind = (tracks[i].kind || '').toLowerCase();
+            if (kind === 'captions' || kind === 'subtitles') {
+              tracks[i].removeAttribute('default');
+            }
+          }
+          var media = document.querySelectorAll('video, audio');
+          for (var j = 0; j < media.length; j++) {
+            var textTracks = media[j].textTracks || [];
+            for (var k = 0; k < textTracks.length; k++) {
+              var textKind = (textTracks[k].kind || '').toLowerCase();
+              if (textKind === 'captions' || textKind === 'subtitles') {
+                textTracks[k].mode = 'disabled';
+              }
+            }
+          }
+        } catch (e) {}
+      }
+      var delays = [0, 100, 250, 500, 1000, 2000, 4000, 8000, 16000];
+      for (var d = 0; d < delays.length; d++) {
+        setTimeout(disableCaptions, delays[d]);
       }
     })();
 """.trimIndent()

@@ -92,6 +92,8 @@ data class StreamSource(
     val kind: StreamKind,
     val quality: String? = null,
     val subtitles: List<SubtitleTrack> = emptyList(),
+    /** Whether text tracks should start visible for this source. */
+    val captionsDefaultOn: Boolean = true,
     val serverLabel: String? = null,
     /**
      * Optional separate audio-only track URL. Modern YouTube only muxes

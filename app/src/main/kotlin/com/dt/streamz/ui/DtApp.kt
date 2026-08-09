@@ -492,8 +492,9 @@ fun DtApp() {
                     audioTracks = r.audioTracks,
                     // Captions stay OFF by default for YouTube (English audio,
                     // never auto-on) but remember the user's last CC choice;
-                    // anime/movies keep their existing default-on behaviour.
-                    captionsDefaultOn = !isYouTube,
+                    // anime/movies use the per-source default; English Dub
+                    // sources can start with captions off.
+                    captionsDefaultOn = if (isYouTube) false else r.captionsDefaultOn,
                     rememberCaptions = isYouTube,
                     onProgress = { posMs, durMs ->
                         val pid = r.providerId
@@ -555,6 +556,7 @@ fun DtApp() {
                     title = r.title,
                     headers = r.headers,
                     fallbacks = r.fallbacks,
+                    captionsDefaultOn = r.captionsDefaultOn,
                     // YouTube-style autoplay: resolve related videos for the
                     // embed player to cycle through. Only the YouTube provider
                     // returns anything; everything else opts out (empty list).
@@ -931,6 +933,7 @@ private fun playRouteFor(
         audioDashManifest = source.audioDashManifest,
         subtitles = source.subtitles,
         audioTracks = source.audioTracks,
+        captionsDefaultOn = source.captionsDefaultOn,
         isLive = source.isLive,
     )
     StreamKind.DirectEmbed -> {
@@ -949,6 +952,7 @@ private fun playRouteFor(
             titleId = titleId,
             episodeId = episodeId,
             startPositionMs = startPositionMs,
+            captionsDefaultOn = source.captionsDefaultOn,
         )
     }
 }

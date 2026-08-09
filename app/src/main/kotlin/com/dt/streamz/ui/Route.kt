@@ -41,6 +41,9 @@ sealed interface Route {
         val episodeId: String? = null,
         val startPositionMs: Long = 0,
         val subtitles: List<SubtitleTrack> = emptyList(),
+        // Per-source caption preference. YouTube still applies its own
+        // remembered off-by-default behavior in DtApp.
+        val captionsDefaultOn: Boolean = true,
         // Selectable audio-language tracks for the in-player switch (YouTube
         // multi-audio). Empty = no switch shown.
         val audioTracks: List<AudioOption> = emptyList(),
@@ -68,5 +71,8 @@ sealed interface Route {
         val titleId: String? = null,
         val episodeId: String? = null,
         val startPositionMs: Long = 0,
+        // English Dub embeds can carry an English text track that the provider
+        // marks DEFAULT. The WebView applies this preference on that source.
+        val captionsDefaultOn: Boolean = true,
     ) : Route
 }

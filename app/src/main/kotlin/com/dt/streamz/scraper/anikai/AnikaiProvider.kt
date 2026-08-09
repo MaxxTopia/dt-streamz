@@ -175,6 +175,7 @@ class AnikaiProvider(
         return StreamSource(
             url = streamUrl,
             kind = kind,
+            captionsDefaultOn = !label.contains("dub", ignoreCase = true),
             serverLabel = label,
             // megacloud / megaup embeds reject empty or wrong referers. For
             // HLS we don't strictly need this (ExoPlayer builds its own

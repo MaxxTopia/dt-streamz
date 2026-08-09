@@ -263,3 +263,27 @@ infallible.
   confirm it disappears from Continue Watching on Home and Library. A normal
   unfinished movie and a finished TV episode should remain available for
   their respective resume/Up Next behavior.
+
+## v0.4.94 English Dub caption-default release candidate (2026-08-09)
+
+- Scope: English Dub anime sources now carry an explicit captions-off default
+  through the route and mirror fallback metadata. Original Japanese Audio +
+  Subtitles remains captions-on by default. The provider's own caption button
+  can still re-enable subtitles during playback.
+- Implementation: AniList/VidNest, Anikai, and GogoAnimeBy source builders set
+  the per-source default. The WebView applies a bounded initial caption-off
+  repair because VidNest currently marks an English text track DEFAULT even on
+  its `/dub` route; the repair stops after the initial load window so a manual
+  caption choice is respected.
+- Verification: debug/release assembly, `lintDebug`, `testDebugUnitTest`, and
+  `git diff --check` passed. The debug APK was installed on the `Television_1080p`
+  emulator, Naruto: Shippuden Episode 1 English Dub loaded from the real
+  VidNest URL, and WebView inspection confirmed the caption-off flag and all
+  text tracks in `disabled` mode.
+- Release/device boundary: this release candidate is v0.4.94 / versionCode
+  108. It has not yet been committed, pushed, published, or installed on the
+  physical VSeeBox. The physical box still needs the final English Dub
+  subtitle check and a short playback/buffering check.
+- Next best move: after publication, install v0.4.94 and test English Dub with
+  captions off, manually turn captions on, and exercise the provider's player
+  controls during a short buffer stall.

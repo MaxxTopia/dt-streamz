@@ -246,6 +246,7 @@ class GogoAnimeByProvider : Provider {
                 StreamSource(
                     url = src,
                     kind = StreamKind.DirectEmbed,
+                    captionsDefaultOn = !serverLabel.contains("dub", ignoreCase = true),
                     serverLabel = serverLabel,
                 )
             }.toList()

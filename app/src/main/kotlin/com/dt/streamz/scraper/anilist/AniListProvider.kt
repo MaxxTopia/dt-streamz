@@ -102,6 +102,7 @@ class AniListProvider : Provider {
         fun src(label: String, type: String) = StreamSource(
             url = "https://vidnest.fun/anime/$titleId/$ep/$type",
             kind = StreamKind.DirectEmbed,
+            captionsDefaultOn = !type.equals("dub", ignoreCase = true),
             serverLabel = label,
             headers = mapOf("Referer" to "https://vidnest.fun/"),
         )
