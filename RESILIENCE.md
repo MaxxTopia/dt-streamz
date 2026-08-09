@@ -247,3 +247,19 @@ infallible.
 - Verification: the full debug/release assembly, `lintDebug`,
   `testDebugUnitTest`, and `git diff --check` passed after the change. Release
   publication is the remaining step for this checkpoint.
+
+## v0.4.93 finished-movie release checkpoint (2026-08-08)
+
+- Release contents: the completed-movie filtering/removal fix shipped as
+  commit `6a3db9d` / tag `v0.4.93`. The version is `0.4.93` / versionCode
+  `107`; unrelated telemetry and untracked workspace files were preserved.
+- Hosted gate: GitHub Actions run `31291838465` completed successfully. The
+  non-draft, non-prerelease release is live at
+  `https://github.com/MaxxTopia/dt-streamz/releases/tag/v0.4.93` and its
+  `dt-streamz.apk` asset returned HTTP 200 at
+  `https://github.com/MaxxTopia/dt-streamz/releases/download/v0.4.93/dt-streamz.apk`.
+- Device boundary: install v0.4.93 on the physical VSeeBox, finish or seek a
+  movie to within roughly 20 seconds of its duration, exit playback, and
+  confirm it disappears from Continue Watching on Home and Library. A normal
+  unfinished movie and a finished TV episode should remain available for
+  their respective resume/Up Next behavior.
