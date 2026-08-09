@@ -264,7 +264,7 @@ infallible.
   unfinished movie and a finished TV episode should remain available for
   their respective resume/Up Next behavior.
 
-## v0.4.94 English Dub caption-default release candidate (2026-08-09)
+## v0.4.94 English Dub caption-default release checkpoint (2026-08-09)
 
 - Scope: English Dub anime sources now carry an explicit captions-off default
   through the route and mirror fallback metadata. Original Japanese Audio +
@@ -280,10 +280,16 @@ infallible.
   emulator, Naruto: Shippuden Episode 1 English Dub loaded from the real
   VidNest URL, and WebView inspection confirmed the caption-off flag and all
   text tracks in `disabled` mode.
-- Release/device boundary: this release candidate is v0.4.94 / versionCode
-  108. It has not yet been committed, pushed, published, or installed on the
-  physical VSeeBox. The physical box still needs the final English Dub
-  subtitle check and a short playback/buffering check.
-- Next best move: after publication, install v0.4.94 and test English Dub with
+- Release contents: v0.4.94 / versionCode 108 is committed as `839024a`,
+  tagged `v0.4.94`, and published from the signed release workflow. The
+  release is non-draft/non-prerelease at
+  `https://github.com/MaxxTopia/dt-streamz/releases/tag/v0.4.94`.
+- Hosted gate: GitHub Actions run `31329716510` completed successfully. The
+  `dt-streamz.apk` asset is live and returned HTTP 200 at
+  `https://github.com/MaxxTopia/dt-streamz/releases/download/v0.4.94/dt-streamz.apk`.
+- Release/device boundary: the physical VSeeBox has not yet been updated or
+  tested. It still needs the final English Dub subtitle check and a short
+  playback/buffering check.
+- Next best move: install v0.4.94 on the VSeeBox and test English Dub with
   captions off, manually turn captions on, and exercise the provider's player
   controls during a short buffer stall.
