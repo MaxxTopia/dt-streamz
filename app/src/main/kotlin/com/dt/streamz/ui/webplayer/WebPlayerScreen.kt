@@ -210,14 +210,9 @@ fun WebPlayerScreen(
     var attempt by remember(activeUrl) { mutableStateOf(0) }
     val blockedHosts = remember { mutableStateListOf<String>() }
     var mainFrameHost by remember { mutableStateOf<String?>(hostOf(activeUrl)) }
-    // Flips true the moment this mirror is confirmed playing (media traffic
-    // seen, or a cross-origin player iframe accepted). The HostBlocker reads
-    // it to STOP blocking once playback is live: the pre-roll ad gate is past,
-    // and a late 403 on a token/segment/heartbeat refresh (these vidsrc CDNs
-    // rotate signed tokens roughly every ~10 min) would otherwise starve the
-    // stream into an unrecoverable buffer loop — exactly the "10 min in, infinite
-    // load" symptom. Keyed on activeUrl so it auto-resets on every mirror change.
-    var playbackAccepted by remember(activeUrl) { mutableStateOf(false) }
+    // The normal blocker remains active while playback runs. Media paths and
+    // known stream CDNs are allowlisted below, while ad and unsafe hosts stay
+    // filtered so a late provider request cannot replace the selected title.
 
     // True while the active mirror is our hosted YouTube embed (`ytembed://`).
     // Drives the D-pad handler: on our own wrapper page we seek via the
@@ -404,7 +399,6 @@ fun WebPlayerScreen(
             if (signal == "media" || signal == "video" || signal == "iframe-video") {
                 DebugLog.i(TAG, "play confirmed mirror=$mirrorIndex via $signal")
                 reportMirror(activeUrl, success = true)
-                playbackAccepted = true
                 return@LaunchedEffect
             }
             if (signal == "iframe-cross-origin") sawPlayer = true
@@ -428,7 +422,6 @@ fun WebPlayerScreen(
         //     once every mirror came back blank.
         if (lastSignal == "iframe-cross-origin") {
             DebugLog.i(TAG, "keeping mirror=$mirrorIndex — player present, no autostart traffic (press play)")
-            playbackAccepted = true
             return@LaunchedEffect
         }
         reportMirror(activeUrl, success = false)
@@ -654,13 +647,28 @@ fun WebPlayerScreen(
                         onAdGateDetected = { view ->
                             DebugLog.w(TAG, "mirror returned an ad/verification page mirror=$mirrorIndex")
                             view.stopLoading()
-                            DeadHostRegistry.markIfHost(activeUrl)
-                            reportMirror(activeUrl, success = false)
+                            val failedUrl = view.url ?: activeUrl
+                            DeadHostRegistry.markIfHost(failedUrl)
+                            reportMirror(failedUrl, success = false)
                             if (mirrorIndex + 1 < totalMirrors) {
                                 mirrorIndex += 1
                             } else {
                                 loadState = LoadState.Failed(
                                     "This mirror returned an ad or verification page instead of video.",
+                                )
+                            }
+                        },
+                        onUnsafeContentDetected = { view ->
+                            DebugLog.e(TAG, "mirror returned unsafe content metadata mirror=$mirrorIndex")
+                            view.stopLoading()
+                            val failedUrl = view.url ?: activeUrl
+                            DeadHostRegistry.markIfHost(failedUrl)
+                            reportMirror(failedUrl, success = false)
+                            if (mirrorIndex + 1 < totalMirrors) {
+                                mirrorIndex += 1
+                            } else {
+                                loadState = LoadState.Failed(
+                                    "This mirror returned unrelated or unsafe content and was blocked.",
                                 )
                             }
                         },
@@ -681,7 +689,6 @@ fun WebPlayerScreen(
                         onVideoEnded = { cycleToNextYouTube() },
                         onEmbedEnded = onEmbedEnded,
                         injectEndedHook = showNextPrev,
-                        isPlaying = { playbackAccepted },
                     )
                     val chrome = FullscreenChromeClient(
                         getActivity = { ctx.findActivity() },
@@ -804,7 +811,6 @@ fun WebPlayerScreen(
                     // restarts the title — the only fix for a dead token.)
                     DebugLog.i(TAG, "user reconnect — reloading mirror=$mirrorIndex")
                     controlsVisible = false
-                    playbackAccepted = false
                     blockedHosts.clear()
                     loadState = LoadState.Loading
                     webViewRef?.let { it.stopLoading(); it.reload() }
@@ -1178,15 +1184,13 @@ private class EmbedWebViewClient(
     private val onMainFrameError: (Int, String, String?) -> Unit,
     private val onResourceBlocked: (String) -> Unit,
     private val onAdGateDetected: (WebView) -> Unit = {},
+    private val onUnsafeContentDetected: (WebView) -> Unit = {},
     private val onEmbedBlocked: () -> Unit = {},
     private val onVideoEnded: () -> Unit = {},
     // Best-effort "video ended" from a non-YouTube embed (postMessage hook).
     private val onEmbedEnded: () -> Unit = {},
     // Inject the embed-ended postMessage listener after page load.
     private val injectEndedHook: Boolean = false,
-    // True once the embed is confirmed playing — flips the blocker off so a
-    // late token/segment refresh can't be 403'd into a dead buffer loop.
-    private val isPlaying: () -> Boolean = { false },
 ) : WebViewClient() {
 
     override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
@@ -1206,12 +1210,21 @@ private class EmbedWebViewClient(
         // Only the top document's onPageFinished fires with the WebView's own URL.
         if (url != null && url != "about:blank" && url == view.url) {
             DebugLog.i(TAG, "page-finish ${truncUrl(url)}")
-            view.evaluateJavascript(AD_GATE_DETECT_JS) { result ->
-                if (result?.trim() == "true") {
-                    DebugLog.w(TAG, "ad/verification gate detected ${truncUrl(url)}")
-                    onAdGateDetected(view)
+            view.evaluateJavascript(UNSAFE_CONTENT_DETECT_JS) { unsafeResult ->
+                if (view.url != url) return@evaluateJavascript
+                if (unsafeResult?.trim() == "true") {
+                    DebugLog.w(TAG, "unsafe content metadata detected ${truncUrl(url)}")
+                    onUnsafeContentDetected(view)
                 } else {
-                    onMainFrameFinished()
+                    view.evaluateJavascript(AD_GATE_DETECT_JS) { gateResult ->
+                        if (view.url != url) return@evaluateJavascript
+                        if (gateResult?.trim() == "true") {
+                            DebugLog.w(TAG, "ad/verification gate detected ${truncUrl(url)}")
+                            onAdGateDetected(view)
+                        } else {
+                            onMainFrameFinished()
+                        }
+                    }
                 }
             }
         }
@@ -1289,25 +1302,30 @@ private class EmbedWebViewClient(
         view: WebView,
         request: WebResourceRequest,
     ): WebResourceResponse? {
-        if (!HostBlocker.isEnabled()) return null
         val url = request.url ?: return null
         val host = url.host?.lowercase() ?: return null
+        val path = url.path.orEmpty()
+        // This boundary remains active even when the normal adblock setting is
+        // off. It prevents known explicit hosts and paths from becoming a
+        // playable subresource or redirect inside an otherwise valid mirror.
+        if (isUnsafeRequest(host, path)) {
+            DebugLog.w(TAG, "blocked unsafe request host=$host path=$path")
+            onResourceBlocked(host)
+            return blockedResourceResponse()
+        }
+        if (!HostBlocker.isEnabled()) return null
         // 1. Never block the main frame — that just bricks the screen.
         if (request.isForMainFrame) return null
-        // 1b. Once playback is live, stop blocking entirely. By now any pre-roll
-        //     ad gate is long past; the real risk is 403-ing a periodic CDN
-        //     token / segment / heartbeat refresh (these mirrors rotate signed
-        //     tokens ~every 10 min) and starving the stream into an infinite
-        //     buffer loop the app can't see (cross-origin <video> never reports
-        //     the stall). Correctness > a stray late beacon.
-        if (isPlaying()) return null
+        // Keep the blocker active during playback. Media paths and known CDNs
+        // remain allowed below, while late ad/telemetry hosts stay filtered.
+        // The old blanket playback bypass was broad enough to let an embed's
+        // unrelated adult video through.
         // 2. Never block 1st-party requests of whatever the embed loaded.
         val main = mainFrameHost()
         if (main != null && shareEffectiveDomain(main, host)) return null
         // 3. Never block media-y file types — even if the host is on the
         //    list, killing chunks/manifests/keys turns the embed into a
         //    blank page with no actual ad value gained.
-        val path = url.path.orEmpty()
         if (MEDIA_PATH.containsMatchIn(path)) return null
         // 4. Allow well-known stream CDNs by suffix.
         if (CDN_ALLOWLIST_SUFFIXES.any { host == it || host.endsWith(".$it") }) return null
@@ -1315,14 +1333,7 @@ private class EmbedWebViewClient(
         if (blocker?.isBlocked(host) == true) {
             DebugLog.d(TAG, "blocked $host path=$path main=$main")
             onResourceBlocked(host)
-            return WebResourceResponse(
-                "text/plain",
-                "utf-8",
-                403,
-                "Blocked",
-                emptyMap(),
-                ByteArrayInputStream(ByteArray(0)),
-            )
+            return blockedResourceResponse()
         }
         return super.shouldInterceptRequest(view, request)
     }
@@ -1480,6 +1491,31 @@ private val MEDIA_PATH = Regex(
     RegexOption.IGNORE_CASE,
 )
 
+private val UNSAFE_HOST_MARKERS = listOf(
+    "porn", "pornhub", "xvideos", "xhamster", "youporn", "redtube",
+    "spankbang", "chaturbate", "onlyfans", "gayporn", "gaytube",
+    "adultfriendfinder", "adultworld",
+)
+
+private val UNSAFE_PATH_MARKERS = listOf(
+    "/porn", "/xxx", "/xvideos", "/xhamster", "/pornhub", "/redtube",
+    "/youporn", "/spankbang", "/chaturbate", "/onlyfans", "/gayporn",
+    "/gaytube",
+)
+
+private fun isUnsafeRequest(host: String, path: String): Boolean =
+    UNSAFE_HOST_MARKERS.any { host == it || host.contains(it) } ||
+        UNSAFE_PATH_MARKERS.any { path.contains(it, ignoreCase = true) }
+
+private fun blockedResourceResponse(): WebResourceResponse = WebResourceResponse(
+    "text/plain",
+    "utf-8",
+    403,
+    "Blocked",
+    emptyMap(),
+    ByteArrayInputStream(ByteArray(0)),
+)
+
 /**
  * Streaming CDN suffixes seen in vidsrc/megacloud/2embed playback paths.
  * Matched by exact host or as a parent-domain suffix. Keep tight — the
@@ -1618,6 +1654,34 @@ private val AD_GATE_DETECT_JS = """
       for (var i = 0; i < markers.length; i++) {
         if (text.indexOf(markers[i]) !== -1) return true;
       }
+      return false;
+    })();
+""".trimIndent()
+
+/**
+ * A provider can return HTTP 200 for the wrong catalog type. The cold-start
+ * TV->movie bug was especially dangerous because one such numeric-id collision
+ * returned an adult movie page. Reject explicit markers and structured
+ * `adult:true` metadata before the mirror is accepted as playable.
+ */
+private val UNSAFE_CONTENT_DETECT_JS = """
+    (function(){
+      try {
+        var root = document.documentElement;
+        var body = (document.body && document.body.innerText) || '';
+        var title = document.title || '';
+        var html = (root && root.innerHTML) || '';
+        var text = (title + ' ' + body + ' ' + html).toLowerCase();
+        var markers = [
+          /\bporn\b/i, /xvideos/i, /xhamster/i, /pornhub/i,
+          /redtube/i, /youporn/i, /spankbang/i, /chaturbate/i,
+          /onlyfans/i, /gay\s*porn/i, /lesbian\s*porn/i, /sex\s*cam/i
+        ];
+        for (var i = 0; i < markers.length; i++) {
+          if (markers[i].test(text)) return true;
+        }
+        if (/['\"]adult['\"]\s*:\s*true/i.test(text)) return true;
+      } catch (e) {}
       return false;
     })();
 """.trimIndent()

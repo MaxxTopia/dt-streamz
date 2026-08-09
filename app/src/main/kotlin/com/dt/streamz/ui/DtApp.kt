@@ -319,41 +319,82 @@ fun DtApp() {
                 },
                 onResume = { entry ->
                     scope.launch {
+                        // Continue Watching is persisted across process restarts,
+                        // while several providers keep search metadata only in
+                        // memory. Re-hydrate and verify the canonical title
+                        // before asking any provider for a stream. In particular,
+                        // never reconstruct an episode from only the saved number:
+                        // a provider must confirm the exact episode id and kind.
+                        val provider = runCatching { registry.get(entry.providerId) }.getOrNull()
+                        if (provider == null) {
+                            Toast.makeText(ctx, "Saved title source is no longer available", Toast.LENGTH_SHORT).show()
+                            return@launch
+                        }
+                        val details = Binge.details(provider, entry.titleId)
+                        if (details == null || details.providerId != entry.providerId || details.id != entry.titleId) {
+                            Log.e(TAG, "resume refused: title identity could not be verified ${entry.providerId}:${entry.titleId}")
+                            Toast.makeText(ctx, "Couldn't verify this title. Open it again from Search.", Toast.LENGTH_SHORT).show()
+                            return@launch
+                        }
+                        val savedKind = entry.kind?.let { raw ->
+                            runCatching { MediaKind.valueOf(raw) }.getOrNull()
+                        }
+                        if (savedKind != null && savedKind != details.kind) {
+                            Log.e(
+                                TAG,
+                                "resume refused: kind mismatch ${entry.providerId}:${entry.titleId} " +
+                                    "saved=$savedKind resolved=${details.kind}",
+                            )
+                            app.continueWatching.remove(entry.providerId, entry.titleId)
+                            Toast.makeText(ctx, "This saved entry was invalid and was removed", Toast.LENGTH_SHORT).show()
+                            return@launch
+                        }
+                        val ep = details.episodes.firstOrNull { it.id == entry.episodeId }
+                        if (ep == null) {
+                            Log.e(
+                                TAG,
+                                "resume refused: episode ${entry.episodeId} is not in " +
+                                    "${entry.providerId}:${entry.titleId}",
+                            )
+                            app.continueWatching.remove(entry.providerId, entry.titleId)
+                            Toast.makeText(ctx, "This saved episode is no longer available", Toast.LENGTH_SHORT).show()
+                            return@launch
+                        }
+
                         // Up Next: if the saved episode is finished, roll into
-                        // the next one instead of replaying it.
+                        // the next canonical episode instead of replaying it.
                         if (isFinished(entry)) {
-                            val details = Binge.details(registry.get(entry.providerId), entry.titleId)
-                            val eps = details?.episodes.orEmpty()
-                            val idx = eps.indexOfFirst { it.id == entry.episodeId }
-                            val next = if (idx >= 0) eps.getOrNull(idx + 1) else null
+                            val idx = details.episodes.indexOfFirst { it.id == ep.id }
+                            val next = if (idx >= 0) details.episodes.getOrNull(idx + 1) else null
                             if (next != null) {
                                 playEpisode(
                                     entry.providerId, entry.titleId, next,
-                                    details?.title ?: entry.titleName,
-                                    details?.poster ?: entry.poster,
-                                    details?.kind?.name ?: entry.kind,
+                                    details.title, details.poster ?: entry.poster,
+                                    details.kind.name,
                                 )
                                 return@launch
                             }
-                            // unknown next / last episode -> fall through to replay
+                            // Last episode -> replay the exact verified episode.
                         }
-                        val ep = com.dt.streamz.data.Episode(
-                            id = entry.episodeId,
-                            number = entry.episodeNumber,
-                            title = entry.episodeTitle,
-                        )
-                        val resumeMs = resumeStartMs(entry, entry.episodeId)
-                        runCatching {
-                            registry.get(entry.providerId).streams(entry.titleId, ep)
-                        }.onSuccess { sources ->
-                            routeForSources(
-                                "${entry.titleName} · ${ep.displayLabel()}", sources,
-                                entry.providerId, entry.titleId, entry.episodeId, resumeMs,
-                            )?.let { push(it) }
-                        }.onFailure {
-                            Log.w(TAG, "resume failed", it)
-                            Toast.makeText(ctx, "Couldn't resume: ${it.message}", Toast.LENGTH_SHORT).show()
+
+                        val resumeMs = resumeStartMs(entry, ep.id)
+                        val sourcesResult = runCatching { provider.streams(entry.titleId, ep) }
+                        val sources = sourcesResult.getOrNull()
+                        if (sources == null) {
+                            val error = sourcesResult.exceptionOrNull()
+                            Log.w(TAG, "resume failed", error)
+                            Toast.makeText(ctx, "Couldn't resume: ${error?.message ?: "source unavailable"}", Toast.LENGTH_SHORT).show()
+                            return@launch
                         }
+                        if (sources.isEmpty()) {
+                            Log.e(TAG, "resume refused: provider returned no verified sources for ${entry.providerId}:${entry.titleId}:${ep.id}")
+                            Toast.makeText(ctx, "This title has no verified playback source right now", Toast.LENGTH_SHORT).show()
+                            return@launch
+                        }
+                        routeForSources(
+                            "${details.title} · ${ep.displayLabel()}", sources,
+                            entry.providerId, entry.titleId, ep.id, resumeMs,
+                        )?.let { push(it) }
                     }
                 },
             )

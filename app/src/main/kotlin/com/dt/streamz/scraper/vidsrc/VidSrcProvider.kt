@@ -133,10 +133,23 @@ class VidSrcProvider(
 
     override suspend fun details(titleId: String): TitleDetails = withContext(Dispatchers.IO) {
         val cached = cache[titleId]?.result
-        val title = cached?.title ?: titleId
-        val poster = cached?.poster
-        val year = cached?.year
-        val kind = cached?.kind ?: MediaKind.Movie
+        val tmdb = findTmdb(titleId)
+        val resolvedKind = mediaKindFor(tmdb?.first)
+        if (cached != null && resolvedKind != null && cached.kind != resolvedKind) {
+            error("Catalog identity mismatch for $titleId: cached=${cached.kind} resolved=$resolvedKind")
+        }
+        // Search results live only in memory. Continue Watching survives an
+        // app restart, so a cold process must re-derive the media type from
+        // the canonical IMDb -> TMDb identity before it can build episodes or
+        // a playback URL. Never guess Movie here: a TV id is also a valid
+        // numeric TMDb id, and the wrong path can resolve to unrelated adult
+        // material on an embed host.
+        val kind = cached?.kind ?: resolvedKind
+            ?: error("Unable to verify media type for $titleId")
+        val metadata = tmdb?.let { fetchTmdbMetadata(it.first, it.second) }
+        val title = cached?.title ?: metadata?.title ?: titleId
+        val poster = cached?.poster ?: metadata?.poster
+        val year = cached?.year ?: metadata?.year
 
         val episodes = when (kind) {
             MediaKind.Movie -> listOf(
@@ -155,7 +168,7 @@ class VidSrcProvider(
 
         val qualityNote = if (kind == MediaKind.Movie) camWarningFor(titleId, year) else null
 
-        TitleDetails(
+        val result = TitleDetails(
             providerId = id,
             id = titleId,
             title = title,
@@ -172,6 +185,19 @@ class VidSrcProvider(
             episodes = episodes,
             qualityNote = qualityNote,
         )
+        // Hydrate the in-memory cache for the next resume/episode action, but
+        // only after the canonical type check above has passed.
+        cache[titleId] = CachedResult(
+            SearchResult(
+                providerId = id,
+                id = titleId,
+                title = title,
+                poster = poster,
+                year = year,
+                kind = kind,
+            ),
+        )
+        result
     }
 
     /**
@@ -266,7 +292,21 @@ class VidSrcProvider(
         java.net.URLEncoder.encode(this, "UTF-8").replace("+", "%20")
 
     override suspend fun streams(titleId: String, episode: Episode): List<StreamSource> = withContext(Dispatchers.IO) {
-        val kind = cache[titleId]?.result?.kind ?: MediaKind.Movie
+        val cachedKind = cache[titleId]?.result?.kind
+        val tmdb = findTmdb(titleId)
+        val resolvedKind = mediaKindFor(tmdb?.first)
+        if (cachedKind != null && resolvedKind != null && cachedKind != resolvedKind) {
+            Log.e(TAG, "refusing identity mismatch imdb=$titleId cached=$cachedKind resolved=$resolvedKind")
+            return@withContext emptyList()
+        }
+        // This used to default to Movie when the process had restarted and
+        // the search cache was empty. That is the exact TV->movie confusion
+        // that made Continue Watching for Rick and Morty build /movie/60625.
+        // Unknown identity is now a hard stop: no guessed playback URL.
+        val kind = cachedKind ?: resolvedKind ?: run {
+            Log.e(TAG, "refusing unverified title identity imdb=$titleId")
+            return@withContext emptyList()
+        }
         val isTv = kind != MediaKind.Movie
         val imdb = titleId
         val (season, number) = if (isTv) {
@@ -291,8 +331,12 @@ class VidSrcProvider(
         // Once a TMDb id is available, keep only the two current native
         // players selectable. The older VidSrc.to/VidSrc.me pages can stall or
         // challenge, so they must not be offered as a user-facing fallback.
-        val tmdb = findTmdb(imdb)
         Log.i(TAG, "streams imdb=$imdb tv=$isTv s=$season e=$number tmdb=$tmdb")
+
+        if (tmdb != null && ((tmdb.first == "tv") != isTv)) {
+            Log.e(TAG, "refusing URL type mismatch imdb=$imdb kind=$kind tmdbType=${tmdb.first}")
+            return@withContext emptyList()
+        }
 
         fun src(label: String, url: String) = StreamSource(
             url = url, kind = StreamKind.DirectEmbed, serverLabel = label,
@@ -324,6 +368,34 @@ class VidSrcProvider(
         out
     }
 
+    private fun mediaKindFor(mediaType: String?): MediaKind? = when (mediaType) {
+        "movie" -> MediaKind.Movie
+        "tv" -> MediaKind.Series
+        else -> null
+    }
+
+    private data class TmdbMetadata(
+        val title: String?,
+        val poster: String?,
+        val year: Int?,
+    )
+
+    /** Best-effort display metadata for a cold-start Continue Watching entry. */
+    private suspend fun fetchTmdbMetadata(mediaType: String, tmdbId: String): TmdbMetadata? {
+        val body = fetch("$TMDB_FIND/$mediaType/$tmdbId?language=en-US") ?: return null
+        val obj = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull() ?: return null
+        val isMovie = mediaType == "movie"
+        val title = obj[if (isMovie) "title" else "name"]?.jsonPrimitive?.contentOrNull
+        val posterPath = obj["poster_path"]?.jsonPrimitive?.contentOrNull
+        val date = obj[if (isMovie) "release_date" else "first_air_date"]
+            ?.jsonPrimitive?.contentOrNull
+        return TmdbMetadata(
+            title = title,
+            poster = posterPath?.let { "https://image.tmdb.org/t/p/w500$it" },
+            year = date?.take(4)?.toIntOrNull(),
+        )
+    }
+
     /**
      * IMDB id -> (mediaType, tmdbId) via the TMDb "find" endpoint (through our
      * Worker proxy so no key ships). Cached per id (including misses). Null if
@@ -338,14 +410,18 @@ class VidSrcProvider(
             val movie = (obj?.get("movie_results") as? JsonArray)?.firstOrNull() as? JsonObject
             val tv = (obj?.get("tv_results") as? JsonArray)?.firstOrNull() as? JsonObject
             when {
-                movie != null -> movie["id"]?.jsonPrimitive?.contentOrNull?.let { id -> "movie" to id }
-                tv != null -> tv["id"]?.jsonPrimitive?.contentOrNull?.let { id -> "tv" to id }
+                movie != null && !isAdult(movie) -> movie["id"]?.jsonPrimitive?.contentOrNull?.let { id -> "movie" to id }
+                tv != null && !isAdult(tv) -> tv["id"]?.jsonPrimitive?.contentOrNull?.let { id -> "tv" to id }
                 else -> null
             }
         }
         tmdbCache[imdbId] = result
         return result
     }
+
+    /** TMDb marks adult catalog records explicitly; never turn one into a playable source. */
+    private fun isAdult(obj: JsonObject): Boolean =
+        obj["adult"]?.jsonPrimitive?.contentOrNull?.equals("true", ignoreCase = true) == true
 
     private fun fetch(url: String): String? = runCatching {
         val req = Request.Builder()

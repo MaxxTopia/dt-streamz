@@ -155,3 +155,52 @@ to catch buffering; and confirm no popup or external window appears.
   still required. If the physical box continues to buffer, test `Settings ->
   Video quality -> Data saver`, then compare 5 GHz or Ethernet against the
   current Wi-Fi path and record the exact title/server.
+
+## Continue Watching identity incident and fail-closed checkpoint (2026-08-08)
+
+- Incident: after an app restart, `VidSrcProvider` no longer had the in-memory
+  search result for a persisted Continue Watching entry. Its old fallback
+  treated an unknown title as a movie. Rick and Morty's canonical IMDb id
+  `tt2861424` resolves to TMDb TV id `60625`, but the stale path constructed
+  `/movie/60625`. A live VidLink check showed that route was a different
+  adult-marked record, while `/tv/60625/1/1` was the Rick and Morty route.
+  This was a provider identity/type collision, not content belonging to the
+  selected Rick and Morty episode.
+- Fix: the provider now re-derives the media type from the canonical IMDb to
+  TMDb lookup on cold start, rejects cached-vs-canonical type mismatches,
+  rejects TMDb records marked adult, and refuses to build any URL when the
+  type cannot be verified. TV and movie paths are constructed only from the
+  verified type.
+- Fix: Continue Watching now re-hydrates and verifies provider id, title id,
+  saved kind, and the exact canonical episode id before resolving streams.
+  Invalid or stale entries are refused/removed; an empty or failed source
+  resolution never opens the player.
+- Fix: WebView playback keeps the unsafe-content boundary active for the
+  entire session. Known explicit hosts/paths are blocked even when ordinary
+  ad blocking is disabled, unsafe/adult page markers are checked before a
+  mirror is accepted, and the former blanket late-playback blocker bypass was
+  removed. A bad mirror is stopped and the next mirror is tried, or playback
+  fails closed.
+- Verification: `:app:assembleDebug`, `:app:assembleRelease`, `:app:lintDebug`,
+  and `:app:testDebugUnitTest` passed on 2026-08-08. Direct checks confirmed
+  the canonical TV route and reproduced the wrong movie route's adult marker.
+  The physical VSeeBox has not yet been updated or tested; that device-side
+  install and a real Continue Watching cold-resume are still the final field
+  gate.
+
+### Risk register
+
+| Failure mode | Detection | Mitigation / plan B | Residual boundary |
+|---|---|---|---|
+| Persisted entry loses provider type after restart | Canonical lookup disagrees or returns no type | Refuse URL construction; require reopening from Search | A provider outage may make a valid title temporarily unresumable |
+| Provider returns the wrong catalog type for a numeric id | Cached kind differs from canonical TMDb kind | Reject the entry and do not route to WebView | Depends on canonical metadata being available and correct |
+| Mirror returns explicit or unrelated HTML with HTTP 200 | Adult marker/unsafe marker in page metadata or known unsafe request host/path | Stop mirror, mark it failed, walk to the next verified source, or show a blocked error | A novel unsafe payload that contains none of the detectable signals cannot be proven safe by a third-party WebView |
+| Late ad or redirect request appears after playback begins | Unsafe host/path interception or top-level cross-domain redirect | Block the request; normal ad blocker remains active; no popup window | Third-party embed behavior can change upstream |
+
+Locked decision: an unverified or mismatched provider identity fails closed. The
+app must never guess `Movie` for a persisted title merely because that is the
+easiest fallback. An absolute guarantee against every future third-party embed
+failure would require removing third-party embeds or adding server-side media
+fingerprinting; this release closes the reproduced identity collision and the
+known unsafe-content paths without claiming that uncontrolled upstream HTML is
+infallible.
