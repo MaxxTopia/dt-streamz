@@ -229,3 +229,21 @@ infallible.
   mirror, and whether playback reached the selected episode. If a mirror is
   still wrong, keep the entry blocked and capture the WebView log rather than
   weakening the identity guard.
+
+## Finished movie Continue Watching checkpoint (2026-08-08)
+
+- Issue: movie entries stayed visible after the saved position reached the
+  existing 20-second end guard. `isFinished()` was only consulted when the
+  user pressed Resume; it did not remove or hide the completed movie from the
+  persisted Continue Watching flow.
+- Fix: `ContinueWatchingStore.entries` now filters effectively finished movie
+  entries for every surface that consumes the store, including Home, Library,
+  Genres, and Settings. `updatePosition` removes them from persisted history,
+  and `record` cleans up older completed entries when new history is written.
+  Legacy entries without `kind` are recognized by the movie episode sentinel.
+- Scope boundary: finished series/anime episodes remain available so the
+  existing Up Next behavior can resolve the following episode. Only movies
+  leave the row automatically.
+- Verification: the full debug/release assembly, `lintDebug`,
+  `testDebugUnitTest`, and `git diff --check` passed after the change. Release
+  publication is the remaining step for this checkpoint.

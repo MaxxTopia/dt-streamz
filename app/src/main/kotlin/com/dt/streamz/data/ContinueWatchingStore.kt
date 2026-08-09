@@ -38,6 +38,17 @@ data class WatchEntry(
 private val Context.continueWatchingStore by preferencesDataStore(name = "continue_watching")
 private val KEY = stringPreferencesKey("entries")
 private const val MAX_ENTRIES = 20
+private const val FINISHED_MOVIE_END_GUARD_MS = 20_000L
+
+/** Movies should leave Continue Watching once the user is effectively at the end. */
+private fun WatchEntry.isFinishedMovie(): Boolean {
+    // Entries written before MediaKind was persisted can still be identified by
+    // the movie sentinel episode id used by the movie providers.
+    val movie = kind == MediaKind.Movie.name || (kind == null && episodeId == "movie")
+    if (!movie || durationMs <= 0) return false
+    val endThreshold = (durationMs - FINISHED_MOVIE_END_GUARD_MS).coerceAtLeast(0L)
+    return positionMs >= endThreshold
+}
 
 /**
  * Persistent most-recent-first log of plays, keyed uniquely by
@@ -52,7 +63,9 @@ class ContinueWatchingStore(private val context: Context) {
 
     val entries: Flow<List<WatchEntry>> = context.continueWatchingStore.data.map { prefs ->
         val raw = prefs[KEY] ?: return@map emptyList()
-        runCatching { json.decodeFromString(listSerializer, raw) }.getOrDefault(emptyList())
+        runCatching { json.decodeFromString(listSerializer, raw) }
+            .getOrDefault(emptyList())
+            .filterNot { it.isFinishedMovie() }
     }
 
     suspend fun record(entry: WatchEntry) {
@@ -61,7 +74,8 @@ class ContinueWatchingStore(private val context: Context) {
                 prefs[KEY]?.let { json.decodeFromString(listSerializer, it) }
             }.getOrNull() ?: emptyList()
             val deduped = current.filterNot {
-                it.providerId == entry.providerId && it.titleId == entry.titleId
+                (it.providerId == entry.providerId && it.titleId == entry.titleId) ||
+                    it.isFinishedMovie()
             }
             val merged = (listOf(entry) + deduped).take(MAX_ENTRIES)
             prefs[KEY] = json.encodeToString(listSerializer, merged)
@@ -89,13 +103,16 @@ class ContinueWatchingStore(private val context: Context) {
                 prefs[KEY]?.let { json.decodeFromString(listSerializer, it) }
             }.getOrNull() ?: return@edit
             var changed = false
-            val updated = current.map { e ->
+            val updated = current.mapNotNull { e ->
                 if (e.providerId == providerId && e.titleId == titleId && e.episodeId == episodeId) {
                     changed = true
                     e.copy(
                         positionMs = positionMs,
                         durationMs = if (durationMs > 0) durationMs else e.durationMs,
-                    )
+                    ).takeUnless { it.isFinishedMovie() }
+                } else if (e.isFinishedMovie()) {
+                    changed = true
+                    null
                 } else {
                     e
                 }
