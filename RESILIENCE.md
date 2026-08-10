@@ -313,12 +313,10 @@ infallible.
   VidNest route; the provider preference was `false`, a synthetic late track
   was disabled, and a track added after the simulated caption-control
   interaction remained untouched.
-- Release boundary: the follow-up is local and uncommitted on top of
-  v0.4.94. It has not been pushed or installed on the physical VSeeBox. The
-  next release should be v0.4.95 / versionCode 109 only after this change is
-  reviewed and the normal release gate passes.
+- Release transition: this follow-up was included in the combined v0.4.95
+  release below. The physical VSeeBox still needs the final field check.
 
-## Continue Watching WebView resume follow-up (2026-08-10, unreleased)
+## v0.4.95 Continue Watching WebView resume release checkpoint (2026-08-10)
 
 - Issue: native playback already carried saved positions, but DirectEmbed
   anime/movie routes did not report the WebView HTML5 video's `currentTime`.
@@ -334,7 +332,17 @@ infallible.
   Episode 1 played to about 84.9 seconds, was exited, reopened from Continue
   Watching, and the real VidNest WebView reported `targetMs=84853` with the
   HTML5 video resumed from that saved point.
-- Release boundary: this follow-up is local and uncommitted on top of
-  v0.4.94, together with the English Dub caption follow-up. It has not been
-  pushed or installed on the physical VSeeBox. The next release remains
-  v0.4.95 / versionCode 109 after review and the normal release gate.
+- Release contents: the WebView resume fix, English Dub caption follow-up,
+  and version bump shipped as commit `1194195` / tag `v0.4.95`. The release is
+  version `0.4.95` / versionCode `109`.
+- Hosted gate: GitHub Actions run `31344741457` completed successfully. The
+  non-draft, non-prerelease release is live at
+  `https://github.com/MaxxTopia/dt-streamz/releases/tag/v0.4.95`; its
+  `dt-streamz.apk` asset returned HTTP 200 at
+  `https://github.com/MaxxTopia/dt-streamz/releases/download/v0.4.95/dt-streamz.apk`.
+- Device boundary: the signed v0.4.95 APK was installed on the API-30
+  `Television_1080p` emulator and the app opened at versionCode 109. The
+  physical VSeeBox has not yet been updated or tested. Diggy's next check is
+  to install v0.4.95, resume Naruto: Shippuden after a short watch, confirm
+  the saved position, and verify English Dub captions start off while manual
+  captions can still be enabled.
