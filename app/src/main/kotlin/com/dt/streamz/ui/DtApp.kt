@@ -557,6 +557,21 @@ fun DtApp() {
                     headers = r.headers,
                     fallbacks = r.fallbacks,
                     captionsDefaultOn = r.captionsDefaultOn,
+                    startPositionMs = r.startPositionMs,
+                    onProgress = { posMs, durMs ->
+                        val pid = r.providerId
+                        val tid = r.titleId
+                        val eid = r.episodeId
+                        // YouTube embeds are not part of the catalog-backed
+                        // Continue Watching history. Anime/movie/TV embeds
+                        // report their HTML5 position back to the same store
+                        // used by native playback.
+                        if (r.providerId != "youtube" && pid != null && tid != null && eid != null) {
+                            scope.launch {
+                                app.continueWatching.updatePosition(pid, tid, eid, posMs, durMs)
+                            }
+                        }
+                    },
                     // YouTube-style autoplay: resolve related videos for the
                     // embed player to cycle through. Only the YouTube provider
                     // returns anything; everything else opts out (empty list).

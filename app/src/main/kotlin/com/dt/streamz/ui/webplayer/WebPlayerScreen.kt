@@ -78,6 +78,11 @@ private sealed interface LoadState {
     data class Failed(val reason: String, val errorCode: Int = 0) : LoadState
 }
 
+private data class WebProgress(
+    val positionMs: Long,
+    val durationMs: Long,
+)
+
 // Adaptive per-mirror timeouts. The first mirror is the reliability-ranked
 // best, so it gets a generous window to load + start; every fallback after it
 // is a less-likely server we want to fail FAST through. These shorter windows
@@ -104,6 +109,11 @@ private const val NEXT_MEDIA_CHECK_MS = 6_000L
  */
 private const val FIRST_BLANK_CUTOFF_MS = 6_000L
 private const val NEXT_BLANK_CUTOFF_MS = 3_500L
+
+// WebView embeds do not expose ExoPlayer's position callbacks. Polling the
+// HTML5 media element keeps the saved position current without installing a
+// JavaScript bridge into an untrusted third-party page.
+private const val WEB_PROGRESS_SAVE_INTERVAL_MS = 2_000L
 
 /**
  * WebView error codes that indicate the embed host itself is unreachable
@@ -152,6 +162,12 @@ fun WebPlayerScreen(
     // route. Apply this only to the selected source; the provider controls
     // remain available so the user can turn captions back on.
     captionsDefaultOn: Boolean = true,
+    // Resume context for HTML5 embeds. DirectEmbed pages are responsible for
+    // their own media element, so WebPlayer applies this best-effort and
+    // reports the position back to Continue Watching when the element exposes
+    // currentTime/duration.
+    startPositionMs: Long = 0,
+    onProgress: (positionMs: Long, durationMs: Long) -> Unit = { _, _ -> },
     // Related-video resolver for YouTube autoplay. Given the current videoId,
     // returns related IDs (most-relevant first). Only used for `ytembed://`
     // sources; null disables cycling.
@@ -182,6 +198,8 @@ fun WebPlayerScreen(
     val blocker = app?.hostBlocker
     val monitor = app?.networkMonitor
     val serverStats = app?.serverStats
+    val onProgressCb by rememberUpdatedState(onProgress)
+    val resumeAtMs = startPositionMs.coerceAtLeast(0L)
 
     // Active mirror walks: 0 = original embedUrl, 1.. = fallbacks[i-1].
     var mirrorIndex by remember(embedUrl) { mutableStateOf(0) }
@@ -289,6 +307,38 @@ fun WebPlayerScreen(
     DisposableEffect(activeUrl) {
         monitor?.setActiveHost(activeUrl)
         onDispose { monitor?.setActiveHost(null) }
+    }
+
+    // Persist HTML5 embed progress while the page is usable. This is the
+    // missing half of Continue Watching for anime/movie DirectEmbed sources:
+    // native PlayerScreen already reports ExoPlayer position, but a WebView
+    // otherwise leaves the entry at its initial zero position forever.
+    LaunchedEffect(activeUrl, loadState) {
+        if (loadState !is LoadState.Loaded) return@LaunchedEffect
+        while (true) {
+            delay(WEB_PROGRESS_SAVE_INTERVAL_MS)
+            val webView = webViewRef ?: return@LaunchedEffect
+            val progress = readWebProgress(webView) ?: continue
+            if (progress.positionMs > 0) {
+                onProgressCb(progress.positionMs, progress.durationMs)
+            }
+        }
+    }
+
+    // Capture a final position when the player route is left. The periodic
+    // save above handles normal playback; this covers backing out between
+    // polls or after a user seek/pause.
+    DisposableEffect(webViewRef) {
+        val activeWebView = webViewRef
+        onDispose {
+            if (activeWebView != null) {
+                readWebProgressAsync(activeWebView) { progress ->
+                    if (progress.positionMs > 0) {
+                        onProgressCb(progress.positionMs, progress.durationMs)
+                    }
+                }
+            }
+        }
     }
 
     // Per-mirror state reset — replaces the `remember(activeUrl)` keying
@@ -624,6 +674,7 @@ fun WebPlayerScreen(
                         cosmeticCss = cosmeticCss,
                         mainFrameHost = { mainFrameHost },
                         captionsDefaultOn = { activeCaptionsDefaultOn.value },
+                        startPositionMs = resumeAtMs,
                         onMainFrameStarted = { url ->
                             hostOf(url)?.let { mainFrameHost = it }
                         },
@@ -1045,6 +1096,139 @@ private fun ControlButton(label: String, onClick: () -> Unit, modifier: Modifier
 }
 
 /**
+ * Best-effort seek for HTML5 media exposed by the embed's top document or a
+ * same-origin iframe. Cross-origin iframe media remains intentionally opaque
+ * to WebView JavaScript; those providers can still play, but cannot expose a
+ * safe generic resume hook to the app.
+ */
+private fun resumePlaybackScript(positionMs: Long): String {
+    val targetMs = positionMs.coerceAtLeast(1L)
+    return """
+        (function() {
+          var targetMs = $targetMs;
+          var targetSeconds = targetMs / 1000.0;
+          var state = window.__dtResumePlayback;
+          if (!state || state.targetMs !== targetMs) {
+            state = { targetMs: targetMs, applied: false, attempts: 0, media: null };
+            window.__dtResumePlayback = state;
+          }
+
+          function findMedia(root) {
+            try {
+              var media = root.querySelector('video');
+              if (media) return media;
+              var frames = root.querySelectorAll('iframe');
+              for (var i = 0; i < frames.length; i++) {
+                try {
+                  var doc = frames[i].contentDocument;
+                  if (doc) {
+                    var nested = findMedia(doc);
+                    if (nested) return nested;
+                  }
+                } catch (e) {}
+              }
+            } catch (e) {}
+            return null;
+          }
+
+          function retry() {
+            if (state.attempts++ < 120) setTimeout(apply, 250);
+          }
+
+          function apply() {
+            var media = findMedia(document);
+            if (!media) { retry(); return; }
+            if (state.applied && state.media === media) return;
+            var duration = Number(media.duration);
+            if (!isFinite(duration) || duration <= 0) { retry(); return; }
+            try {
+              media.currentTime = Math.min(targetSeconds, Math.max(0, duration - 0.25));
+              state.media = media;
+              state.applied = true;
+            } catch (e) { retry(); }
+          }
+
+          apply();
+        })();
+    """.trimIndent()
+}
+
+private val WEB_PROGRESS_JS = """
+    (function() {
+      function findMedia(root) {
+        try {
+          var media = root.querySelector('video');
+          if (media) return media;
+          var frames = root.querySelectorAll('iframe');
+          for (var i = 0; i < frames.length; i++) {
+            try {
+              var doc = frames[i].contentDocument;
+              if (doc) {
+                var nested = findMedia(doc);
+                if (nested) return nested;
+              }
+            } catch (e) {}
+          }
+        } catch (e) {}
+        return null;
+      }
+
+      var media = findMedia(document);
+      if (!media) return null;
+      var position = Number(media.currentTime);
+      var duration = Number(media.duration);
+      if (!isFinite(position) || position <= 0) return null;
+      return {
+        positionMs: Math.round(position * 1000),
+        durationMs: isFinite(duration) && duration > 0 ? Math.round(duration * 1000) : 0
+      };
+    })();
+""".trimIndent()
+
+private fun parseWebProgress(raw: String?): WebProgress? {
+    val payload = raw?.trim()?.takeUnless { it.isEmpty() || it == "null" } ?: return null
+    val json = runCatching { JSONObject(payload) }.getOrNull() ?: return null
+    val positionMs = json.optLong("positionMs", 0L).coerceAtLeast(0L)
+    if (positionMs <= 0) return null
+    return WebProgress(
+        positionMs = positionMs,
+        durationMs = json.optLong("durationMs", 0L).coerceAtLeast(0L),
+    )
+}
+
+private suspend fun readWebProgress(webView: WebView): WebProgress? {
+    val raw = runCatching {
+        kotlinx.coroutines.suspendCancellableCoroutine<String?> { cont ->
+            val posted = runCatching {
+                webView.post {
+                    runCatching {
+                        webView.evaluateJavascript(WEB_PROGRESS_JS) { value ->
+                            if (cont.isActive) cont.resumeWith(Result.success(value))
+                        }
+                    }.onFailure {
+                        if (cont.isActive) cont.resumeWith(Result.failure(it))
+                    }
+                }
+            }.getOrDefault(false)
+            if (!posted && cont.isActive) cont.resumeWith(Result.success(null))
+        }
+    }.getOrNull()
+    return parseWebProgress(raw)
+}
+
+private fun readWebProgressAsync(webView: WebView, onProgress: (WebProgress) -> Unit) {
+    runCatching {
+        if (!webView.post {
+                runCatching {
+                    webView.evaluateJavascript(WEB_PROGRESS_JS) { value ->
+                        parseWebProgress(value)?.let(onProgress)
+                    }
+                }
+            }) return
+    }
+}
+
+/**
  * "Is the embed actually playing?" check, two-stage:
  *
  *  1) DOM probe — `<video>` in the main doc or same-origin iframes.
@@ -1191,6 +1375,7 @@ private class EmbedWebViewClient(
     private val cosmeticCss: String,
     private val mainFrameHost: () -> String?,
     private val captionsDefaultOn: () -> Boolean,
+    private val startPositionMs: Long,
     private val onMainFrameStarted: (String) -> Unit,
     private val onMainFrameFinished: () -> Unit,
     private val onMainFrameError: (Int, String, String?) -> Unit,
@@ -1210,6 +1395,7 @@ private class EmbedWebViewClient(
         view.evaluateJavascript(ANTI_REDIRECT_JS, null)
         view.evaluateJavascript(HIDE_PLAYER_TITLE_JS, null)
         if (!captionsDefaultOn()) view.evaluateJavascript(DISABLE_CAPTIONS_JS, null)
+        if (startPositionMs > 0) view.evaluateJavascript(resumePlaybackScript(startPositionMs), null)
         if (url != null && url != "about:blank") {
             DebugLog.d(TAG, "page-start ${truncUrl(url)}")
             onMainFrameStarted(url)
@@ -1221,6 +1407,7 @@ private class EmbedWebViewClient(
         view.evaluateJavascript(ANTI_REDIRECT_JS, null)
         view.evaluateJavascript(HIDE_PLAYER_TITLE_JS, null)
         if (!captionsDefaultOn()) view.evaluateJavascript(DISABLE_CAPTIONS_JS, null)
+        if (startPositionMs > 0) view.evaluateJavascript(resumePlaybackScript(startPositionMs), null)
         // Only the top document's onPageFinished fires with the WebView's own URL.
         if (url != null && url != "about:blank" && url == view.url) {
             DebugLog.i(TAG, "page-finish ${truncUrl(url)}")
@@ -1647,20 +1834,51 @@ private val HIDE_PLAYER_TITLE_JS = """
 """.trimIndent()
 
 /**
- * VidNest currently marks an English text track DEFAULT even on `/dub`.
- * Disable only the initial selection for an English Dub source, then stop;
- * this is deliberately bounded so a later user click can turn captions on.
+ * VidNest currently marks an English text track DEFAULT even on `/dub`, adds
+ * tracks asynchronously, and can restore a saved caption preference. Watch
+ * only the bounded startup window so late tracks are disabled without
+ * fighting a later user click that intentionally turns captions on.
  */
 private val DISABLE_CAPTIONS_JS = """
     (function(){
-      if (window.__dtDisableCaptionsByDefault) return;
-      window.__dtDisableCaptionsByDefault = true;
+      var existing = window.__dtCaptionBootstrap;
+      if (existing) {
+        try { existing.disable(); } catch (e) {}
+        return;
+      }
+
+      var stopped = false;
+      var observer = null;
+      var scanTimer = 0;
+      var stopTimer = 0;
+      var scanQueued = false;
+      var storageReset = false;
+
+      function isCaptionKind(kind) {
+        kind = (kind || '').toLowerCase();
+        return kind === 'captions' || kind === 'subtitles';
+      }
+
+      function resetProviderCaptionPreference() {
+        if (storageReset) return;
+        storageReset = true;
+        try {
+          var raw = localStorage.getItem('vds-player');
+          var prefs = raw ? JSON.parse(raw) : {};
+          if (!prefs || typeof prefs !== 'object' || Array.isArray(prefs)) prefs = {};
+          prefs.captions = false;
+          localStorage.setItem('vds-player', JSON.stringify(prefs));
+        } catch (e) {}
+      }
+
       function disableCaptions() {
+        if (stopped) return;
+        resetProviderCaptionPreference();
         try {
           var tracks = document.querySelectorAll('track');
           for (var i = 0; i < tracks.length; i++) {
-            var kind = (tracks[i].kind || '').toLowerCase();
-            if (kind === 'captions' || kind === 'subtitles') {
+            if (isCaptionKind(tracks[i].kind)) {
+              tracks[i].default = false;
               tracks[i].removeAttribute('default');
             }
           }
@@ -1668,18 +1886,91 @@ private val DISABLE_CAPTIONS_JS = """
           for (var j = 0; j < media.length; j++) {
             var textTracks = media[j].textTracks || [];
             for (var k = 0; k < textTracks.length; k++) {
-              var textKind = (textTracks[k].kind || '').toLowerCase();
-              if (textKind === 'captions' || textKind === 'subtitles') {
+              if (isCaptionKind(textTracks[k].kind)) {
                 textTracks[k].mode = 'disabled';
               }
             }
           }
         } catch (e) {}
       }
-      var delays = [0, 100, 250, 500, 1000, 2000, 4000, 8000, 16000];
-      for (var d = 0; d < delays.length; d++) {
-        setTimeout(disableCaptions, delays[d]);
+
+      function hookMedia(media) {
+        if (media.__dtCaptionHooks) return;
+        media.__dtCaptionHooks = true;
+        try {
+          media.textTracks.addEventListener('addtrack', disableCaptions);
+          media.textTracks.addEventListener('change', disableCaptions);
+        } catch (e) {}
+        ['loadstart', 'loadedmetadata', 'durationchange', 'canplay'].forEach(function(name) {
+          try { media.addEventListener(name, disableCaptions); } catch (e) {}
+        });
       }
+
+      function scan() {
+        if (stopped) return;
+        try {
+          var media = document.querySelectorAll('video, audio');
+          for (var i = 0; i < media.length; i++) hookMedia(media[i]);
+        } catch (e) {}
+        disableCaptions();
+      }
+
+      function scheduleScan() {
+        if (stopped || scanQueued) return;
+        scanQueued = true;
+        setTimeout(function() {
+          scanQueued = false;
+          scan();
+        }, 0);
+      }
+
+      function isCaptionControl(node) {
+        for (var i = 0; node && node !== document.body && i < 6; i++, node = node.parentElement) {
+          var tag = (node.tagName || '').toLowerCase();
+          var role = (node.getAttribute && node.getAttribute('role')) || '';
+          if (tag !== 'button' && role !== 'button' && tag !== 'media-captions-button') continue;
+          var text = [
+            node.getAttribute && node.getAttribute('aria-label'),
+            node.getAttribute && node.getAttribute('title'),
+            node.innerText,
+            node.className
+          ].join(' ').toLowerCase();
+          if (/caption|subtitle|closed.?caption/.test(text)) return true;
+        }
+        return false;
+      }
+
+      function stopForUser(event) {
+        if (event && event.type === 'keydown' &&
+            event.key !== 'Enter' && event.key !== ' ' &&
+            event.keyCode !== 13 && event.keyCode !== 23 && event.keyCode !== 66) return;
+        if (isCaptionControl(event && event.target)) stop();
+      }
+
+      function stop() {
+        if (stopped) return;
+        stopped = true;
+        if (observer) observer.disconnect();
+        if (scanTimer) clearInterval(scanTimer);
+        if (stopTimer) clearTimeout(stopTimer);
+        document.removeEventListener('pointerdown', stopForUser, true);
+        document.removeEventListener('click', stopForUser, true);
+        document.removeEventListener('keydown', stopForUser, true);
+      }
+
+      window.__dtCaptionBootstrap = { disable: disableCaptions, stop: stop };
+      document.addEventListener('pointerdown', stopForUser, true);
+      document.addEventListener('click', stopForUser, true);
+      document.addEventListener('keydown', stopForUser, true);
+      try {
+        observer = new MutationObserver(function() { scheduleScan(); });
+        if (document.documentElement) {
+          observer.observe(document.documentElement, { childList: true, subtree: true });
+        }
+      } catch (e) {}
+      scan();
+      scanTimer = setInterval(scan, 250);
+      stopTimer = setTimeout(stop, 60000);
     })();
 """.trimIndent()
 

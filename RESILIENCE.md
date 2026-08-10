@@ -293,3 +293,48 @@ infallible.
 - Next best move: install v0.4.94 on the VSeeBox and test English Dub with
   captions off, manually turn captions on, and exercise the provider's player
   controls during a short buffer stall.
+
+## English Dub physical follow-up (2026-08-10, unreleased)
+
+- Field result: after installing v0.4.94 on the physical box, Naruto:
+  Shippuden English Dub still started with subtitles visible. v0.4.94's
+  one-shot track repair was therefore not sufficient on the real box.
+- Diagnosis: the current VidNest player adds caption tracks asynchronously and
+  its player bundle can restore a caption preference during startup. The
+  emulator reproduced the provider route and confirmed the previous repair
+  could leave a later-added track outside its timer window.
+- Local follow-up: the English Dub WebView now resets only VidNest's caption
+  preference to off, watches the bounded startup window for late-added tracks,
+  and stops that watcher when the user interacts with the caption control.
+  This preserves manual re-enabling instead of continuously forcing captions
+  off.
+- Verification: debug/release assembly, `lintDebug`, `testDebugUnitTest`, and
+  `git diff --check` passed. The emulator loaded the real Naruto English-Dub
+  VidNest route; the provider preference was `false`, a synthetic late track
+  was disabled, and a track added after the simulated caption-control
+  interaction remained untouched.
+- Release boundary: the follow-up is local and uncommitted on top of
+  v0.4.94. It has not been pushed or installed on the physical VSeeBox. The
+  next release should be v0.4.95 / versionCode 109 only after this change is
+  reviewed and the normal release gate passes.
+
+## Continue Watching WebView resume follow-up (2026-08-10, unreleased)
+
+- Issue: native playback already carried saved positions, but DirectEmbed
+  anime/movie routes did not report the WebView HTML5 video's `currentTime`.
+  Continue Watching therefore stayed at its initial position and reopened
+  those episodes from the beginning.
+- Fix: the WebPlayer now receives the route's saved position, seeks the
+  provider video after metadata is available, saves position/duration every
+  two seconds, and captures a final position when the route is left. The
+  existing source picker continues to carry the same resume position into the
+  selected Sub/Dub player.
+- Verification: debug assembly, `lintDebug`, `testDebugUnitTest`, and
+  `git diff --check` passed. On the API-30 TV emulator, Naruto: Shippuden
+  Episode 1 played to about 84.9 seconds, was exited, reopened from Continue
+  Watching, and the real VidNest WebView reported `targetMs=84853` with the
+  HTML5 video resumed from that saved point.
+- Release boundary: this follow-up is local and uncommitted on top of
+  v0.4.94, together with the English Dub caption follow-up. It has not been
+  pushed or installed on the physical VSeeBox. The next release remains
+  v0.4.95 / versionCode 109 after review and the normal release gate.
