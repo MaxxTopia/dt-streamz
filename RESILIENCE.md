@@ -347,7 +347,7 @@ infallible.
   the saved position, and verify English Dub captions start off while manual
   captions can still be enabled.
 
-## Playback smoothness, Adventure Time, captions, and debug-upload follow-up (2026-08-12, unreleased)
+## Playback smoothness, Adventure Time, captions, and debug-upload follow-up (2026-08-12, v0.4.96)
 
 - Buffering diagnosis: auto telemetry was already fire-and-forget on
   `Dispatchers.IO`, so it was not on the WebView playback hot path. The
@@ -374,17 +374,19 @@ infallible.
   `sent: 36`.
 - Verification: debug/release assembly, `lintDebug` (0 errors, existing
   warnings only), `testDebugUnitTest` (no test sources), and `git diff --check`
-  passed. The rebuilt debug APK installed on `Television_1080p` as versionCode
-  109. Adventure Time resolved to TMDb TV id `15260`, Episode 1 reached a
-  ready VidFast stream with 720p segments and a healthy buffer. Naruto:
-  Shippuden Episode 1 English Dub reached VidNest with
+  passed. The rebuilt release APK installed on `Television_1080p` as
+  versionCode 110. Adventure Time resolved to TMDb TV id `15260`, Episode 1
+  reached a ready VidFast stream with 720p segments and a healthy buffer.
+  Naruto: Shippuden Episode 1 English Dub reached VidNest with
   `vds-player.captions=false` and every inspected caption track disabled.
-- Release boundary: these local changes are not committed, pushed, or
-  published. The signed v0.4.95 release remains the current public release.
+- Release boundary: v0.4.96 / versionCode 110 was committed as `2ccacb4`,
+  pushed to `main` and tag `v0.4.96`, and published by the signed GitHub
+  release workflow. The public APK returned HTTP 200 at
+  `https://github.com/MaxxTopia/dt-streamz/releases/download/v0.4.96/dt-streamz.apk`.
   The physical VSeeBox still needs a real-device check for buffering over the
   user's network, Adventure Time playback, English-Dub caption default, and
   the report button. Preserve the unrelated dirty `telemetry-worker` WIP and
-  untracked workspace captures when staging this follow-up.
+  untracked workspace captures.
 
 ## Playback resilience audit (2026-08-12)
 
