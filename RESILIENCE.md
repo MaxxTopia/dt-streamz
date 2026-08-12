@@ -346,3 +346,67 @@ infallible.
   to install v0.4.95, resume Naruto: Shippuden after a short watch, confirm
   the saved position, and verify English Dub captions start off while manual
   captions can still be enabled.
+
+## Playback smoothness, Adventure Time, captions, and debug-upload follow-up (2026-08-12, unreleased)
+
+- Buffering diagnosis: auto telemetry was already fire-and-forget on
+  `Dispatchers.IO`, so it was not on the WebView playback hot path. The
+  VidFast provider was instead choosing its highest rendition when its
+  `level` preference was missing/Auto. Fresh or Auto VidFast sessions now
+  start at 720p, preserve an explicit user/provider choice, set media
+  `preload=auto` during the short startup window, and deduplicate repeated
+  blocked-host diagnostics so ad-heavy mirrors do not churn the log ring.
+- Fallback diagnosis: a dead mirror could expose a `<video>` element before
+  its media had loaded and be accepted as playable. The WebView probe now
+  distinguishes ready, pending, and cross-origin wrapper signals; pending
+  real players receive the normal startup window, while an element that
+  never becomes ready can advance to the next mirror.
+- Caption follow-up: the English-Dub bootstrap now walks same-origin provider
+  frames, normalizes event callbacks to the document before querying tracks,
+  sweeps every 750 ms for up to 120 seconds, and still stops when the user
+  interacts with the caption control. This is bounded to avoid decoder/UI
+  contention and preserves manual caption re-enabling.
+- Debug upload diagnosis: the telemetry worker's conservative request ceiling
+  rejected large full-ring snapshots. The app now sends the newest diagnostic
+  lines, trims long entries, and keeps the JSON body under 3 KB while
+  reporting the original `count` and sent-line count. The live endpoint
+  accepted a real emulator upload from v0.4.95-debug with `count: 43` and
+  `sent: 36`.
+- Verification: debug/release assembly, `lintDebug` (0 errors, existing
+  warnings only), `testDebugUnitTest` (no test sources), and `git diff --check`
+  passed. The rebuilt debug APK installed on `Television_1080p` as versionCode
+  109. Adventure Time resolved to TMDb TV id `15260`, Episode 1 reached a
+  ready VidFast stream with 720p segments and a healthy buffer. Naruto:
+  Shippuden Episode 1 English Dub reached VidNest with
+  `vds-player.captions=false` and every inspected caption track disabled.
+- Release boundary: these local changes are not committed, pushed, or
+  published. The signed v0.4.95 release remains the current public release.
+  The physical VSeeBox still needs a real-device check for buffering over the
+  user's network, Adventure Time playback, English-Dub caption default, and
+  the report button. Preserve the unrelated dirty `telemetry-worker` WIP and
+  untracked workspace captures when staging this follow-up.
+
+## Playback resilience audit (2026-08-12)
+
+| Failure | Blast radius | Detection signal | Fix class | Current plan B |
+|---|---|---|---|---|
+| VidFast or its CDN changes/fails | SOME users to EVERYONE using that mirror | `playback_failed`, exhausted mirror logs, no ready media | REBUILD | Start at 720p, fail through the configured fallback mirrors, and expose Choose server; do not claim provider uptime. |
+| Box DNS, ISP filtering, or adblock blocks the media path | SOME users, potentially every title on one box/network | blocked-host ring entries plus `video-pending`/no media | RESTART/config | Preserve the media allowlist, keep the main frame alive, and show the existing DNS/adblock guidance after all mirrors fail. |
+| Provider silently raises default bitrate | EVERYONE on fresh/Auto VidFast sessions | buffering reports with a ready player but low throughput | REBUILD | Default fresh/Auto sessions to 720p while preserving explicit provider choices; the physical box test remains required. |
+| VidNest changes its subtitle bootstrap | SOME anime users | caption-default complaint or provider track mode not `disabled` | REBUILD | Keep the bounded preference reset, same-origin-frame scan, and manual-control escape; ship a targeted patch if the provider contract changes. |
+| Telemetry endpoint rejects or cannot receive a report | EVERYONE needing remote diagnosis, not playback itself | upload HTTP/error log and failure toast | HOT-ish client path | Compact to under 3 KB, retain the local debug viewer, and make report failure non-blocking to playback. |
+| A bad release regresses all four paths | EVERYONE who installs it | assembly/lint/emulator gates plus live failure spike | REBUILD | Keep v0.4.95 as the public rollback point until the physical-box gate passes; publish only with explicit release authorization. |
+
+### Prioritized safeguard backlog
+
+1. Add a small versioned remote-config channel with cached last-known-good
+   behavior. The first safe switches should be `vidfast_start_level`, mirror
+   ordering, and a provider disable flag. This is not built in this follow-up;
+   until then, provider-wide changes require a rebuild and release.
+2. Add anonymous aggregate counters for `playback_failed`, ready-player
+   buffer stalls, and report-upload failures, then route only thresholded
+   incidents through the existing telemetry/Discord alert path. Do not upload
+   viewing history or raw URLs as a detector.
+3. After the physical VSeeBox check, decide whether a separate low-bandwidth
+   preference is needed. Do not raise the default above 720p based only on the
+   emulator's faster network.

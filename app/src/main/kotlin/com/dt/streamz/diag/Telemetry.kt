@@ -12,6 +12,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.nio.charset.StandardCharsets
 
 /**
  * Fire-and-forget auto error reporting. When playback or stream resolution
@@ -74,20 +75,46 @@ object Telemetry {
      */
     suspend fun sendDebugLog(lines: List<String>): Boolean = withContext(Dispatchers.IO) {
         runCatching {
+            // The telemetry endpoint deliberately keeps POSTs small. A full
+            // 400-line ring snapshot can exceed that limit and used to make
+            // the Settings button look broken even though the network was
+            // fine. Keep the newest, most diagnostic lines and fit the final
+            // JSON below the endpoint's conservative request ceiling.
+            val compact = lines
+                .takeLast(MAX_DEBUG_UPLOAD_LINES)
+                .map { it.takeLast(MAX_DEBUG_LINE_CHARS) }
+                .toMutableList()
             val obj = JSONObject()
             obj.put("kind", "debug_dump")
             obj.put("app", appVersion)
             obj.put("count", lines.size)
             val arr = JSONArray()
-            lines.forEach { arr.put(it) }
+            compact.forEach { arr.put(it) }
             obj.put("lines", arr)
+            while (obj.toString().toByteArray(StandardCharsets.UTF_8).size > MAX_DEBUG_UPLOAD_BYTES && compact.size > 1) {
+                compact.removeAt(0)
+                arr.remove(0)
+            }
+            obj.put("sent", compact.size)
+            val payload = obj.toString()
             val req = Request.Builder()
                 .url(URL)
-                .post(obj.toString().toRequestBody(jsonMedia))
+                .header("Accept", "application/json")
+                .post(payload.toRequestBody(jsonMedia))
                 .build()
-            Http.client.newCall(req).execute().use { it.isSuccessful }
-        }.getOrDefault(false)
+            Http.client.newCall(req).execute().use {
+                if (!it.isSuccessful) {
+                    DebugLog.w(TAG, "debug log upload HTTP ${it.code}")
+                }
+                it.isSuccessful
+            }
+        }.onFailure { DebugLog.w(TAG, "debug log upload failed: ${it.message}") }
+            .getOrDefault(false)
     }
 
     private const val TAG = "Telemetry"
+
+    private const val MAX_DEBUG_UPLOAD_LINES = 36
+    private const val MAX_DEBUG_LINE_CHARS = 140
+    private const val MAX_DEBUG_UPLOAD_BYTES = 3_000
 }

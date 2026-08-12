@@ -68,6 +68,7 @@ import com.dt.streamz.adblock.HostBlocker
 import com.dt.streamz.data.StreamSource
 import com.dt.streamz.diag.DebugLog
 import java.io.ByteArrayInputStream
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -109,6 +110,34 @@ private const val NEXT_MEDIA_CHECK_MS = 6_000L
  */
 private const val FIRST_BLANK_CUTOFF_MS = 6_000L
 private const val NEXT_BLANK_CUTOFF_MS = 3_500L
+
+/**
+ * VidFast chooses its highest rendition when its `level` preference is
+ * missing or set to Auto. That is commonly 1080p, which leaves too little
+ * throughput headroom on the TV box. Preserve an existing explicit choice,
+ * but make a fresh/Auto session start at the box-safe 720p level.
+ */
+private val PREPARE_VIDFAST_PLAYBACK_JS = """
+    (function(){
+      if (window.__dtVidfastPlaybackPrep) return;
+      window.__dtVidfastPlaybackPrep = true;
+      function apply(){
+        try {
+          var host = (location.hostname || '').toLowerCase();
+          if (host !== 'vidfast.pro' && host !== 'vidfast.vc') return;
+          var level = localStorage.getItem('level');
+          if (!level || level.toLowerCase() === 'auto') localStorage.setItem('level', '720');
+          var media = document.querySelectorAll('video');
+          for (var i = 0; i < media.length; i++) media[i].preload = 'auto';
+        } catch (e) {}
+      }
+      // The provider mounts its React player after the first document
+      // callback, so retry only during startup rather than polling forever.
+      [0, 150, 500, 1200, 2500, 5000].forEach(function(delayMs){
+        setTimeout(apply, delayMs);
+      });
+    })();
+""".trimIndent()
 
 // WebView embeds do not expose ExoPlayer's position callbacks. Polling the
 // HTML5 media element keeps the saved position current without installing a
@@ -452,12 +481,12 @@ fun WebPlayerScreen(
             val wv = webViewRef ?: return@LaunchedEffect
             val signal = probeForPlayer(wv)
             lastSignal = signal
-            if (signal == "media" || signal == "video" || signal == "iframe-video") {
+            if (signal == "media" || signal == "video-ready" || signal == "iframe-video-ready") {
                 DebugLog.i(TAG, "play confirmed mirror=$mirrorIndex via $signal")
                 reportMirror(activeUrl, success = true)
                 return@LaunchedEffect
             }
-            if (signal == "iframe-cross-origin") sawPlayer = true
+            if (signal == "iframe-cross-origin" || signal == "video-pending") sawPlayer = true
             // Fast-fail a dead wrapper: if NO player element of any kind has
             // appeared within BLANK_CUTOFF_MS, this mirror is blank — don't
             // burn the full 18s before walking to the next one. (Players that
@@ -1241,8 +1270,9 @@ private fun readWebProgressAsync(webView: WebView, onProgress: (WebProgress) -> 
  *     vidsrc -> vsembed -> cloudnestra iframe chain.
  *
  * Returns one of: "media" (real playback confirmed by network traffic),
- * "video" / "iframe-video" (DOM-side player present, traffic might catch
- * up), "iframe-cross-origin" (just a wrapper, weakest signal), "none".
+ * "video-ready" / "iframe-video-ready" (a DOM-side player has metadata and
+ * can play), "video-pending" (a player tag exists but its media has not
+ * loaded), "iframe-cross-origin" (a wrapper we cannot inspect), or "none".
  *
  * Caller decides what to accept. Strong gate = require "media".
  */
@@ -1263,20 +1293,40 @@ private suspend fun probeForPlayer(webView: WebView): String {
             }
           } catch (e) {}
 
-          if (document.querySelector('video')) return 'video';
-          var frames = document.querySelectorAll('iframe');
+          var sawVideo = false;
           var sawCrossOrigin = false;
-          for (var i = 0; i < frames.length; i++) {
-            var src = frames[i].getAttribute('src') || '';
-            if (!src || src.indexOf('about:') === 0) continue;
+          function inspect(root, nested) {
             try {
-              var doc = frames[i].contentDocument;
-              if (doc && doc.querySelector('video')) return 'iframe-video';
-            } catch (e) {
-              sawCrossOrigin = true;
-            }
+              var media = root.querySelectorAll('video');
+              for (var m = 0; m < media.length; m++) {
+                sawVideo = true;
+                var v = media[m];
+                var duration = Number(v.duration);
+                if (v.readyState >= 2 || (isFinite(duration) && duration > 0)) {
+                  return nested ? 'iframe-video-ready' : 'video-ready';
+                }
+              }
+              var frames = root.querySelectorAll('iframe');
+              for (var i = 0; i < frames.length; i++) {
+                var src = frames[i].getAttribute('src') || '';
+                if (!src || src.indexOf('about:') === 0) continue;
+                try {
+                  var doc = frames[i].contentDocument;
+                  if (doc) {
+                    var nestedResult = inspect(doc, true);
+                    if (nestedResult) return nestedResult;
+                  }
+                } catch (e) {
+                  sawCrossOrigin = true;
+                }
+              }
+            } catch (e) {}
+            return null;
           }
+          var inspected = inspect(document, false);
+          if (inspected) return inspected;
           if (sawCrossOrigin) return 'iframe-cross-origin';
+          if (sawVideo) return 'video-pending';
           return 'none';
         })();
     """.trimIndent()
@@ -1390,9 +1440,12 @@ private class EmbedWebViewClient(
     private val injectEndedHook: Boolean = false,
 ) : WebViewClient() {
 
+    private val blockedHostsLogged = ConcurrentHashMap.newKeySet<String>()
+
     override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
         super.onPageStarted(view, url, favicon)
         view.evaluateJavascript(ANTI_REDIRECT_JS, null)
+        view.evaluateJavascript(PREPARE_VIDFAST_PLAYBACK_JS, null)
         view.evaluateJavascript(HIDE_PLAYER_TITLE_JS, null)
         if (!captionsDefaultOn()) view.evaluateJavascript(DISABLE_CAPTIONS_JS, null)
         if (startPositionMs > 0) view.evaluateJavascript(resumePlaybackScript(startPositionMs), null)
@@ -1405,6 +1458,7 @@ private class EmbedWebViewClient(
     override fun onPageFinished(view: WebView, url: String?) {
         super.onPageFinished(view, url)
         view.evaluateJavascript(ANTI_REDIRECT_JS, null)
+        view.evaluateJavascript(PREPARE_VIDFAST_PLAYBACK_JS, null)
         view.evaluateJavascript(HIDE_PLAYER_TITLE_JS, null)
         if (!captionsDefaultOn()) view.evaluateJavascript(DISABLE_CAPTIONS_JS, null)
         if (startPositionMs > 0) view.evaluateJavascript(resumePlaybackScript(startPositionMs), null)
@@ -1532,7 +1586,12 @@ private class EmbedWebViewClient(
         if (CDN_ALLOWLIST_SUFFIXES.any { host == it || host.endsWith(".$it") }) return null
 
         if (blocker?.isBlocked(host) == true) {
-            DebugLog.d(TAG, "blocked $host path=$path main=$main")
+            // Ad-heavy mirrors can request the same blocked host hundreds of
+            // times. Keep a diagnostic hint, but do not turn the debug ring
+            // and logcat into playback work themselves.
+            if (blockedHostsLogged.add(host)) {
+                DebugLog.d(TAG, "blocked $host path=$path main=$main")
+            }
             onResourceBlocked(host)
             return blockedResourceResponse()
         }
@@ -1871,18 +1930,19 @@ private val DISABLE_CAPTIONS_JS = """
         } catch (e) {}
       }
 
-      function disableCaptions() {
+      function disableCaptions(root) {
         if (stopped) return;
         resetProviderCaptionPreference();
         try {
-          var tracks = document.querySelectorAll('track');
+          root = root && typeof root.querySelectorAll === 'function' ? root : document;
+          var tracks = root.querySelectorAll('track');
           for (var i = 0; i < tracks.length; i++) {
             if (isCaptionKind(tracks[i].kind)) {
               tracks[i].default = false;
               tracks[i].removeAttribute('default');
             }
           }
-          var media = document.querySelectorAll('video, audio');
+          var media = root.querySelectorAll('video, audio');
           for (var j = 0; j < media.length; j++) {
             var textTracks = media[j].textTracks || [];
             for (var k = 0; k < textTracks.length; k++) {
@@ -1909,10 +1969,22 @@ private val DISABLE_CAPTIONS_JS = """
       function scan() {
         if (stopped) return;
         try {
-          var media = document.querySelectorAll('video, audio');
-          for (var i = 0; i < media.length; i++) hookMedia(media[i]);
+          function visit(root, nested) {
+            var media = root.querySelectorAll('video, audio');
+            for (var i = 0; i < media.length; i++) hookMedia(media[i]);
+            disableCaptions(root);
+            // VidNest currently renders in the top document, but walking
+            // same-origin frames makes the default deterministic if its
+            // player shell moves without granting access to cross-origin ads.
+            var frames = root.querySelectorAll('iframe');
+            for (var j = 0; j < frames.length; j++) {
+              try {
+                if (frames[j].contentDocument) visit(frames[j].contentDocument, true);
+              } catch (e) {}
+            }
+          }
+          visit(document, false);
         } catch (e) {}
-        disableCaptions();
       }
 
       function scheduleScan() {
@@ -1969,8 +2041,10 @@ private val DISABLE_CAPTIONS_JS = """
         }
       } catch (e) {}
       scan();
-      scanTimer = setInterval(scan, 250);
-      stopTimer = setTimeout(stop, 60000);
+      // A slower bounded sweep avoids competing with media decoding on the
+      // low-power box while the MutationObserver still catches late tracks.
+      scanTimer = setInterval(scan, 750);
+      stopTimer = setTimeout(stop, 120000);
     })();
 """.trimIndent()
 
