@@ -484,8 +484,14 @@ infallible.
   debug build, showed 500 flat episodes, Resume Ep 320 plus Next Ep 321, the
   three-color legend, and filler labels in the rendered grid. No crash was
   observed in the app launch, Anime tab, or Naruto details path.
-- Release boundary: v0.4.98 / versionCode 112 is prepared locally but this
-  checkpoint is pending the signed workflow publication.
+- Release boundary: v0.4.98 / versionCode 112 was committed as `2027dff`,
+  pushed to `main` and tag `v0.4.98`, and published by GitHub Actions run
+  `31915749977`. The non-draft, non-prerelease release is live at
+  `https://github.com/MaxxTopia/dt-streamz/releases/tag/v0.4.98`; its APK
+  returned HTTP 200 at
+  `https://github.com/MaxxTopia/dt-streamz/releases/download/v0.4.98/dt-streamz.apk`.
+  Hosted metadata is `com.dt.streamz` / versionCode 112 / versionName 0.4.98
+  and the release signing certificate is `CN=DT Streamz, O=Personal, L=Local, C=US`.
 - Device boundary: the physical VSeeBox still needs the human check for card
   colors, completed-history persistence after watching several episodes,
   Next Episode behavior, English Dub captions, and provider skip controls.
