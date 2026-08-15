@@ -43,10 +43,13 @@ import androidx.compose.ui.input.key.nativeKeyCode
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import com.dt.streamz.DtApplication
+import com.dt.streamz.data.CANONICAL_ANILIST_PROVIDER_ID
 import com.dt.streamz.data.MediaKind
 import com.dt.streamz.data.StreamKind
 import com.dt.streamz.data.StreamSource
 import com.dt.streamz.data.WatchEntry
+import com.dt.streamz.data.canonicalSearchTitle
+import com.dt.streamz.data.canonicalizedForCatalog
 import com.dt.streamz.data.displayLabel
 import com.dt.streamz.networkmonitor.NetworkIndicator
 import com.dt.streamz.scraper.Binge
@@ -319,56 +322,79 @@ fun DtApp() {
                 },
                 onResume = { entry ->
                     scope.launch {
+                        // The store normally canonicalizes known aliases, but
+                        // normalize again at this boundary so an old in-memory
+                        // row can never route through a stale provider key.
+                        val resumeEntry = entry.canonicalizedForCatalog()
                         // Continue Watching is persisted across process restarts,
                         // while several providers keep search metadata only in
                         // memory. Re-hydrate and verify the canonical title
                         // before asking any provider for a stream. In particular,
                         // never reconstruct an episode from only the saved number:
                         // a provider must confirm the exact episode id and kind.
-                        val provider = runCatching { registry.get(entry.providerId) }.getOrNull()
+                        val provider = runCatching { registry.get(resumeEntry.providerId) }.getOrNull()
                         if (provider == null) {
-                            Toast.makeText(ctx, "Saved title source is no longer available", Toast.LENGTH_SHORT).show()
+                            app.continueWatching.remove(resumeEntry.providerId, resumeEntry.titleId)
+                            Toast.makeText(ctx, "Saved item was removed because its source is no longer available", Toast.LENGTH_SHORT).show()
                             return@launch
                         }
-                        val details = Binge.details(provider, entry.titleId)
-                        if (details == null || details.providerId != entry.providerId || details.id != entry.titleId) {
-                            Log.e(TAG, "resume refused: title identity could not be verified ${entry.providerId}:${entry.titleId}")
-                            Toast.makeText(ctx, "Couldn't verify this title. Open it again from Search.", Toast.LENGTH_SHORT).show()
+                        val details = Binge.details(provider, resumeEntry.titleId)
+                        if (details == null ||
+                            details.providerId != resumeEntry.providerId ||
+                            details.id != resumeEntry.titleId ||
+                            canonicalSearchTitle(details.title) != canonicalSearchTitle(resumeEntry.titleName)
+                        ) {
+                            Log.e(TAG, "resume refused: saved title identity did not match ${resumeEntry.providerId}:${resumeEntry.titleId}")
+                            app.continueWatching.remove(resumeEntry.providerId, resumeEntry.titleId)
+                            Toast.makeText(ctx, "Saved item no longer matches its source and was removed", Toast.LENGTH_SHORT).show()
                             return@launch
                         }
-                        val savedKind = entry.kind?.let { raw ->
+                        val savedKind = resumeEntry.kind?.let { raw ->
                             runCatching { MediaKind.valueOf(raw) }.getOrNull()
                         }
                         if (savedKind != null && savedKind != details.kind) {
                             Log.e(
                                 TAG,
-                                "resume refused: kind mismatch ${entry.providerId}:${entry.titleId} " +
+                                "resume refused: kind mismatch ${resumeEntry.providerId}:${resumeEntry.titleId} " +
                                     "saved=$savedKind resolved=${details.kind}",
                             )
-                            app.continueWatching.remove(entry.providerId, entry.titleId)
+                            app.continueWatching.remove(resumeEntry.providerId, resumeEntry.titleId)
                             Toast.makeText(ctx, "This saved entry was invalid and was removed", Toast.LENGTH_SHORT).show()
                             return@launch
                         }
-                        val ep = details.episodes.firstOrNull { it.id == entry.episodeId }
+                        val ep = details.episodes.firstOrNull { it.id == resumeEntry.episodeId }
                         if (ep == null) {
                             Log.e(
                                 TAG,
-                                "resume refused: episode ${entry.episodeId} is not in " +
-                                    "${entry.providerId}:${entry.titleId}",
+                                "resume refused: episode ${resumeEntry.episodeId} is not in " +
+                                    "${resumeEntry.providerId}:${resumeEntry.titleId}",
                             )
-                            app.continueWatching.remove(entry.providerId, entry.titleId)
+                            app.continueWatching.remove(resumeEntry.providerId, resumeEntry.titleId)
                             Toast.makeText(ctx, "This saved episode is no longer available", Toast.LENGTH_SHORT).show()
                             return@launch
                         }
 
+                        // Persist the verified identity/title/poster after a
+                        // successful migration so the old provider cannot come
+                        // back after the next process restart.
+                        val verifiedEntry = resumeEntry.copy(
+                            titleName = details.title,
+                            poster = details.poster ?: resumeEntry.poster,
+                            episodeId = ep.id,
+                            episodeNumber = ep.number,
+                            episodeTitle = ep.title,
+                            kind = details.kind.name,
+                        )
+                        app.continueWatching.record(verifiedEntry)
+
                         // Up Next: if the saved episode is finished, roll into
                         // the next canonical episode instead of replaying it.
-                        if (isFinished(entry)) {
+                        if (isFinished(verifiedEntry)) {
                             val idx = details.episodes.indexOfFirst { it.id == ep.id }
                             val next = if (idx >= 0) details.episodes.getOrNull(idx + 1) else null
                             if (next != null) {
                                 playEpisode(
-                                    entry.providerId, entry.titleId, next,
+                                    verifiedEntry.providerId, verifiedEntry.titleId, next,
                                     details.title, details.poster ?: entry.poster,
                                     details.kind.name,
                                 )
@@ -377,8 +403,8 @@ fun DtApp() {
                             // Last episode -> replay the exact verified episode.
                         }
 
-                        val resumeMs = resumeStartMs(entry, ep.id)
-                        val sourcesResult = runCatching { provider.streams(entry.titleId, ep) }
+                        val resumeMs = resumeStartMs(verifiedEntry, ep.id)
+                        val sourcesResult = runCatching { provider.streams(verifiedEntry.titleId, ep) }
                         val sources = sourcesResult.getOrNull()
                         if (sources == null) {
                             val error = sourcesResult.exceptionOrNull()
@@ -387,13 +413,13 @@ fun DtApp() {
                             return@launch
                         }
                         if (sources.isEmpty()) {
-                            Log.e(TAG, "resume refused: provider returned no verified sources for ${entry.providerId}:${entry.titleId}:${ep.id}")
+                            Log.e(TAG, "resume refused: provider returned no verified sources for ${verifiedEntry.providerId}:${verifiedEntry.titleId}:${ep.id}")
                             Toast.makeText(ctx, "This title has no verified playback source right now", Toast.LENGTH_SHORT).show()
                             return@launch
                         }
                         routeForSources(
                             "${details.title} · ${ep.displayLabel()}", sources,
-                            entry.providerId, entry.titleId, ep.id, resumeMs,
+                            verifiedEntry.providerId, verifiedEntry.titleId, ep.id, resumeMs,
                         )?.let { push(it) }
                     }
                 },
@@ -774,13 +800,14 @@ private fun TabsDestination(
                 onOpenTitle = onOpenTitle,
                 scopeKey = "anime",
                 kindFilter = { it == MediaKind.Anime },
-                resultFilter = { it.kind == MediaKind.Anime && it.providerId != "youtube" },
+                providerFilter = { it.id == CANONICAL_ANILIST_PROVIDER_ID },
+                resultFilter = { it.kind == MediaKind.Anime && it.providerId == CANONICAL_ANILIST_PROVIDER_ID },
                 placeholder = "🔍  Search anime…",
                 idleContent = {
                     HomeScreen(
                         title = "Anime",
                         registry = app.providerRegistry,
-                        providerFilter = { it.supportsAnime },
+                        providerFilter = { it.id == CANONICAL_ANILIST_PROVIDER_ID },
                         kindFilter = { it == MediaKind.Anime },
                         cwKind = MediaKind.Anime,
                         continueWatching = app.continueWatching,
@@ -872,6 +899,8 @@ private fun TabsDestination(
                 registry = app.providerRegistry,
                 favorites = app.favorites,
                 onOpenTitle = onOpenTitle,
+                providerFilter = { !it.supportsYouTube },
+                resultFilter = { it.providerId != "youtube" },
             )
             Section.Settings -> SettingsScreen()
         }

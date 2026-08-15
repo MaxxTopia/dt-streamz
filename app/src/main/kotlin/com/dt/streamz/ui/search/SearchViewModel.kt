@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.dt.streamz.data.SearchResult
+import com.dt.streamz.data.mergeCatalogSearchResults
 import com.dt.streamz.scraper.Provider
 import com.dt.streamz.scraper.ProviderRegistry
 import kotlinx.coroutines.FlowPreview
@@ -30,6 +31,9 @@ class SearchViewModel(
     // because YouTube video metadata can be reported as Movie even though it
     // does not belong in the Movies catalog tab.
     private val resultFilter: (SearchResult) -> Boolean = { true },
+    // The global catalog must not even query YouTube. YouTube has its own tab
+    // and its video-shaped Movie results are not catalog titles.
+    private val providerFilter: (Provider) -> Boolean = { true },
 ) : ViewModel() {
 
     private val _query = MutableStateFlow("")
@@ -71,15 +75,16 @@ class SearchViewModel(
         activeJob?.cancel()
         _state.value = SearchState.Loading
         activeJob = viewModelScope.launch {
-            val providers: List<Provider> = registry.all
+            val providers: List<Provider> = registry.all.filter(providerFilter)
             // Query every provider in parallel — serial was N round-trips of
             // latency stacked end to end. A provider that throws contributes
             // nothing rather than failing the whole search.
             val outcomes = providers
                 .map { p -> async { runCatching { p.search(q) } } }
                 .awaitAll()
-            val merged = outcomes.mapNotNull { it.getOrNull() }.flatten()
-                .filter(resultFilter)
+            val merged = mergeCatalogSearchResults(
+                outcomes.mapNotNull { it.getOrNull() }.flatten().filter(resultFilter),
+            )
             // Distinguish "nobody had a match" (Loaded, empty -> "No results")
             // from "every source errored" (Error -> tells the user it's a
             // connection problem, not an empty catalog).
@@ -95,9 +100,10 @@ class SearchViewModel(
     class Factory(
         private val registry: ProviderRegistry,
         private val resultFilter: (SearchResult) -> Boolean = { true },
+        private val providerFilter: (Provider) -> Boolean = { true },
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            SearchViewModel(registry, resultFilter) as T
+            SearchViewModel(registry, resultFilter, providerFilter) as T
     }
 }

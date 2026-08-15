@@ -412,3 +412,44 @@ infallible.
 3. After the physical VSeeBox check, decide whether a separate low-bandwidth
    preference is needed. Do not raise the default above 720p based only on the
    emulator's faster network.
+
+## Naruto catalog identity, server fallback, and YouTube live DVR (2026-08-15, v0.4.97)
+
+- Naruto regression boundary: the search path allowed AniList, Anicrush, and
+  TV-shaped VidSrc results to compete for the same title. Continue Watching
+  persisted the winning provider/title key, so an older or removed key could
+  open a different episode list before failing. The corrected catalog now
+  treats AniList id `1735` as the canonical Naruto: Shippuden identity,
+  migrates known saved aliases while preserving episode/resume state, compares
+  saved and resolved titles before playback, and removes unverifiable stale
+  entries instead of routing them to a guessed source.
+- Source boundary: the canonical result resolves the existing VidNest routes
+  with an explicit English Dub and Original Japanese Audio + Subtitles picker.
+  The live VidNest player currently exposes Aniwave, Megaplay, and Anitaku
+  server paths with automatic fallback. The old AnimeKai/Aniwatch-family
+  scraper remains inactive because its resolver is Cloudflare/DNS dependent;
+  it is not allowed to compete with the canonical AniList identity. No mirror
+  URL is invented when AniList is unavailable; the known Naruto title is
+  omitted rather than replaced by a seasonal/no-picker result.
+- YouTube live boundary: a live HLS timeline is checked after playlist refresh
+  for a seekable DVR window. When available, the TV player exposes DVR start,
+  30-minute rewind/forward, and Go live controls in the remote options panel;
+  the native Media3 time bar remains available when the box exposes it.
+- Verification: the debug APK compiled and installed on the API-30 TV
+  emulator. A real AniList search produced one canonical Naruto series result;
+  details showed 500 flat episodes, Episode 320 was directly visible, the
+  source picker showed English Dub plus Original Japanese Audio + Subtitles,
+  and the real VidNest Episode 320 Dub route reached playback. A current
+  YouTube live HLS result played natively, reported a seekable DVR window, and
+  displayed all four DVR controls; tapping DVR start did not crash playback.
+- Release/device boundary: v0.4.97 is the reviewed release candidate for
+  publication. The physical VSeeBox remains the human gate for Continue
+  Watching migration, Naruto Episode 320 Dub/captions, server fallback, and a
+  current YouTube live DVR.
+
+### Added risk register entries
+
+| Failure | Blast radius | Detection signal | Fix class | Current plan B |
+|---|---|---|---|---|
+| Anime providers return the same title with different episode identities | SOME anime users; Naruto was directly affected | duplicate normalized title, title/episode identity mismatch on resume | REBUILD | Canonical AniList catalog, known-entry migration, fail-closed stale-entry removal, explicit Dub/Sub picker |
+| YouTube live HLS has a finite or missing DVR window | SOME live broadcasts | live source but `isCurrentMediaItemSeekable` false or duration unavailable | RESTART/provider boundary | Keep native live playback, show DVR controls only for a verified window, and retain Go live; a provider that publishes no DVR cannot be made rewindable by the client |

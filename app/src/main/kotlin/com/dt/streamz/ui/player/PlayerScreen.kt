@@ -45,6 +45,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
@@ -138,6 +139,10 @@ fun PlayerScreen(
     // Live caption on/off, kept in sync by the player's onTracksChanged so the
     // options panel can show "Captions: On/Off" and toggle it.
     var captionsShown by remember(url) { mutableStateOf(initialCaptionsOn) }
+    // Dynamic HLS can expose a DVR window only after the first playlist
+    // refresh. Keep a state bit so the remote can reach that window even when
+    // Media3 collapses the live scrubber on a particular box.
+    var liveDvrAvailable by remember(url) { mutableStateOf(false) }
     // Brief "press ▲ for options" hint at playback start (discoverability).
     var hintVisible by remember(url) { mutableStateOf(true) }
     // Audio switch: when the user cycles languages we swap [effectiveAudioUrl]
@@ -161,6 +166,12 @@ fun PlayerScreen(
     // STATE_BUFFERING until a manual seek moves it into the DVR window. Live
     // gets a small start buffer; VOD keeps the deep cushion.
     val live = isLive || twitchChannel != null
+    fun updateLiveDvrState(exoPlayer: ExoPlayer) {
+        liveDvrAvailable = live &&
+            exoPlayer.isCurrentMediaItemSeekable &&
+            exoPlayer.duration != C.TIME_UNSET &&
+            exoPlayer.duration > 0
+    }
     val player = remember(url, effectiveAudioUrl) {
         // Deep buffers (VOD): YouTube here is a fixed-bitrate progressive stream
         // with no adaptive downshift, and googlevideo throttles the download —
@@ -176,14 +187,14 @@ fun PlayerScreen(
                 /* bufferForPlaybackAfterRebufferMs = */ if (live) 2_000 else 8_000,
             )
             .build()
-        ExoPlayer.Builder(context)
+        val exoPlayer = ExoPlayer.Builder(context)
             .setLoadControl(loadControl)
             // ±10s jumps for the controller's rewind/fast-forward buttons
             // (and D-pad seek) instead of Media3's 5s/15s defaults.
             .setSeekBackIncrementMs(10_000)
             .setSeekForwardIncrementMs(10_000)
             .build()
-            .apply {
+        exoPlayer.apply {
                 setMediaSource(
                     buildMediaSource(
                         url, streamKind, subtitles, effectiveAudioUrl, initialCaptionsOn, live,
@@ -202,6 +213,13 @@ fun PlayerScreen(
                         captionsShown = textOn
                         // Persist the choice across videos (YouTube only).
                         if (rememberCaptions) playbackPrefs?.setCaptionsOn(textOn)
+                    }
+
+                    // Dynamic HLS timelines can become seekable only after the
+                    // first playlist refresh. Re-check after every timeline
+                    // and playback-state change.
+                    override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+                        updateLiveDvrState(exoPlayer)
                     }
 
                     // Surface fatal failures instead of sitting on a black
@@ -227,6 +245,7 @@ fun PlayerScreen(
                     // resolve + play the next one. No-op for movies / last
                     // episode / live (the host guards on episode context).
                     override fun onPlaybackStateChanged(state: Int) {
+                        updateLiveDvrState(exoPlayer)
                         if (state == Player.STATE_ENDED) onEndedCb()
                     }
                 })
@@ -234,6 +253,17 @@ fun PlayerScreen(
                 prepare()
                 playWhenReady = true
             }
+    }
+
+    fun seekLiveBy(deltaMs: Long) {
+        val duration = player.duration
+        val rawTarget = (player.currentPosition + deltaMs).coerceAtLeast(0L)
+        val target = if (duration != C.TIME_UNSET && duration > 0) {
+            rawTarget.coerceAtMost(duration)
+        } else {
+            rawTarget
+        }
+        player.seekTo(target)
     }
 
     DisposableEffect(url) {
@@ -336,9 +366,31 @@ fun PlayerScreen(
                 LaunchedEffect(Unit) { runCatching { panelFocus.requestFocus() } }
 
                 // Build the visible options in order; the first one gets initial
-                // focus. Audio leads (it's the reason to open the panel), then
-                // captions, speed, and episode nav.
+                // focus. Live DVR controls come first so a current broadcast
+                // remains rewindable when the native live time bar is hidden.
                 val rows = buildList<@Composable (Modifier) -> Unit> {
+                    if (live && liveDvrAvailable) {
+                        add { m ->
+                            PlayerChip("DVR: start", modifier = m) {
+                                player.seekTo(0L)
+                            }
+                        }
+                        add { m ->
+                            PlayerChip("DVR: -30 min", modifier = m) {
+                                seekLiveBy(-30 * 60 * 1_000L)
+                            }
+                        }
+                        add { m ->
+                            PlayerChip("DVR: +30 min", modifier = m) {
+                                seekLiveBy(30 * 60 * 1_000L)
+                            }
+                        }
+                        add { m ->
+                            PlayerChip("Go live", modifier = m) {
+                                player.seekToDefaultPosition()
+                            }
+                        }
+                    }
                     if (audioTracks.size > 1) {
                         val curIdx = audioTracks.indexOfFirst { it.url == effectiveAudioUrl }
                             .let { if (it < 0) 0 else it }

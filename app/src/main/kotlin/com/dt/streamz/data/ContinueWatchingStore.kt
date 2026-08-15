@@ -62,22 +62,20 @@ class ContinueWatchingStore(private val context: Context) {
     private val listSerializer = ListSerializer(WatchEntry.serializer())
 
     val entries: Flow<List<WatchEntry>> = context.continueWatchingStore.data.map { prefs ->
-        val raw = prefs[KEY] ?: return@map emptyList()
-        runCatching { json.decodeFromString(listSerializer, raw) }
-            .getOrDefault(emptyList())
+        canonicalEntries(decodeEntries(prefs[KEY]))
             .filterNot { it.isFinishedMovie() }
     }
 
     suspend fun record(entry: WatchEntry) {
         context.continueWatchingStore.edit { prefs ->
-            val current = runCatching {
-                prefs[KEY]?.let { json.decodeFromString(listSerializer, it) }
-            }.getOrNull() ?: emptyList()
+            val canonicalEntry = entry.canonicalizedForCatalog()
+            val rawCurrent = decodeEntries(prefs[KEY])
+            val current = canonicalEntries(rawCurrent)
             val deduped = current.filterNot {
-                (it.providerId == entry.providerId && it.titleId == entry.titleId) ||
+                (it.providerId == canonicalEntry.providerId && it.titleId == canonicalEntry.titleId) ||
                     it.isFinishedMovie()
             }
-            val merged = (listOf(entry) + deduped).take(MAX_ENTRIES)
+            val merged = (listOf(canonicalEntry) + deduped).take(MAX_ENTRIES)
             prefs[KEY] = json.encodeToString(listSerializer, merged)
         }
     }
@@ -99,10 +97,10 @@ class ContinueWatchingStore(private val context: Context) {
         durationMs: Long,
     ) {
         context.continueWatchingStore.edit { prefs ->
-            val current = runCatching {
-                prefs[KEY]?.let { json.decodeFromString(listSerializer, it) }
-            }.getOrNull() ?: return@edit
-            var changed = false
+            val rawCurrent = decodeEntries(prefs[KEY])
+            if (rawCurrent.isEmpty()) return@edit
+            val current = canonicalEntries(rawCurrent)
+            var changed = current != rawCurrent
             val updated = current.mapNotNull { e ->
                 if (e.providerId == providerId && e.titleId == titleId && e.episodeId == episodeId) {
                     changed = true
@@ -123,9 +121,9 @@ class ContinueWatchingStore(private val context: Context) {
 
     suspend fun remove(providerId: String, titleId: String) {
         context.continueWatchingStore.edit { prefs ->
-            val current = runCatching {
-                prefs[KEY]?.let { json.decodeFromString(listSerializer, it) }
-            }.getOrNull() ?: return@edit
+            val rawCurrent = decodeEntries(prefs[KEY])
+            if (rawCurrent.isEmpty()) return@edit
+            val current = canonicalEntries(rawCurrent)
             val filtered = current.filterNot {
                 it.providerId == providerId && it.titleId == titleId
             }
@@ -137,4 +135,14 @@ class ContinueWatchingStore(private val context: Context) {
     suspend fun clear() {
         context.continueWatchingStore.edit { it.remove(KEY) }
     }
+
+    private fun decodeEntries(raw: String?): List<WatchEntry> =
+        raw?.let { value -> runCatching { json.decodeFromString(listSerializer, value) }.getOrNull() }
+            ?: emptyList()
+
+    /** Canonicalize and collapse aliases before any UI or position update sees them. */
+    private fun canonicalEntries(entries: List<WatchEntry>): List<WatchEntry> =
+        entries
+            .map { it.canonicalizedForCatalog() }
+            .distinctBy { "${it.providerId}:${it.titleId}" }
 }

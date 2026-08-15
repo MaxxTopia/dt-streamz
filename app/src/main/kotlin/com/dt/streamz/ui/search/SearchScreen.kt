@@ -52,6 +52,7 @@ import com.dt.streamz.data.FavoriteEntry
 import com.dt.streamz.data.FavoritesStore
 import com.dt.streamz.data.MediaKind
 import com.dt.streamz.data.SearchResult
+import com.dt.streamz.scraper.Provider
 import com.dt.streamz.scraper.ProviderRegistry
 import kotlinx.coroutines.flow.flowOf
 import com.dt.streamz.ui.theme.focusGlow
@@ -73,6 +74,9 @@ fun SearchScreen(
     // Optional provider-aware guard. Category tabs use this to keep YouTube's
     // loose video metadata out even when it is reported as Movie.
     resultFilter: (SearchResult) -> Boolean = { kindFilter(it.kind) },
+    // Keeps catalog tabs from querying providers that do not belong to their
+    // surface. The global Search tab uses this to keep YouTube in its own tab.
+    providerFilter: (Provider) -> Boolean = { true },
     placeholder: String = "🔍  Search anime, movies, TV…",
     // Shown when no search is active (Idle). The Anime/Movies/TV tabs pass their
     // browse rows here so the tab is "search bar on top, browse below" and only
@@ -81,7 +85,7 @@ fun SearchScreen(
 ) {
     val vm: SearchViewModel = viewModel(
         key = "search:$scopeKey",
-        factory = SearchViewModel.Factory(registry, resultFilter),
+        factory = SearchViewModel.Factory(registry, resultFilter, providerFilter),
     )
     val query by vm.query.collectAsState()
     val state by vm.state.collectAsState()

@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.dt.streamz.data.ContinueWatchingStore
+import com.dt.streamz.data.CANONICAL_ANILIST_PROVIDER_ID
 import com.dt.streamz.data.FavoriteEntry
 import com.dt.streamz.data.FavoritesStore
 import com.dt.streamz.data.MediaKind
@@ -96,7 +97,8 @@ fun GenresScreen(
         GENRES.forEach { genre ->
             val titles = allResults.filter { result ->
                 when (genre) {
-                    "Anime" -> result.kind == MediaKind.Anime
+                    "Anime" -> result.kind == MediaKind.Anime &&
+                        result.providerId == CANONICAL_ANILIST_PROVIDER_ID
                     else -> vidSrc != null && genre in vidSrc.genresFor(result.id)
                 }
             }
