@@ -442,8 +442,13 @@ infallible.
   and the real VidNest Episode 320 Dub route reached playback. A current
   YouTube live HLS result played natively, reported a seekable DVR window, and
   displayed all four DVR controls; tapping DVR start did not crash playback.
-- Release/device boundary: v0.4.97 is the reviewed release candidate for
-  publication. The physical VSeeBox remains the human gate for Continue
+- Release boundary: v0.4.97 / versionCode 111 was committed as `fb4014c`,
+  pushed to `main` and tag `v0.4.97`, and published by GitHub Actions run
+  `31914896564`. The non-draft, non-prerelease release asset returned HTTP 200
+  at `https://github.com/MaxxTopia/dt-streamz/releases/download/v0.4.97/dt-streamz.apk`.
+  The hosted APK is versionCode 111 / versionName 0.4.97 and carries the same
+  release signing certificate as the local build.
+- Device boundary: the physical VSeeBox remains the human gate for Continue
   Watching migration, Naruto Episode 320 Dub/captions, server fallback, and a
   current YouTube live DVR.
 
