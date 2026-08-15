@@ -432,7 +432,7 @@ fun PlayerScreen(
                         }
                     }
                     if (showNextButton) {
-                        add { m -> PlayerChip("Next ▶|", modifier = m, onClick = onNext) }
+                        add { m -> PlayerChip("Next Episode ▶|", modifier = m, onClick = onNext) }
                         add { m -> PlayerChip("⏮ Prev", modifier = m, onClick = onPrev) }
                     }
                 }

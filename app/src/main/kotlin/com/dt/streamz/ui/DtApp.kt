@@ -50,6 +50,7 @@ import com.dt.streamz.data.StreamSource
 import com.dt.streamz.data.WatchEntry
 import com.dt.streamz.data.canonicalSearchTitle
 import com.dt.streamz.data.canonicalizedForCatalog
+import com.dt.streamz.data.completedEpisodeIds
 import com.dt.streamz.data.displayLabel
 import com.dt.streamz.networkmonitor.NetworkIndicator
 import com.dt.streamz.scraper.Binge
@@ -180,12 +181,14 @@ fun DtApp() {
         val episodeLabel = ep.displayLabel()
         Toast.makeText(ctx, "▶ $episodeLabel", Toast.LENGTH_SHORT).show()
         app.interests.recordWatch(titleName)
+        val existing = app.continueWatching.find(pid, tid)
         app.continueWatching.record(
             WatchEntry(
                 providerId = pid, titleId = tid, titleName = titleName, poster = poster,
                 episodeId = ep.id, episodeNumber = ep.number,
                 episodeTitle = ep.title,
                 timestamp = System.currentTimeMillis(), kind = kindName,
+                watchedEpisodeIds = existing?.completedEpisodeIds()?.toList().orEmpty(),
             ),
         )
         val sources = Binge.takeStreams(pid, tid, ep.id)
@@ -449,6 +452,7 @@ fun DtApp() {
                                     kind = kind.name,
                                     positionMs = resumeMs,
                                     durationMs = if (existing?.episodeId == ep.id) existing.durationMs else 0,
+                                    watchedEpisodeIds = existing?.completedEpisodeIds()?.toList().orEmpty(),
                                 ),
                             )
                             runCatching { registry.get(providerId).streams(titleId, ep) }
@@ -541,7 +545,15 @@ fun DtApp() {
                     onPrev = { advanceEpisode(r, delta = -1, manual = true) },
                     onEnded = {
                         if (isYouTube) playYouTubeRelated(r.titleId)
-                        else advanceEpisode(r, delta = 1, manual = false)
+                        else scope.launch {
+                            val pid = r.providerId
+                            val tid = r.titleId
+                            val eid = r.episodeId
+                            if (pid != null && tid != null && eid != null) {
+                                app.continueWatching.markEpisodeWatched(pid, tid, eid)
+                            }
+                            advanceEpisode(r, delta = 1, manual = false)
+                        }
                     },
                     // YouTube native playback failed (codec/URL/box quirk) —
                     // fall straight back to the IFrame embed for this SAME
@@ -618,7 +630,17 @@ fun DtApp() {
                     showNextPrev = r.episodeId != null && r.providerId != "youtube",
                     onNext = { advanceFrom(r.providerId, r.titleId, r.episodeId, r.title, +1, manual = true) },
                     onPrev = { advanceFrom(r.providerId, r.titleId, r.episodeId, r.title, -1, manual = true) },
-                    onEmbedEnded = { advanceFrom(r.providerId, r.titleId, r.episodeId, r.title, +1, manual = false) },
+                    onEmbedEnded = {
+                        scope.launch {
+                            val pid = r.providerId
+                            val tid = r.titleId
+                            val eid = r.episodeId
+                            if (pid != null && tid != null && eid != null) {
+                                app.continueWatching.markEpisodeWatched(pid, tid, eid)
+                            }
+                            advanceFrom(pid, tid, eid, r.title, +1, manual = false)
+                        }
+                    },
                     // Last-resort manual server picker when every ranked mirror
                     // failed (movies/TV only — not YouTube's embed/page pair).
                     onPickServer = if (r.allSources.size > 1 && r.providerId != "youtube") {

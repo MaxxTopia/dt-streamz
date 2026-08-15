@@ -36,6 +36,8 @@ data class Episode(
     val runtimeSeconds: Int? = null,
     val season: Int = parseSeasonFromId(id),
     val episodeNumber: Int = parseEpisodeNumberFromId(id, number),
+    /** Strict filler marker supplied by the provider when the catalog knows it. */
+    val isFiller: Boolean = false,
 ) {
     companion object {
         fun parseSeasonFromId(id: String): Int {

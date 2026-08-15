@@ -33,12 +33,28 @@ data class WatchEntry(
     // start from the beginning). 0 duration = unknown (live / not yet ready).
     val positionMs: Long = 0,
     val durationMs: Long = 0,
+    // Completed episode ids for this title. Continue Watching intentionally
+    // keeps one current row per title, so this small history travels with that
+    // row instead of being mistaken for another home-screen entry.
+    val watchedEpisodeIds: List<String> = emptyList(),
 )
 
 private val Context.continueWatchingStore by preferencesDataStore(name = "continue_watching")
 private val KEY = stringPreferencesKey("entries")
 private const val MAX_ENTRIES = 20
 private const val FINISHED_MOVIE_END_GUARD_MS = 20_000L
+private const val FINISHED_EPISODE_END_GUARD_MS = 20_000L
+
+/** True when an episodic video reached its end guard. */
+internal fun WatchEntry.isEpisodeFinished(): Boolean {
+    if (durationMs <= 0) return false
+    val endThreshold = (durationMs - FINISHED_EPISODE_END_GUARD_MS).coerceAtLeast(0L)
+    return positionMs >= endThreshold
+}
+
+/** History plus the current entry when its saved position is effectively done. */
+internal fun WatchEntry.completedEpisodeIds(): Set<String> =
+    (watchedEpisodeIds + episodeId.takeIf { isEpisodeFinished() }).filterNotNull().toSet()
 
 /** Movies should leave Continue Watching once the user is effectively at the end. */
 private fun WatchEntry.isFinishedMovie(): Boolean {
@@ -104,13 +120,42 @@ class ContinueWatchingStore(private val context: Context) {
             val updated = current.mapNotNull { e ->
                 if (e.providerId == providerId && e.titleId == titleId && e.episodeId == episodeId) {
                     changed = true
+                    val savedDuration = if (durationMs > 0) durationMs else e.durationMs
+                    val finished = savedDuration > 0 &&
+                        positionMs >= (savedDuration - FINISHED_EPISODE_END_GUARD_MS).coerceAtLeast(0L)
+                    val watched = if (finished) {
+                        (e.watchedEpisodeIds + e.episodeId).distinct()
+                    } else {
+                        e.watchedEpisodeIds
+                    }
                     e.copy(
                         positionMs = positionMs,
-                        durationMs = if (durationMs > 0) durationMs else e.durationMs,
+                        durationMs = savedDuration,
+                        watchedEpisodeIds = watched,
                     ).takeUnless { it.isFinishedMovie() }
                 } else if (e.isFinishedMovie()) {
                     changed = true
                     null
+                } else {
+                    e
+                }
+            }
+            if (changed) prefs[KEY] = json.encodeToString(listSerializer, updated)
+        }
+    }
+
+    /** Mark the current episode complete when an embed reports a clean end. */
+    suspend fun markEpisodeWatched(providerId: String, titleId: String, episodeId: String) {
+        context.continueWatchingStore.edit { prefs ->
+            val rawCurrent = decodeEntries(prefs[KEY])
+            if (rawCurrent.isEmpty()) return@edit
+            val current = canonicalEntries(rawCurrent)
+            var changed = current != rawCurrent
+            val updated = current.map { e ->
+                if (e.providerId == providerId && e.titleId == titleId && e.episodeId == episodeId) {
+                    val watched = (e.watchedEpisodeIds + episodeId).distinct()
+                    if (watched != e.watchedEpisodeIds) changed = true
+                    e.copy(watchedEpisodeIds = watched)
                 } else {
                     e
                 }

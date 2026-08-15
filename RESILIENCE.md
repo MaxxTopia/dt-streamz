@@ -458,3 +458,41 @@ infallible.
 |---|---|---|---|---|
 | Anime providers return the same title with different episode identities | SOME anime users; Naruto was directly affected | duplicate normalized title, title/episode identity mismatch on resume | REBUILD | Canonical AniList catalog, known-entry migration, fail-closed stale-entry removal, explicit Dub/Sub picker |
 | YouTube live HLS has a finite or missing DVR window | SOME live broadcasts | live source but `isCurrentMediaItemSeekable` false or duration unavailable | RESTART/provider boundary | Keep native live playback, show DVR controls only for a verified window, and retain Go live; a provider that publishes no DVR cannot be made rewindable by the client |
+
+## Episode grid, watch history, and skip controls (2026-08-15, v0.4.98 pending)
+
+- Episode surface: the canonical Naruto: Shippuden details page keeps its
+  dense square grid for the 500-episode catalog. Cards now use green for
+  completed episodes, yellow for strict filler, and muted red for unwatched
+  episodes, with a visible legend and filler label for remote/accessibility
+  clarity. Short catalogs use the same status colors in their episode rows.
+- Watch state: the single Continue Watching row now carries a bounded list of
+  completed episode ids. Position updates mark an episode complete near its
+  end, clean native/embed end events mark it explicitly, and selecting a new
+  episode carries the prior history forward. This avoids confusing the latest
+  resume row with the entire watched history.
+- Navigation: when a resume point exists, `Next Ep N` sits beside Resume on the
+  details page. The in-player D-pad control is also labeled `Next Episode` for
+  native and WebView playback.
+- Skip behavior: VidNest's documented/provider preference is set to skip intro
+  during startup. A bounded WebView watcher clicks only a visible lower-player
+  Skip Intro/Outro/Opening/Ending control when the provider exposes one; it
+  never seeks to guessed timestamps. If no outro marker is supplied by the
+  provider, the app leaves that segment untouched.
+- Verification: release/debug assembly, `lintDebug`, `testDebugUnitTest`, and
+  `git diff --check` passed. The API-30 `Television_1080p` emulator opened the
+  debug build, showed 500 flat episodes, Resume Ep 320 plus Next Ep 321, the
+  three-color legend, and filler labels in the rendered grid. No crash was
+  observed in the app launch, Anime tab, or Naruto details path.
+- Release boundary: v0.4.98 / versionCode 112 is prepared locally but this
+  checkpoint is pending the signed workflow publication.
+- Device boundary: the physical VSeeBox still needs the human check for card
+  colors, completed-history persistence after watching several episodes,
+  Next Episode behavior, English Dub captions, and provider skip controls.
+
+### Added risk register entries
+
+| Failure | Blast radius | Detection signal | Fix class | Current plan B |
+|---|---|---|---|---|
+| Provider changes or omits intro/outro markers | SOME anime users | no visible skip control or provider preference ignored | REBUILD/provider boundary | Never guess seek times; retain the manual player controls and Next Episode button |
+| Watch history is lost or grows without bound | ONE title / local device | episode colors disappear or serialized entry grows unexpectedly | REBUILD | Keep one Continue Watching row, deduplicate ids, and treat missing history as unwatched rather than guessing |

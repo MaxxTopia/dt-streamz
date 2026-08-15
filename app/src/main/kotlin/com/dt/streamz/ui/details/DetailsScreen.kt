@@ -41,7 +41,7 @@ import coil3.compose.AsyncImage
 import com.dt.streamz.DtApplication
 import com.dt.streamz.data.Episode
 import com.dt.streamz.data.TitleDetails
-import com.dt.streamz.data.WatchEntry
+import com.dt.streamz.data.completedEpisodeIds
 import com.dt.streamz.data.displayLabel
 import com.dt.streamz.scraper.ProviderRegistry
 import com.dt.streamz.ui.pointerClickable
@@ -70,10 +70,10 @@ fun DetailsScreen(
     val cwFlow = (ctx.applicationContext as? DtApplication)?.continueWatching?.entries
         ?: flowOf(emptyList())
     val cwEntries by cwFlow.collectAsState(initial = emptyList())
-    val watchedNumbers = remember(cwEntries, providerId, titleId) {
+    val watchedEpisodeIds = remember(cwEntries, providerId, titleId) {
         cwEntries
             .filter { it.providerId == providerId && it.titleId == titleId }
-            .map(WatchEntry::episodeNumber)
+            .flatMap { it.completedEpisodeIds() }
             .toSet()
     }
 
@@ -98,7 +98,7 @@ fun DetailsScreen(
                 }
                 Loaded(
                     details = s.details,
-                    watchedNumbers = watchedNumbers,
+                    watchedEpisodeIds = watchedEpisodeIds,
                     resume = resume,
                     onPlay = { ep ->
                         onPlayEpisode(titleId, ep, providerId, s.details.title, s.details.poster, s.details.kind)
@@ -161,7 +161,7 @@ private fun ErrorMessage(message: String, onRetry: () -> Unit) {
 @Composable
 private fun Loaded(
     details: TitleDetails,
-    watchedNumbers: Set<Int>,
+    watchedEpisodeIds: Set<String>,
     resume: ResumeInfo?,
     onPlay: (Episode) -> Unit,
 ) {
@@ -252,7 +252,16 @@ private fun Loaded(
                     }
                 } else {
                     if (resume != null) {
-                        ResumeButton(resume, onClick = { onPlay(resume.episode) })
+                        val nextEpisode = remember(details.episodes, resume.episode.id) {
+                            val index = details.episodes.indexOfFirst { it.id == resume.episode.id }
+                            if (index >= 0) details.episodes.getOrNull(index + 1) else null
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ResumeButton(resume, onClick = { onPlay(resume.episode) })
+                            if (nextEpisode != null) {
+                                NextEpisodeButton(nextEpisode, onClick = { onPlay(nextEpisode) })
+                            }
+                        }
                     }
                     val seasons = remember(details.episodes) { details.episodes.map { it.season }.distinct().sorted() }
                     val episodeLabel = if (seasons.size > 1) {
@@ -265,7 +274,8 @@ private fun Loaded(
                         style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
                     )
-                    EpisodeList(details.episodes, watchedNumbers, onPlay)
+                    EpisodeStatusLegend()
+                    EpisodeList(details.episodes, watchedEpisodeIds, onPlay)
                 }
             }
         }
@@ -337,6 +347,70 @@ private fun ResumeButton(resume: ResumeInfo, onClick: () -> Unit) {
                     RoundedCornerShape(8.dp),
                 )
                 .padding(horizontal = 18.dp, vertical = 10.dp),
+        )
+    }
+}
+
+@Composable
+private fun NextEpisodeButton(nextEpisode: Episode, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    Surface(
+        onClick = onClick,
+        modifier = Modifier
+            .onFocusChanged { focused = it.isFocused }
+            .pointerClickable(onClick),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = MaterialTheme.colorScheme.surface,
+            focusedContainerColor = MaterialTheme.colorScheme.primary,
+        ),
+        shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(8.dp)),
+    ) {
+        Text(
+            text = "Next Ep ${nextEpisode.number}  ▶|",
+            style = MaterialTheme.typography.titleSmall,
+            color = if (focused) MaterialTheme.colorScheme.onPrimary
+            else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier
+                .border(
+                    if (focused) 2.dp else 0.dp,
+                    if (focused) Color.White else Color.Transparent,
+                    RoundedCornerShape(8.dp),
+                )
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+        )
+    }
+}
+
+@Composable
+private fun EpisodeStatusLegend() {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(vertical = 2.dp),
+    ) {
+        EpisodeLegendItem(Color(0xFF2E7D32), "Watched")
+        EpisodeLegendItem(Color(0xFFE0A800), "Filler")
+        EpisodeLegendItem(Color(0xFF7A3030), "Unwatched")
+    }
+}
+
+@Composable
+private fun EpisodeLegendItem(color: Color, label: String) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .width(10.dp)
+                .height(10.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(color),
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
         )
     }
 }
@@ -414,10 +488,34 @@ private fun SeasonChips(
     }
 }
 
+private val WATCHED_GREEN = Color(0xFF2E7D32)
+private val WATCHED_GREEN_FOCUSED = Color(0xFF43A047)
+private val FILLER_YELLOW = Color(0xFFE0A800)
+private val FILLER_YELLOW_FOCUSED = Color(0xFFF2BD24)
+private val UNWATCHED_RED = Color(0xFF7A3030)
+private val UNWATCHED_RED_FOCUSED = Color(0xFF9A4141)
+
+private fun episodeBaseColor(ep: Episode, watched: Boolean): Color = when {
+    watched -> WATCHED_GREEN
+    ep.isFiller -> FILLER_YELLOW
+    else -> UNWATCHED_RED
+}
+
+private fun episodeFocusedColor(ep: Episode, watched: Boolean): Color = when {
+    watched -> WATCHED_GREEN_FOCUSED
+    ep.isFiller -> FILLER_YELLOW_FOCUSED
+    else -> UNWATCHED_RED_FOCUSED
+}
+
+private fun episodeTextColor(ep: Episode, watched: Boolean, focused: Boolean): Color = when {
+    focused || watched || !ep.isFiller -> Color.White
+    else -> Color(0xFF241B00)
+}
+
 @Composable
 private fun EpisodeList(
     episodes: List<Episode>,
-    watchedNumbers: Set<Int>,
+    watchedEpisodeIds: Set<String>,
     onPlay: (Episode) -> Unit,
 ) {
     if (episodes.isEmpty()) {
@@ -441,9 +539,9 @@ private fun EpisodeList(
             )
         }
         if (currentSeasonEpisodes.size <= 50) {
-            EpisodeBars(currentSeasonEpisodes, watchedNumbers, onPlay)
+            EpisodeBars(currentSeasonEpisodes, watchedEpisodeIds, onPlay)
         } else {
-            EpisodeGrid(currentSeasonEpisodes, watchedNumbers, onPlay)
+            EpisodeGrid(currentSeasonEpisodes, watchedEpisodeIds, onPlay)
         }
     }
 }
@@ -451,7 +549,7 @@ private fun EpisodeList(
 @Composable
 private fun EpisodeBars(
     episodes: List<Episode>,
-    watchedNumbers: Set<Int>,
+    watchedEpisodeIds: Set<String>,
     onPlay: (Episode) -> Unit,
 ) {
     LazyColumn(
@@ -459,7 +557,7 @@ private fun EpisodeBars(
         modifier = Modifier.fillMaxSize(),
     ) {
         items(episodes, key = { "${it.season}:${it.episodeNumber}:${it.id}" }) { ep ->
-            EpisodeRow(ep, watched = ep.number in watchedNumbers, onPlay = onPlay)
+            EpisodeRow(ep, watched = ep.id in watchedEpisodeIds, onPlay = onPlay)
         }
     }
 }
@@ -467,7 +565,7 @@ private fun EpisodeBars(
 @Composable
 private fun EpisodeGrid(
     episodes: List<Episode>,
-    watchedNumbers: Set<Int>,
+    watchedEpisodeIds: Set<String>,
     onPlay: (Episode) -> Unit,
 ) {
     LazyVerticalGrid(
@@ -477,7 +575,7 @@ private fun EpisodeGrid(
         modifier = Modifier.fillMaxSize(),
     ) {
         gridItems(episodes, key = { "${it.season}:${it.episodeNumber}:${it.id}" }) { ep ->
-            EpisodeSquare(ep, watched = ep.number in watchedNumbers, onPlay = onPlay)
+            EpisodeSquare(ep, watched = ep.id in watchedEpisodeIds, onPlay = onPlay)
         }
     }
 }
@@ -485,8 +583,8 @@ private fun EpisodeGrid(
 @Composable
 private fun EpisodeSquare(ep: Episode, watched: Boolean, onPlay: (Episode) -> Unit) {
     var focused by remember { mutableStateOf(false) }
-    val baseColor = if (watched) Color(0xFF2E7D32) else MaterialTheme.colorScheme.surface
-    val focusColor = if (watched) Color(0xFF43A047) else MaterialTheme.colorScheme.primary
+    val baseColor = episodeBaseColor(ep, watched)
+    val focusColor = episodeFocusedColor(ep, watched)
     Surface(
         onClick = { onPlay(ep) },
         modifier = Modifier
@@ -522,15 +620,16 @@ private fun EpisodeSquare(ep: Episode, watched: Boolean, onPlay: (Episode) -> Un
                         "Ep ${ep.number}"
                     },
                     style = MaterialTheme.typography.titleSmall,
-                    color = if (watched || focused) Color.White
-                    else MaterialTheme.colorScheme.onSurface,
+                    color = episodeTextColor(ep, watched, focused),
                 )
                 Text(
-                    text = ep.title?.takeIf { it.isNotBlank() } ?: "Episode ${ep.episodeNumber}",
+                    text = buildString {
+                        if (ep.isFiller) append("Filler · ")
+                        append(ep.title?.takeIf { it.isNotBlank() } ?: "Episode ${ep.episodeNumber}")
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     maxLines = 2,
-                    color = if (watched || focused) Color.White.copy(alpha = 0.9f)
-                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+                    color = episodeTextColor(ep, watched, focused).copy(alpha = if (focused || watched) 0.9f else 0.85f),
                 )
             }
         }
@@ -547,8 +646,8 @@ private fun EpisodeRow(ep: Episode, watched: Boolean, onPlay: (Episode) -> Unit)
             .onFocusChanged { focused = it.isFocused }
             .pointerClickable { onPlay(ep) },
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = MaterialTheme.colorScheme.surface,
-            focusedContainerColor = MaterialTheme.colorScheme.primary,
+            containerColor = episodeBaseColor(ep, watched),
+            focusedContainerColor = episodeFocusedColor(ep, watched),
         ),
     ) {
         Row(
@@ -562,16 +661,14 @@ private fun EpisodeRow(ep: Episode, watched: Boolean, onPlay: (Episode) -> Unit)
             Text(
                 text = label,
                 style = MaterialTheme.typography.bodyMedium,
-                color = if (focused) MaterialTheme.colorScheme.onPrimary
-                else MaterialTheme.colorScheme.onSurface,
+                color = episodeTextColor(ep, watched, focused),
                 modifier = Modifier.weight(1f),
             )
-            if (watched) {
+            if (watched || ep.isFiller) {
                 Text(
-                    text = "▶ Watched",
+                    text = if (watched) "▶ Watched" else "Filler",
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (focused) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.85f)
-                    else MaterialTheme.colorScheme.primary,
+                    color = episodeTextColor(ep, watched, focused).copy(alpha = 0.85f),
                     modifier = Modifier.padding(start = 10.dp),
                 )
             }

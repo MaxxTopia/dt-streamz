@@ -139,6 +139,94 @@ private val PREPARE_VIDFAST_PLAYBACK_JS = """
     })();
 """.trimIndent()
 
+/**
+ * VidNest owns the actual HTML5 player for the canonical anime route. Its
+ * intro preference is safe to set before the React player mounts. For outro
+ * and provider variants that expose a real skip button, click only a visible
+ * control in the lower player area; never invent a timestamp or seek blindly.
+ * The watcher is bounded and does not interfere with normal playback after
+ * its startup window expires.
+ */
+private val AUTO_SKIP_INTRO_OUTRO_JS = """
+    (function(){
+      try {
+        var host = (location.hostname || '').toLowerCase();
+        if (host !== 'vidnest.fun' && host !== 'www.vidnest.fun' &&
+            host.slice(-12) !== '.vidnest.fun') return;
+        try { localStorage.setItem('vidnest-skip-intro', 'true'); } catch (e) {}
+        if (window.__dtAutoSkipIntroOutro) return;
+        window.__dtAutoSkipIntroOutro = true;
+
+        var observer = null;
+        var scanTimer = 0;
+        var stopTimer = 0;
+        var stopped = false;
+
+        function visible(node) {
+          try {
+            var style = window.getComputedStyle(node);
+            var rect = node.getBoundingClientRect();
+            return style.display !== 'none' && style.visibility !== 'hidden' &&
+              parseFloat(style.opacity || '1') > 0 && rect.width > 0 && rect.height > 0 &&
+              rect.bottom >= 0 && rect.top <= window.innerHeight &&
+              rect.top >= window.innerHeight * 0.4 && rect.left >= window.innerWidth * 0.25;
+          } catch (e) { return false; }
+        }
+
+        function isSkipControl(node) {
+          if (!visible(node)) return false;
+          var aria = node.getAttribute('aria-label') || '';
+          var title = node.getAttribute('title') || '';
+          var text = (node.innerText || '').trim();
+          var cls = String(node.className || '');
+          var labels = (aria + ' ' + title + ' ' + text + ' ' + cls).toLowerCase();
+          var skip = /skip\s+(intro|outro|opening|ending|recap)|skip\s+(op|ed)\b/i.test(labels);
+          if (!skip) return false;
+          // Do not click a large parent/container just because a child says
+          // Skip. Exact text or an explicit accessibility/title label is safer.
+          return /skip\s+(intro|outro|opening|ending|recap)|skip\s+(op|ed)\b/i.test(aria + ' ' + title) ||
+            /^(skip\s+(intro|outro|opening|ending|recap)|skip\s+(op|ed))$/i.test(text) ||
+            /skip/i.test(cls);
+        }
+
+        function scan() {
+          if (stopped) return;
+          try {
+            var nodes = document.querySelectorAll('button,[role="button"],a,input[type="button"],[class*="skip"],[id*="skip"]');
+            for (var i = 0; i < nodes.length; i++) {
+              var node = nodes[i];
+              if (!isSkipControl(node)) continue;
+              var signature = String(node.getAttribute('aria-label') || '') + '|' +
+                String(node.getAttribute('title') || '') + '|' +
+                String((node.innerText || '').trim());
+              if (node.__dtAutoSkipSignature === signature) continue;
+              node.__dtAutoSkipSignature = signature;
+              try { node.click(); } catch (e) {
+                try { node.dispatchEvent(new MouseEvent('click', { bubbles: true })); } catch (x) {}
+              }
+            }
+          } catch (e) {}
+        }
+
+        function stop() {
+          if (stopped) return;
+          stopped = true;
+          if (observer) observer.disconnect();
+          if (scanTimer) clearInterval(scanTimer);
+          if (stopTimer) clearTimeout(stopTimer);
+        }
+
+        try {
+          observer = new MutationObserver(scan);
+          if (document.documentElement) observer.observe(document.documentElement, { childList: true, subtree: true });
+        } catch (e) {}
+        scan();
+        scanTimer = setInterval(scan, 750);
+        stopTimer = setTimeout(stop, 180000);
+      } catch (e) {}
+    })();
+""".trimIndent()
+
 // WebView embeds do not expose ExoPlayer's position callbacks. Polling the
 // HTML5 media element keeps the saved position current without installing a
 // JavaScript bridge into an untrusted third-party page.
@@ -1094,7 +1182,7 @@ private fun PlayerControlBar(
         ControlButton("↻  Reconnect", onClick = onReconnect, modifier = Modifier.focusRequester(firstFocus))
         if (showNextPrev) {
             ControlButton("⏮  Prev", onClick = onPrev)
-            ControlButton("Next  ▶|", onClick = onNext)
+            ControlButton("Next Episode  ▶|", onClick = onNext)
         }
         if (onSwitchAudio != null) {
             ControlButton("Audio  (Sub/Dub)", onClick = onSwitchAudio)
@@ -1446,6 +1534,7 @@ private class EmbedWebViewClient(
         super.onPageStarted(view, url, favicon)
         view.evaluateJavascript(ANTI_REDIRECT_JS, null)
         view.evaluateJavascript(PREPARE_VIDFAST_PLAYBACK_JS, null)
+        view.evaluateJavascript(AUTO_SKIP_INTRO_OUTRO_JS, null)
         view.evaluateJavascript(HIDE_PLAYER_TITLE_JS, null)
         if (!captionsDefaultOn()) view.evaluateJavascript(DISABLE_CAPTIONS_JS, null)
         if (startPositionMs > 0) view.evaluateJavascript(resumePlaybackScript(startPositionMs), null)
@@ -1459,6 +1548,7 @@ private class EmbedWebViewClient(
         super.onPageFinished(view, url)
         view.evaluateJavascript(ANTI_REDIRECT_JS, null)
         view.evaluateJavascript(PREPARE_VIDFAST_PLAYBACK_JS, null)
+        view.evaluateJavascript(AUTO_SKIP_INTRO_OUTRO_JS, null)
         view.evaluateJavascript(HIDE_PLAYER_TITLE_JS, null)
         if (!captionsDefaultOn()) view.evaluateJavascript(DISABLE_CAPTIONS_JS, null)
         if (startPositionMs > 0) view.evaluateJavascript(resumePlaybackScript(startPositionMs), null)

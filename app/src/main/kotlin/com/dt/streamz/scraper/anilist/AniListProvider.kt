@@ -90,6 +90,7 @@ class AniListProvider : Provider {
                     id = "ep:$it",
                     number = it,
                     title = episodeTitles[it] ?: "Episode $it",
+                    isFiller = FillerCatalog.isNarutoShippudenFiller(titleId, it),
                 )
             },
         )
