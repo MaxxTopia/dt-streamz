@@ -502,3 +502,34 @@ infallible.
 |---|---|---|---|---|
 | Provider changes or omits intro/outro markers | SOME anime users | no visible skip control or provider preference ignored | REBUILD/provider boundary | Never guess seek times; retain the manual player controls and Next Episode button |
 | Watch history is lost or grows without bound | ONE title / local device | episode colors disappear or serialized entry grows unexpectedly | REBUILD | Keep one Continue Watching row, deduplicate ids, and treat missing history as unwatched rather than guessing |
+
+## Audio-scoped anime fallback checkpoint (v0.4.99)
+
+- Reproduced failure: VidNest's canonical Naruto Shippuden Episode 323 Dub
+  route is `https://vidnest.fun/anime/1735/323/dub`. The live provider shell
+  starts on Aniwave and keeps the `dub` mode when it internally tries another
+  server. The app's `WebPlayer` was instead treating the sibling Original
+  Japanese/Subtitles source as a generic mirror, so a failed Dub page could
+  silently become Japanese audio with captions.
+- Repair: automatic DirectEmbed fallbacks and the exhausted-mirror picker now
+  require the same audio variant as the selected source. The intentional
+  in-player Sub<->Dub picker still receives both variants, so this is not a
+  removal of the user's manual language choice.
+- Live endpoint evidence for AniList 1735 / episode 323: the VidNest Aniwave
+  Dub endpoint returned HTTP 200, the Megaplay Dub endpoint returned HTTP 404,
+  and the Anitaku endpoint returned HTTP 502. This confirms that server
+  failure is real, but does not justify crossing from Dub to Sub.
+- Verification: debug/release assembly, `lintDebug`, `testDebugUnitTest`,
+  `git diff --check`, and the shipped-script ASCII check passed. The API-30
+  TV emulator opened Episode 323 through the exact `/dub` route, reached a
+  23:35 VidNest player, kept captions off, and exposed the Aniwave/Megaplay/
+  Anitaku server menu. Selecting Aniwave kept playback running.
+- Device boundary: the physical VSeeBox still owns the final check for
+  Episode 323 English voices, captions-off startup, and provider-side Aniwave
+  fallback behavior.
+
+### Added risk register entry
+
+| Failure | Blast radius | Detection signal | Fix class | Current plan B |
+|---|---|---|---|---|
+| A failed anime Dub mirror falls through to the sibling Sub source | SOME anime users; language is wrong while playback appears healthy | selected `/dub` route followed by a `/sub` sibling load or captions becoming enabled | REBUILD | Keep fallback and manual-server candidates in the selected audio variant; let VidNest's own Aniwave/Megaplay/Anitaku fallback preserve `/dub` |

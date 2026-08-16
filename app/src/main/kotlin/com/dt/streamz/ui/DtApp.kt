@@ -589,6 +589,14 @@ fun DtApp() {
             }
             is Route.WebPlayer -> {
                 BackHandler { back() }
+                val sameAudioSources = r.allSources.filter { source ->
+                    sameAudioVariant(
+                        r.selectedSourceLabel,
+                        r.embedUrl,
+                        source.serverLabel,
+                        source.url,
+                    )
+                }
                 WebPlayerScreen(
                     embedUrl = r.embedUrl,
                     title = r.title,
@@ -642,14 +650,17 @@ fun DtApp() {
                         }
                     },
                     // Last-resort manual server picker when every ranked mirror
-                    // failed (movies/TV only — not YouTube's embed/page pair).
-                    onPickServer = if (r.allSources.size > 1 && r.providerId != "youtube") {
+                    // failed (not YouTube's embed/page pair).
+                    // Anime sources can contain both Dub and Sub siblings; a
+                    // failed English route must not present the Japanese route
+                    // as though it were another English server.
+                    onPickServer = if (sameAudioSources.size > 1 && r.providerId != "youtube") {
                         {
                             // Replace the dead embed with the picker so BACK from
                             // it returns to the list/tab, not the failed player.
                             replaceTop(
                                 Route.SourcePicker(
-                                    r.title, r.allSources, r.providerId,
+                                    r.title, sameAudioSources, r.providerId,
                                     r.titleId, r.episodeId, r.startPositionMs,
                                 ),
                             )
@@ -1008,12 +1019,21 @@ private fun playRouteFor(
         // walk past a dead mirror without dumping the user back to the picker.
         val fallbacks = siblings
             .filter { it.kind == StreamKind.DirectEmbed && it.url != source.url }
+            .filter { candidate ->
+                sameAudioVariant(
+                    source.serverLabel,
+                    source.url,
+                    candidate.serverLabel,
+                    candidate.url,
+                )
+            }
         Route.WebPlayer(
             embedUrl = source.url,
             title = label,
             headers = source.headers,
             fallbacks = fallbacks,
             allSources = siblings,
+            selectedSourceLabel = source.serverLabel,
             providerId = providerId,
             titleId = titleId,
             episodeId = episodeId,
@@ -1055,6 +1075,43 @@ private fun rankSources(app: DtApplication, sources: List<StreamSource>): List<S
         if (com.dt.streamz.ui.webplayer.DeadHostRegistry.isDead(src.url)) -1.0
         else app.serverStats.score(hostKey(src.url))
     }
+
+private enum class AudioVariant {
+    Dub,
+    Sub,
+    Neutral,
+}
+
+private val DUB_LABEL_TOKEN = Regex("\\bdub\\b", RegexOption.IGNORE_CASE)
+private val SUB_LABEL_TOKEN = Regex("\\bsub(?:titles?)?\\b", RegexOption.IGNORE_CASE)
+private val AUDIO_PATH_TOKEN = Regex("/(dub|sub)(?:/|$|[?&#])", RegexOption.IGNORE_CASE)
+
+/**
+ * Identifies the language carried by a source without trusting the display
+ * order. VidNest encodes the mode in the URL (`/dub` or `/sub`), while other
+ * providers only expose it in the server label.
+ */
+private fun audioVariant(label: String?, url: String): AudioVariant {
+    val labelText = label.orEmpty()
+    val pathMode = AUDIO_PATH_TOKEN.find(url)?.groupValues?.getOrNull(1)
+    val isDub = DUB_LABEL_TOKEN.containsMatchIn(labelText) ||
+        pathMode.equals("dub", ignoreCase = true)
+    val isSub = SUB_LABEL_TOKEN.containsMatchIn(labelText) ||
+        pathMode.equals("sub", ignoreCase = true)
+    return when {
+        isDub && !isSub -> AudioVariant.Dub
+        isSub && !isDub -> AudioVariant.Sub
+        else -> AudioVariant.Neutral
+    }
+}
+
+/** Only same-language sources may participate in automatic fallback. */
+private fun sameAudioVariant(
+    selectedLabel: String?,
+    selectedUrl: String,
+    candidateLabel: String?,
+    candidateUrl: String,
+): Boolean = audioVariant(selectedLabel, selectedUrl) == audioVariant(candidateLabel, candidateUrl)
 
 /**
  * Curated TMDb rows for the Movies / TV tabs — Popular / Top Rated / Trending /

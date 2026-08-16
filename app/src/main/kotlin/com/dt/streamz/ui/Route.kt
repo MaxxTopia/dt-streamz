@@ -67,6 +67,10 @@ sealed interface Route {
         // Full ranked source list + resume context, so the player can offer a
         // manual server picker as a last resort if every mirror fails.
         val allSources: List<StreamSource> = emptyList(),
+        // Keep the selected source label with the player route. A provider can
+        // expose Sub and Dub as siblings, but a failed Dub route must never
+        // silently fall through to the Japanese/Sub route.
+        val selectedSourceLabel: String? = null,
         val providerId: String? = null,
         val titleId: String? = null,
         val episodeId: String? = null,
