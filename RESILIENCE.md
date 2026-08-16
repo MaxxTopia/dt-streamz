@@ -524,6 +524,14 @@ infallible.
   TV emulator opened Episode 323 through the exact `/dub` route, reached a
   23:35 VidNest player, kept captions off, and exposed the Aniwave/Megaplay/
   Anitaku server menu. Selecting Aniwave kept playback running.
+- Release: v0.4.99 / versionCode 113 was committed as `aec4475`, pushed to
+  `main`, tagged `v0.4.99`, and published by GitHub Actions run
+  `31930745916`. The non-draft, non-prerelease release is live at
+  `https://github.com/MaxxTopia/dt-streamz/releases/tag/v0.4.99`; its
+  `dt-streamz.apk` asset returned HTTP 200 and has SHA-256
+  `3CCE9A037A8A99E753BF25E19E34A68EF229FC9A0CEFC15711AE9C080EDBA5B7`.
+  Hosted metadata is `com.dt.streamz` / versionCode 113 / versionName 0.4.99,
+  signed with `CN=DT Streamz, O=Personal, L=Local, C=US`.
 - Device boundary: the physical VSeeBox still owns the final check for
   Episode 323 English voices, captions-off startup, and provider-side Aniwave
   fallback behavior.
