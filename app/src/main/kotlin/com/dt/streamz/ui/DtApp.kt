@@ -511,6 +511,7 @@ fun DtApp() {
                 PlayerScreen(
                     url = r.url,
                     streamKind = r.kind,
+                    headers = r.headers,
                     title = r.title,
                     twitchChannel = r.twitchChannel,
                     isLive = r.isLive,
@@ -1001,6 +1002,7 @@ private fun playRouteFor(
         url = source.url,
         title = label,
         kind = source.kind,
+        headers = source.headers,
         providerId = providerId,
         titleId = titleId,
         episodeId = episodeId,

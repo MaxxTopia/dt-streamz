@@ -46,7 +46,10 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.dash.DashMediaSource
@@ -74,6 +77,7 @@ private const val CONTROLLER_TIMEOUT_MS = 4_000
 fun PlayerScreen(
     url: String,
     streamKind: StreamKind = StreamKind.Hls,
+    headers: Map<String, String> = emptyMap(),
     title: String = "",
     twitchChannel: String? = null,
     // True for a live broadcast (YouTube live; Twitch is also detected via
@@ -197,7 +201,7 @@ fun PlayerScreen(
         exoPlayer.apply {
                 setMediaSource(
                     buildMediaSource(
-                        url, streamKind, subtitles, effectiveAudioUrl, initialCaptionsOn, live,
+                        url, streamKind, subtitles, headers, effectiveAudioUrl, initialCaptionsOn, live,
                         videoDashManifest = dashManifest,
                         audioDashManifest = effectiveAudioManifest,
                     ),
@@ -522,6 +526,7 @@ private fun buildMediaSource(
     url: String,
     kind: StreamKind,
     subtitles: List<SubtitleTrack>,
+    headers: Map<String, String> = emptyMap(),
     audioUrl: String? = null,
     // When true the subtitle track is flagged DEFAULT so ExoPlayer auto-shows
     // it (anime/movies, or YouTube when the user's remembered CC choice is ON).
@@ -539,7 +544,7 @@ private fun buildMediaSource(
     videoDashManifest: String? = null,
     audioDashManifest: String? = null,
 ): MediaSource {
-    val factory = DefaultHttpDataSource.Factory()
+    val httpFactory = DefaultHttpDataSource.Factory()
         // A weak or busy box connection can pause for several seconds without
         // being genuinely dead. Keep the segment request alive so the larger
         // VOD buffer can absorb the dip instead of turning it into a fatal
@@ -550,6 +555,32 @@ private fun buildMediaSource(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
                 "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         )
+        .apply {
+            if (headers.isNotEmpty()) setDefaultRequestProperties(headers)
+        }
+    // MegaPlay's HLS index currently emits absolute segment URLs on an
+    // xhs*.sugevideo.xyz host that the Android TV resolver cannot reach. The
+    // same path is served by the CDN host that supplied the master playlist.
+    // Rewrite only that provider-specific segment host; all other providers
+    // and all non-MegaPlay URLs pass through unchanged.
+    val factory: DataSource.Factory = ResolvingDataSource.Factory(
+        httpFactory,
+        object : ResolvingDataSource.Resolver {
+            override fun resolveDataSpec(dataSpec: DataSpec): DataSpec {
+                val uri = dataSpec.uri
+                val host = uri.host.orEmpty().lowercase()
+                return if (host.endsWith(".sugevideo.xyz") && uri.path?.startsWith("/anime/") == true) {
+                    dataSpec.withUri(
+                        uri.buildUpon()
+                            .authority("cdn.watching.onl")
+                            .build(),
+                    )
+                } else {
+                    dataSpec
+                }
+            }
+        },
+    )
     val (mime, builderFn) = when (kind) {
         StreamKind.Hls -> MimeTypes.APPLICATION_M3U8 to ::hlsSource
         StreamKind.Mp4 -> MimeTypes.VIDEO_MP4 to ::progressiveSource
@@ -625,13 +656,13 @@ private fun subtitleMime(url: String): String = when {
     else -> MimeTypes.TEXT_VTT
 }
 
-private fun hlsSource(factory: DefaultHttpDataSource.Factory, item: MediaItem): MediaSource =
+private fun hlsSource(factory: DataSource.Factory, item: MediaItem): MediaSource =
     HlsMediaSource.Factory(factory).createMediaSource(item)
 
-private fun progressiveSource(factory: DefaultHttpDataSource.Factory, item: MediaItem): MediaSource =
+private fun progressiveSource(factory: DataSource.Factory, item: MediaItem): MediaSource =
     ProgressiveMediaSource.Factory(factory).createMediaSource(item)
 
-private fun dashSource(factory: DefaultHttpDataSource.Factory, item: MediaItem): MediaSource =
+private fun dashSource(factory: DataSource.Factory, item: MediaItem): MediaSource =
     DashMediaSource.Factory(factory).createMediaSource(item)
 
 /**
@@ -642,7 +673,7 @@ private fun dashSource(factory: DefaultHttpDataSource.Factory, item: MediaItem):
  * can fall back to a progressive source rather than dead-ending playback.
  */
 private fun dashSourceFromManifest(
-    factory: DefaultHttpDataSource.Factory,
+    factory: DataSource.Factory,
     manifestXml: String,
     item: MediaItem,
 ): MediaSource? = runCatching {

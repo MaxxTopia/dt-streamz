@@ -9,6 +9,7 @@ import com.dt.streamz.data.TitleDetails
 import com.dt.streamz.diag.DebugLog
 import com.dt.streamz.scraper.Http
 import com.dt.streamz.scraper.Provider
+import com.dt.streamz.scraper.megaplay.MegaPlayResolver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
@@ -107,9 +108,20 @@ class AniListProvider : Provider {
             serverLabel = label,
             headers = mapOf("Referer" to "https://vidnest.fun/"),
         )
-        DebugLog.i(TAG, "streams($titleId ep=$ep) -> vidnest English Dub + original audio")
-        return listOf(
-            src("English Dub", "dub"),
+        // VidNest's internal MegaPlay lookup currently returns 404 for this
+        // catalog entry even though MegaPlay still serves the episode. Resolve
+        // the live MegaPlay HLS source directly first; keep VidNest as a
+        // same-language backup so a provider-side change cannot remove Dub.
+        val megaPlayDub = MegaPlayResolver.resolveNarutoDub(titleId, ep)
+        DebugLog.i(
+            TAG,
+            "streams($titleId ep=$ep) -> " +
+                if (megaPlayDub != null) "native MegaPlay Dub + VidNest Dub/Sub"
+                else "VidNest English Dub + original audio",
+        )
+        return listOfNotNull(
+            megaPlayDub,
+            src("VidNest - English Dub", "dub"),
             src("Original Japanese Audio + Subtitles", "sub"),
         )
     }

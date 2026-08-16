@@ -22,6 +22,10 @@ sealed interface Route {
         val title: String = "",
         val twitchChannel: String? = null,
         val kind: StreamKind = StreamKind.Hls,
+        // Some native HLS CDNs require the embed's referer/origin on the
+        // manifest and segment requests. DirectEmbed already carries headers;
+        // native playback must carry them too when a provider returns HLS.
+        val headers: Map<String, String> = emptyMap(),
         // Optional separate audio-only track, merged with [url] at playback
         // time (YouTube adaptive video-only + audio-only). Null when [url]
         // already carries audio.

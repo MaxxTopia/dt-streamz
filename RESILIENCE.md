@@ -541,3 +541,41 @@ infallible.
 | Failure | Blast radius | Detection signal | Fix class | Current plan B |
 |---|---|---|---|---|
 | A failed anime Dub mirror falls through to the sibling Sub source | SOME anime users; language is wrong while playback appears healthy | selected `/dub` route followed by a `/sub` sibling load or captions becoming enabled | REBUILD | Keep fallback and manual-server candidates in the selected audio variant; let VidNest's own Aniwave/Megaplay/Anitaku fallback preserve `/dub` |
+
+## Native MegaPlay Dub recovery checkpoint (v0.4.100)
+
+- Root cause: VidNest's MegaPlay adapter calls
+  `https://animex.animanga.fun/anime/1735/323/dub`, which currently returns
+  HTTP 404. The public MegaPlay embed shell for the mapped Anikoto id is also
+  stale, but MegaPlay's AJAX source endpoint still accepts the live Anikoto
+  episode embed id (`8204`) when called as an XMLHttpRequest and returns an
+  HLS manifest. An app-shaped request returned HTTP 200 for both the source
+  JSON and the HLS master playlist.
+- Repair: `MegaPlayResolver` resolves the canonical Naruto Shippuden
+  AniList id (`1735`) through the current Anikoto episode catalog (`1498`),
+  asks MegaPlay for the Dub HLS source, and exposes it as a native Media3
+  source. The existing VidNest Dub and Sub sources remain available as
+  fallbacks/manual choices. Native playback now carries provider referer and
+  origin headers through `Route.Player` so CDN manifests and segments receive
+  the same request context as the embed. Media3 also rewrites the current
+  MegaPlay `*.sugevideo.xyz/anime/...` segment host to the equivalent
+  `cdn.watching.onl/anime/...` path; the CDN-hosted segments returned HTTP 200
+  and the original segment host failed DNS on the API-30 TV emulator.
+- Verification: `:app:assembleDebug`, `:app:assembleRelease`, and
+  `:app:lintDebug`, and `:app:testDebugUnitTest` passed. Live read-only checks
+  confirmed the current Anikoto mapping, MegaPlay source response, HLS master
+  response, and CDN-hosted media segments. After installing the debug APK on
+  the API-30 TV emulator, Episode 323 resolved to the native MegaPlay HLS
+  source, produced H.264 decoder output without the prior segment connection
+  error, and auto-advanced to Episode 324. The release artifact is version
+  `0.4.100` / versionCode `114`.
+- Device boundary: the physical VSeeBox still needs the human test for
+  Episode 323 native MegaPlay startup, sustained playback, captions-off
+  startup, resume position, and the VidNest Dub backup if the CDN is
+  unreachable from that box.
+
+### Added risk register entry
+
+| Failure | Blast radius | Detection signal | Fix class | Current plan B |
+|---|---|---|---|---|
+| Anikoto/MegaPlay changes the episode catalog or CDN request contract | Naruto Dub playback | resolver log, empty HLS response, segment-host failure, or native player error | REBUILD/provider boundary | Keep the existing VidNest Dub route and manual server menu; never fall through to Sub automatically |
