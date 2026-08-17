@@ -603,3 +603,10 @@ infallible.
   GitHub Actions release. The physical VSeeBox still owns the final remote
   test for native MegaPlay startup, sustained playback, captions-off startup,
   and the automatic VidNest Dub handoff when MegaPlay is unavailable.
+- Live release: v0.4.101 was committed as `1583309`, tagged, and published by
+  GitHub Actions run `32004910974`. The non-draft, non-prerelease release is
+  live at `https://github.com/MaxxTopia/dt-streamz/releases/tag/v0.4.101`;
+  its `dt-streamz.apk` asset is 13,065,412 bytes, and the latest-download
+  updater URL returned HTTP 200 with the Android APK content type. The local
+  signed artifact SHA-256 is
+  `C897ABA5C5F263CD2FDC3FA7898A4FE52CC139C32921DFE06A0CA5831B5C02D9`.
