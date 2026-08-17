@@ -579,3 +579,27 @@ infallible.
 | Failure | Blast radius | Detection signal | Fix class | Current plan B |
 |---|---|---|---|---|
 | Anikoto/MegaPlay changes the episode catalog or CDN request contract | Naruto Dub playback | resolver log, empty HLS response, segment-host failure, or native player error | REBUILD/provider boundary | Keep the existing VidNest Dub route and manual server menu; never fall through to Sub automatically |
+
+## Server-picker and same-language fallback follow-up (v0.4.101)
+
+- Live checks for Naruto Shippuden Episodes 318-326 returned HTTP 200 for the
+  current Anikoto episode mapping, MegaPlay source JSON, and HLS master. The
+  provider is currently healthy in that range; the remaining user-facing issue
+  was navigation and failure handling, not a missing source ID.
+- Repair: the source picker now separates `English Dub` from `Japanese + Sub`,
+  starts in the Dub group, sorts the recommended/native source first, labels
+  the web player as a backup, hides noisy raw URLs, and requests focus after
+  the LazyColumn row is composed. A failed native source now automatically
+  advances to the next same-language candidate without ever selecting Sub.
+  MegaPlay also has a 12-second native-start watchdog for boxes that stay in
+  `BUFFERING` without emitting a fatal Media3 error, so the app reaches VidNest
+  Dub automatically instead of leaving a permanent spinner.
+- Verification: debug build, lint, and the unit-test task passed. On the API-30
+  TV emulator, the picker showed `English Dub (2)`, focused MegaPlay item 1,
+  moved to VidNest item 2 with D-pad Down, returned with D-pad Up, and played
+  MegaPlay through H.264 decoding before auto-advancing from Episode 323 to
+  Episode 324.
+- Release state: included in v0.4.101 / versionCode 115 for the documented
+  GitHub Actions release. The physical VSeeBox still owns the final remote
+  test for native MegaPlay startup, sustained playback, captions-off startup,
+  and the automatic VidNest Dub handoff when MegaPlay is unavailable.

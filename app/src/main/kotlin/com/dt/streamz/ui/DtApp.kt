@@ -581,7 +581,32 @@ fun DtApp() {
                                 episodeId = "watch",
                             ))
                         }
+                    } else if (r.fallbacks.isNotEmpty()) {
+                        {
+                            val next = r.fallbacks.first()
+                            val nextLabel = next.serverLabel ?: "backup server"
+                            Log.w(TAG, "${r.title} failed -> trying $nextLabel")
+                            Toast.makeText(
+                                ctx,
+                                "Server failed — trying $nextLabel",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                            // Keep the failed route out of the next candidate
+                            // list so a provider outage cannot loop forever.
+                            replaceTop(
+                                playRouteFor(
+                                    next,
+                                    r.title,
+                                    r.fallbacks,
+                                    providerId = r.providerId,
+                                    titleId = r.titleId,
+                                    episodeId = r.episodeId,
+                                    startPositionMs = r.startPositionMs,
+                                ),
+                            )
+                        }
                     } else null,
+                    startupFallbackDelayMs = r.startupFallbackDelayMs,
                     onExit = {
                         Log.i(TAG, "PlayerScreen.onExit() called -> back()")
                         back()
@@ -1007,6 +1032,24 @@ private fun playRouteFor(
         titleId = titleId,
         episodeId = episodeId,
         startPositionMs = startPositionMs,
+        fallbacks = siblings
+            .dropWhile { it.url != source.url }
+            .drop(1)
+            .filter { candidate ->
+                sameAudioVariant(
+                    source.serverLabel,
+                    source.url,
+                    candidate.serverLabel,
+                    candidate.url,
+                )
+            },
+        startupFallbackDelayMs = if (
+            source.serverLabel.orEmpty().contains("MegaPlay", ignoreCase = true)
+        ) {
+            12_000L
+        } else {
+            null
+        },
         audioUrl = source.audioUrl,
         dashManifest = source.dashManifest,
         audioDashManifest = source.audioDashManifest,

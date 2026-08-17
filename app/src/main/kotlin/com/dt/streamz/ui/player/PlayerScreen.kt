@@ -113,6 +113,10 @@ fun PlayerScreen(
     // toast+exit (e.g. YouTube native -> drop straight to the embed). Null
     // keeps the default "toast the error and bounce to tabs" behavior.
     onPlaybackError: (() -> Unit)? = null,
+    // Some native providers can remain in BUFFERING on a particular TV box
+    // without ever emitting a fatal error. Give their same-language fallback
+    // a bounded chance to take over instead of leaving a black spinner up.
+    startupFallbackDelayMs: Long? = null,
     onExit: () -> Unit = {},
 ) {
     val context = LocalContext.current
@@ -257,6 +261,21 @@ fun PlayerScreen(
                 prepare()
                 playWhenReady = true
             }
+    }
+
+    // Media3 does not always surface a terminal error when a TV box cannot
+    // reach a provider's manifest/segments. The route-level fallback still
+    // needs a signal in that case, but only after the provider's normal start
+    // window has elapsed. A READY player is left alone, even if the user later
+    // pauses it manually.
+    LaunchedEffect(player, startupFallbackDelayMs) {
+        val delayMs = startupFallbackDelayMs ?: return@LaunchedEffect
+        delay(delayMs)
+        if (player.playbackState != Player.STATE_READY &&
+            player.playbackState != Player.STATE_ENDED
+        ) {
+            onPlaybackErrorCb?.invoke()
+        }
     }
 
     fun seekLiveBy(deltaMs: Long) {

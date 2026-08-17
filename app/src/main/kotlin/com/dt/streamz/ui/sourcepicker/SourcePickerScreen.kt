@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -32,6 +33,29 @@ import androidx.tv.material3.Text
 import com.dt.streamz.data.StreamKind
 import com.dt.streamz.data.StreamSource
 import com.dt.streamz.ui.pointerClickable
+import kotlinx.coroutines.delay
+
+private enum class AudioGroup {
+    Dub,
+    Sub,
+    Other,
+}
+
+private fun audioGroup(source: StreamSource): AudioGroup {
+    val label = source.serverLabel.orEmpty()
+    val url = source.url
+    return when {
+        Regex("\\bdub\\b", RegexOption.IGNORE_CASE).containsMatchIn(label) ||
+            Regex("/(dub)(?:/|$|[?&#])", RegexOption.IGNORE_CASE).containsMatchIn(url) -> AudioGroup.Dub
+        Regex("\\bsub(?:titles?)?\\b", RegexOption.IGNORE_CASE).containsMatchIn(label) ||
+            Regex("/(sub)(?:/|$|[?&#])", RegexOption.IGNORE_CASE).containsMatchIn(url) -> AudioGroup.Sub
+        else -> AudioGroup.Other
+    }
+}
+
+private fun isPreferredSource(source: StreamSource): Boolean =
+    source.serverLabel.orEmpty().contains("megaplay", ignoreCase = true) ||
+        source.kind == StreamKind.Hls
 
 @Composable
 fun SourcePickerScreen(
@@ -40,23 +64,33 @@ fun SourcePickerScreen(
     onPick: (StreamSource) -> Unit,
 ) {
     val firstFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { firstFocus.requestFocus() } }
-    val hasAudioVariants = sources.any {
-        val label = it.serverLabel ?: ""
-        label.contains("sub", ignoreCase = true) || label.contains("dub", ignoreCase = true)
+    val dubSources = sources.filter { audioGroup(it) == AudioGroup.Dub }
+    val subSources = sources.filter { audioGroup(it) == AudioGroup.Sub }
+    val hasAudioVariants = dubSources.isNotEmpty() || subSources.isNotEmpty()
+    val initialGroup = when {
+        dubSources.isNotEmpty() -> AudioGroup.Dub
+        subSources.isNotEmpty() -> AudioGroup.Sub
+        else -> AudioGroup.Other
     }
-    val hasDub = sources.any { (it.serverLabel ?: "").contains("dub", ignoreCase = true) }
-    // Keep English Dub at the first focus stop whenever a provider exposes
-    // language variants. This also covers the in-player audio switch route,
-    // which can open this screen directly instead of going through DtApp.
-    val displaySources = if (hasAudioVariants) {
-        sources.sortedWith(
-            compareByDescending<StreamSource> {
-                (it.serverLabel ?: "").contains("dub", ignoreCase = true)
-            }.thenBy { it.serverLabel ?: "" },
+    var selectedGroup by remember(sources) { mutableStateOf(initialGroup) }
+    val displaySources = remember(selectedGroup, sources) {
+        val candidates = when (selectedGroup) {
+            AudioGroup.Dub -> dubSources
+            AudioGroup.Sub -> subSources
+            AudioGroup.Other -> sources
+        }
+        candidates.sortedWith(
+            compareByDescending<StreamSource> { isPreferredSource(it) }
+                .thenBy { it.serverLabel.orEmpty() },
         )
-    } else {
-        sources
+    }
+
+    // Delay until the selected list is composed. Requesting focus in the
+    // first frame races LazyColumn item creation on slower TV boxes and was
+    // the reason the remote sometimes landed on the wrong server or nowhere.
+    LaunchedEffect(selectedGroup, displaySources) {
+        delay(80)
+        runCatching { firstFocus.requestFocus() }
     }
 
     Column(
@@ -64,13 +98,33 @@ fun SourcePickerScreen(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text(
-            text = if (hasAudioVariants) "Choose audio" else "Pick a source",
+            text = if (hasAudioVariants) "Choose audio and server" else "Pick a source",
             style = MaterialTheme.typography.headlineSmall,
             color = MaterialTheme.colorScheme.onBackground,
         )
-        if (hasDub) {
+        if (hasAudioVariants) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (dubSources.isNotEmpty()) {
+                    AudioTab(
+                        text = "English Dub (${dubSources.size})",
+                        selected = selectedGroup == AudioGroup.Dub,
+                        onClick = { selectedGroup = AudioGroup.Dub },
+                    )
+                }
+                if (subSources.isNotEmpty()) {
+                    AudioTab(
+                        text = "Japanese + Sub (${subSources.size})",
+                        selected = selectedGroup == AudioGroup.Sub,
+                        onClick = { selectedGroup = AudioGroup.Sub },
+                    )
+                }
+            }
             Text(
-                text = "English Dub available — listed first",
+                text = if (selectedGroup == AudioGroup.Dub) {
+                    "English-Dub servers only · recommended server is listed first"
+                } else {
+                    "Subtitle servers only · recommended server is listed first"
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.primary,
             )
@@ -87,6 +141,8 @@ fun SourcePickerScreen(
             itemsIndexed(displaySources, key = { _, s -> "${s.url}:${s.kind}" }) { index, source ->
                 SourceRow(
                     source = source,
+                    position = index + 1,
+                    recommended = index == 0,
                     modifier = if (index == 0) Modifier.focusRequester(firstFocus) else Modifier,
                     onClick = { onPick(source) },
                 )
@@ -96,8 +152,37 @@ fun SourcePickerScreen(
 }
 
 @Composable
+private fun AudioTab(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = if (selected) {
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+            } else {
+                MaterialTheme.colorScheme.surface
+            },
+            focusedContainerColor = MaterialTheme.colorScheme.primary,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            focusedContentColor = MaterialTheme.colorScheme.onPrimary,
+        ),
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+        )
+    }
+}
+
+@Composable
 private fun SourceRow(
     source: StreamSource,
+    position: Int,
+    recommended: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -129,6 +214,8 @@ private fun SourceRow(
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 val label = buildString {
+                    append(position)
+                    append(". ")
                     append(source.serverLabel ?: "Server")
                     if (!source.quality.isNullOrBlank()) {
                         append(" · ")
@@ -149,7 +236,23 @@ private fun SourceRow(
                     style = MaterialTheme.typography.titleSmall,
                 )
                 Text(
-                    text = source.url,
+                    text = buildString {
+                        if (recommended) append("Recommended · ")
+                        append(
+                            when (source.kind) {
+                                StreamKind.Hls -> "Native HLS"
+                                StreamKind.Mp4 -> "Native MP4"
+                                StreamKind.Dash -> "Native DASH"
+                                StreamKind.DirectEmbed -> "Web player backup"
+                            },
+                        )
+                        val host = runCatching { android.net.Uri.parse(source.url).host }
+                            .getOrNull()
+                        if (!host.isNullOrBlank()) {
+                            append(" · ")
+                            append(host)
+                        }
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = if (focused) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f)
                     else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),

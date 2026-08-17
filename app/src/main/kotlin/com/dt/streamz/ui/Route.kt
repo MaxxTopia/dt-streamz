@@ -26,6 +26,17 @@ sealed interface Route {
         // manifest and segment requests. DirectEmbed already carries headers;
         // native playback must carry them too when a provider returns HLS.
         val headers: Map<String, String> = emptyMap(),
+        /**
+         * Same-language candidates to try if this native route fails before
+         * playback starts. The first candidate is selected automatically;
+         * the picker remains available through BACK for manual selection.
+         */
+        val fallbacks: List<StreamSource> = emptyList(),
+        /**
+         * Optional startup watchdog for a native route whose same-language
+         * fallback should take over if the box never reaches READY.
+         */
+        val startupFallbackDelayMs: Long? = null,
         // Optional separate audio-only track, merged with [url] at playback
         // time (YouTube adaptive video-only + audio-only). Null when [url]
         // already carries audio.
