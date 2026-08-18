@@ -28,6 +28,41 @@ The physical VSeeBox smoke test remains user-owned: open a movie, a series
 episode, and an anime episode; confirm controls and duration; wait long enough
 to catch buffering; and confirm no popup or external window appears.
 
+## v0.4.102 VidNest / episode-continuity release checkpoint (2026-08-17)
+
+- Root cause confirmed from the live provider surface: `vidnest.fun/anime/...`
+  normally returns an HTTP 200 page shell, but its client-side server lookups
+  can independently return MegaPlay HTTP 404 or another mirror failure. When
+  all of VidNest's internal attempts are exhausted, the page displays a 404
+  error even though the outer page itself was reachable. This is not evidence
+  that every mirror in the app is permanently dead.
+- WebPlayer now recognizes VidNest's visible client-side error state, retries
+  that exact route twice with a bounded cache-busting key, handles a real
+  main-frame HTTP error, and avoids marking the entire VidNest host dead for a
+  route-specific 404/timeout. A genuine transport failure still uses the
+  existing dead-host and mirror-walk safeguards.
+- Native MegaPlay handoff now retains the original source list. If MegaPlay
+  fails and VidNest also exhausts its mirrors, the error path can still open
+  the English-Dub server picker instead of leaving only Retry.
+- Continue Watching details now keeps an unfinished zero-position episode
+  visible as `Play Ep N`; this is the expected state after a provider fails
+  before the first frame. The existing `Next Ep N` action returns alongside
+  it, and the in-player Prev/Next bar remains available from D-pad Up.
+- Local verification passed `:app:assembleDebug`, `:app:assembleRelease`,
+  `:app:lintDebug`, and `:app:testDebugUnitTest` (no unit-test sources). The
+  API-30 TV emulator accepted the debug APK install and brought
+  `com.dt.streamz.debug/com.dt.streamz.MainActivity` to the foreground.
+- Release contents: v0.4.102 / versionCode 116 was committed as `9fadb6b`,
+  tagged, and published by GitHub Actions run `32108771526`. The non-draft,
+  non-prerelease release is live at
+  `https://github.com/MaxxTopia/dt-streamz/releases/tag/v0.4.102`; its
+  `dt-streamz.apk` asset is 13,065,412 bytes and the updater URL returned HTTP
+  200 with `application/vnd.android.package-archive`.
+- The hosted APK reports package `com.dt.streamz`, version `0.4.102`,
+  versionCode `116`, and the expected `CN=DT Streamz, O=Personal, L=Local,
+  C=US` signing certificate. The physical VSeeBox remains the gate for actual
+  VidNest retry, English audio, remote focus, and long-session buffering.
+
 ## Audio-language repair checkpoint (2026-08-03)
 
 - AniList anime now exposes `English Dub` and `Original Japanese Audio + Subtitles` as explicit choices. The picker always presents English Dub first, including when opened from the in-player audio switch.
