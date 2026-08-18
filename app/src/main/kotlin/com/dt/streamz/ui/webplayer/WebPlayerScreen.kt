@@ -95,6 +95,14 @@ private const val FIRST_LOAD_TIMEOUT_MS = 12_000L
 private const val NEXT_LOAD_TIMEOUT_MS = 6_000L
 
 /**
+ * VidNest's outer page can load while its client-side server lookup returns a
+ * transient 404. Retry that page a small, bounded number of times before the
+ * mirror walker gives up; an unbounded reload would trap the TV remote in a
+ * spinner when the provider is genuinely offline.
+ */
+private const val VIDNEST_AUTO_RETRY_COUNT = 2
+
+/**
  * After page-finished, how long to wait for actual media traffic
  * (.m3u8 / .ts / .mp4 / etc.) before deciding the embed is a dead wrapper.
  * The best server gets the full window to fetch player JS, decode the URL and
@@ -373,6 +381,31 @@ fun WebPlayerScreen(
     // source key — so the naive `wv.url != activeUrl` reload guard would loop.
     var lastLoadedUrl by remember { mutableStateOf<String?>(null) }
 
+    /**
+     * VidNest renders an error state from a client-side server lookup even
+     * when the outer document returned HTTP 200. Reload that exact route with
+     * a cache-busting query a couple of times so a transient upstream 404 can
+     * recover without making the user press Retry. The URL is still the
+     * canonical route; the query is only a reload key and is ignored by the
+     * provider's route handler.
+     */
+    fun retryVidNest(webView: WebView, reason: String): Boolean {
+        if (!isVidNestUrl(activeUrl) || attempt >= VIDNEST_AUTO_RETRY_COUNT) return false
+        val nextAttempt = attempt + 1
+        val retryUrl = vidNestRetryUrl(activeUrl, nextAttempt)
+        DebugLog.w(
+            TAG,
+            "retry VidNest attempt=$nextAttempt/$VIDNEST_AUTO_RETRY_COUNT reason=$reason url=${truncUrl(activeUrl)}",
+        )
+        attempt = nextAttempt
+        loadState = LoadState.Loading
+        blockedHosts.clear()
+        webView.stopLoading()
+        lastLoadedUrl = activeUrl
+        webView.loadUrl(retryUrl, effectiveHeaders)
+        return true
+    }
+
     // In-player "Up next" rail (YouTube). `relatedList` is loaded for the
     // currently-playing video; `railVisible` is toggled by D-pad DOWN. The
     // rail is native Compose, so while it's focused the WebView's key
@@ -528,7 +561,11 @@ fun WebPlayerScreen(
         }
         if (loadState is LoadState.Loading) {
             DebugLog.w(TAG, "timeout ${loadTimeout}ms mirror=$mirrorIndex url=${truncUrl(activeUrl)}")
-            DeadHostRegistry.markIfHost(activeUrl)
+            // VidNest can return a healthy outer document while one episode's
+            // client-side server lookup is unavailable. Do not poison the
+            // whole host from a route-specific timeout; transport errors still
+            // mark a genuinely unreachable host below.
+            if (!isVidNestUrl(activeUrl)) DeadHostRegistry.markIfHost(activeUrl)
             reportMirror(activeUrl, success = false)
             if (mirrorIndex + 1 < totalMirrors) {
                 DebugLog.i(TAG, "advance ${mirrorIndex} -> ${mirrorIndex + 1} (timeout)")
@@ -575,6 +612,7 @@ fun WebPlayerScreen(
                 return@LaunchedEffect
             }
             if (signal == "iframe-cross-origin" || signal == "video-pending") sawPlayer = true
+            if (signal == "vidnest-error") break
             // Fast-fail a dead wrapper: if NO player element of any kind has
             // appeared within BLANK_CUTOFF_MS, this mirror is blank — don't
             // burn the full 18s before walking to the next one. (Players that
@@ -597,13 +635,17 @@ fun WebPlayerScreen(
             DebugLog.i(TAG, "keeping mirror=$mirrorIndex — player present, no autostart traffic (press play)")
             return@LaunchedEffect
         }
+        if (lastSignal == "vidnest-error") {
+            val retried = webViewRef?.let { retryVidNest(it, "client error state") } == true
+            if (retried) return@LaunchedEffect
+        }
         reportMirror(activeUrl, success = false)
         if (mirrorIndex + 1 < totalMirrors) {
             DebugLog.i(TAG, "blank after ${mediaCheck}ms (signal=$lastSignal) mirror=$mirrorIndex; advancing")
             mirrorIndex += 1
         } else {
             DebugLog.w(TAG, "exhausted ${totalMirrors} mirrors — last signal=$lastSignal")
-            DeadHostRegistry.markIfHost(activeUrl)
+            if (!isVidNestUrl(activeUrl)) DeadHostRegistry.markIfHost(activeUrl)
             loadState = LoadState.Failed(
                 "Couldn't play this title — none of the mirrors delivered video. " +
                     "Two common causes: (1) the streaming mirrors are temporarily down " +
@@ -813,6 +855,32 @@ fun WebPlayerScreen(
                                 loadState = LoadState.Failed(reason, code)
                             }
                         },
+                        onMainFrameHttpError = { status, failedUrl ->
+                            val actualUrl = failedUrl ?: activeUrl
+                            DebugLog.w(
+                                TAG,
+                                "main-frame HTTP $status mirror=$mirrorIndex url=${truncUrl(actualUrl)}",
+                            )
+                            val retried = if (status >= 400 && isVidNestUrl(actualUrl)) {
+                                webViewRef?.let { retryVidNest(it, "HTTP $status") } == true
+                            } else {
+                                false
+                            }
+                            if (!retried) {
+                                // An HTTP 404/5xx is a route/content failure,
+                                // not proof that the entire host is dead. Keep
+                                // the host registry for transport failures.
+                                reportMirror(actualUrl, success = false)
+                                if (mirrorIndex + 1 < totalMirrors) {
+                                    mirrorIndex += 1
+                                } else {
+                                    loadState = LoadState.Failed(
+                                        "Server returned HTTP $status while loading this mirror.",
+                                        status,
+                                    )
+                                }
+                            }
+                        },
                         onResourceBlocked = { host ->
                             // Bounded — we only need a hint for the error overlay.
                             if (blockedHosts.size < 16 && host !in blockedHosts) {
@@ -957,7 +1025,10 @@ fun WebPlayerScreen(
                         blockedHosts.clear()
                         mirrorIndex = 0
                         loadState = LoadState.Loading
-                        attempt += 1
+                        // A user-requested Retry starts a fresh bounded
+                        // VidNest retry budget; it must not inherit an
+                        // exhausted automatic-retry counter.
+                        attempt = 0
                         lastLoadedUrl = embedUrl
                         loadInto(wv, embedUrl, headers + ("Referer" to defaultReferer(embedUrl)))
                     }
@@ -988,7 +1059,12 @@ fun WebPlayerScreen(
                     controlsVisible = false
                     blockedHosts.clear()
                     loadState = LoadState.Loading
-                    webViewRef?.let { it.stopLoading(); it.reload() }
+                    attempt = 0
+                    lastLoadedUrl = activeUrl
+                    webViewRef?.let {
+                        it.stopLoading()
+                        loadInto(it, activeUrl, effectiveHeaders)
+                    }
                     webViewRef?.requestFocus()
                 },
                 onPrev = {
@@ -1381,6 +1457,23 @@ private suspend fun probeForPlayer(webView: WebView): String {
             }
           } catch (e) {}
 
+          // VidNest's normal page shell is often HTTP 200 even when its
+          // client-side server lookup has exhausted all mirrors. Use visible
+          // text only so hidden Next.js/RSC metadata containing "404" cannot
+          // turn a healthy player into a false failure.
+          try {
+            var host = (location.hostname || '').toLowerCase();
+            var bodyText = (document.body && document.body.innerText || '').toLowerCase();
+            var vidnest = host === 'vidnest.fun' || host === 'www.vidnest.fun' ||
+              host.slice(-12) === '.vidnest.fun';
+            if (vidnest && (bodyText.indexOf('404') >= 0 ||
+                bodyText.indexOf('not found') >= 0 ||
+                bodyText.indexOf('server returned') >= 0 ||
+                bodyText.indexOf('failed to load from') >= 0)) {
+              return 'vidnest-error';
+            }
+          } catch (e) {}
+
           var sawVideo = false;
           var sawCrossOrigin = false;
           function inspect(root, nested) {
@@ -1517,6 +1610,7 @@ private class EmbedWebViewClient(
     private val onMainFrameStarted: (String) -> Unit,
     private val onMainFrameFinished: () -> Unit,
     private val onMainFrameError: (Int, String, String?) -> Unit,
+    private val onMainFrameHttpError: (Int, String?) -> Unit,
     private val onResourceBlocked: (String) -> Unit,
     private val onAdGateDetected: (WebView) -> Unit = {},
     private val onUnsafeContentDetected: (WebView) -> Unit = {},
@@ -1599,6 +1693,16 @@ private class EmbedWebViewClient(
         if (!request.isForMainFrame) return
         DebugLog.w(TAG, "main-frame err code=${error.errorCode} desc=${error.description} url=${truncUrl(request.url?.toString().orEmpty())}")
         onMainFrameError(error.errorCode, "Embed failed to load: ${error.description}", request.url?.toString())
+    }
+
+    override fun onReceivedHttpError(
+        view: WebView,
+        request: WebResourceRequest,
+        errorResponse: WebResourceResponse,
+    ) {
+        super.onReceivedHttpError(view, request, errorResponse)
+        if (!request.isForMainFrame) return
+        onMainFrameHttpError(errorResponse.statusCode, request.url?.toString())
     }
 
     override fun shouldOverrideUrlLoading(
@@ -1813,6 +1917,19 @@ private fun shareEffectiveDomain(a: String, b: String): Boolean {
 }
 
 private fun hostOf(url: String): String? = runCatching { Uri.parse(url).host?.lowercase() }.getOrNull()
+
+private fun isVidNestUrl(url: String): Boolean =
+    hostOf(url)?.let { host ->
+        host == "vidnest.fun" || host == "www.vidnest.fun" || host.endsWith(".vidnest.fun")
+    } == true
+
+private fun vidNestRetryUrl(url: String, attempt: Int): String =
+    runCatching {
+        Uri.parse(url).buildUpon()
+            .appendQueryParameter("dt_retry", attempt.toString())
+            .build()
+            .toString()
+    }.getOrDefault(url)
 
 /**
  * Pointer icon for the player WebView. [hidden] = our own YouTube embed,

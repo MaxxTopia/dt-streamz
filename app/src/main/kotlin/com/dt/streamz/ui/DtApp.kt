@@ -585,6 +585,7 @@ fun DtApp() {
                         {
                             val next = r.fallbacks.first()
                             val nextLabel = next.serverLabel ?: "backup server"
+                            val sourceChoices = r.sourceChoices.ifEmpty { r.fallbacks }
                             Log.w(TAG, "${r.title} failed -> trying $nextLabel")
                             Toast.makeText(
                                 ctx,
@@ -597,7 +598,7 @@ fun DtApp() {
                                 playRouteFor(
                                     next,
                                     r.title,
-                                    r.fallbacks,
+                                    sourceChoices,
                                     providerId = r.providerId,
                                     titleId = r.titleId,
                                     episodeId = r.episodeId,
@@ -1043,6 +1044,7 @@ private fun playRouteFor(
                     candidate.url,
                 )
             },
+        sourceChoices = siblings,
         startupFallbackDelayMs = if (
             source.serverLabel.orEmpty().contains("MegaPlay", ignoreCase = true)
         ) {

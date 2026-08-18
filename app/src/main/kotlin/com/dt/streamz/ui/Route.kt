@@ -33,6 +33,13 @@ sealed interface Route {
          */
         val fallbacks: List<StreamSource> = emptyList(),
         /**
+         * Full same-title source list retained across a native-to-WebView
+         * handoff. Without this, a failed MegaPlay route handed VidNest only
+         * its own URL, so the final error screen could not offer the original
+         * English-Dub server choices.
+         */
+        val sourceChoices: List<StreamSource> = emptyList(),
+        /**
          * Optional startup watchdog for a native route whose same-language
          * fallback should take over if the box never reaches READY.
          */

@@ -85,13 +85,16 @@ fun DetailsScreen(
                 onRetry = { vm.load() },
             )
             is DetailsState.Loaded -> {
-                // Surface a one-tap Resume if we left this title partway
-                // through an episode that's still in the list.
+                // Surface a one-tap Resume/Play action if this title has a
+                // current, unfinished episode. The store records the episode
+                // before stream resolution, so a 404 or provider outage can
+                // legitimately leave position at zero; hiding the controls
+                // in that case made Continue Watching look like it vanished.
                 val resume = remember(cwEntries, providerId, titleId, s.details) {
                     val e = cwEntries.firstOrNull {
                         it.providerId == providerId && it.titleId == titleId &&
-                            it.positionMs >= 10_000L &&
-                            (it.durationMs == 0L || it.positionMs < it.durationMs - 20_000L)
+                            (it.durationMs <= 0L ||
+                                it.positionMs < (it.durationMs - 20_000L).coerceAtLeast(0L))
                     }
                     val ep = e?.let { en -> s.details.episodes.firstOrNull { it.id == en.episodeId } }
                     if (e != null && ep != null) ResumeInfo(ep, e.positionMs) else null
@@ -316,12 +319,14 @@ private fun PrimaryPlayButton(label: String, onClick: () -> Unit) {
 @Composable
 private fun ResumeButton(resume: ResumeInfo, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
-    // Land the D-pad on Resume when the screen opens with a resume point, so
-    // continuing is a single OK press instead of arrowing down to find it.
+    // Land the D-pad on this action when the screen opens with a saved episode,
+    // so continuing (or retrying a zero-position start) is one OK press.
     val resumeFocus = remember { androidx.compose.ui.focus.FocusRequester() }
     androidx.compose.runtime.LaunchedEffect(Unit) { runCatching { resumeFocus.requestFocus() } }
     val label = buildString {
-        append("▶ Resume Ep ")
+        append("▶ ")
+        append(if (resume.positionMs >= 10_000L) "Resume" else "Play")
+        append(" Ep ")
         append(resume.episode.number)
         append("  ·  ")
         append(formatClock(resume.positionMs))
