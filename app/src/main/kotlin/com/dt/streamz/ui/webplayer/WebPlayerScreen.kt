@@ -354,6 +354,10 @@ fun WebPlayerScreen(
     // mirror walker hits the 20s LOAD_TIMEOUT every time.
     // Reset these manually in LaunchedEffect(activeUrl) below instead.
     var loadState by remember { mutableStateOf<LoadState>(LoadState.Loading) }
+    // A real <video> element can be present before a provider has received a
+    // user gesture. Keep that mirror on screen and expose a D-pad start action
+    // instead of silently walking to a known-bad fallback.
+    var pendingPlayback by remember { mutableStateOf(false) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var chromeClientRef by remember { mutableStateOf<FullscreenChromeClient?>(null) }
     var attempt by remember(activeUrl) { mutableStateOf(0) }
@@ -497,6 +501,7 @@ fun WebPlayerScreen(
     // load starts clean.
     LaunchedEffect(activeUrl) {
         loadState = LoadState.Loading
+        pendingPlayback = false
         blockedHosts.clear()
         mainFrameHost = hostOf(activeUrl)
         ytEmbedActive.value = activeUrl.startsWith(YT_EMBED_SCHEME)
@@ -608,6 +613,7 @@ fun WebPlayerScreen(
             lastSignal = signal
             if (signal == "media" || signal == "video-ready" || signal == "iframe-video-ready") {
                 DebugLog.i(TAG, "play confirmed mirror=$mirrorIndex via $signal")
+                pendingPlayback = false
                 reportMirror(activeUrl, success = true)
                 return@LaunchedEffect
             }
@@ -627,11 +633,13 @@ fun WebPlayerScreen(
         // fetch anything. In both cases a *player iframe is present* even
         // though we saw no media bytes. Auto-walking away from those (the old
         // behavior) is exactly why nothing played. So:
-        //   - player iframe present (iframe-cross-origin) -> KEEP it; the user
-        //     can press play. Don't walk, don't error.
+        //   - player iframe/video present -> KEEP it; the user can press play.
+        //     Don't walk, don't error. A video element is the stronger signal
+        //     and gets a native "Start playback" action in the control bar.
         //   - genuinely blank (none) -> walk to the next mirror; only error
         //     once every mirror came back blank.
-        if (lastSignal == "iframe-cross-origin") {
+        if (lastSignal == "iframe-cross-origin" || lastSignal == "video-pending") {
+            pendingPlayback = lastSignal == "video-pending"
             DebugLog.i(TAG, "keeping mirror=$mirrorIndex — player present, no autostart traffic (press play)")
             return@LaunchedEffect
         }
@@ -1001,6 +1009,17 @@ fun WebPlayerScreen(
             )
         }
 
+        if (pendingPlayback && loadState is LoadState.Loaded &&
+            !controlsVisible && !railVisible
+        ) {
+            MirrorWalkChip(
+                modifier = Modifier.align(Alignment.TopCenter).padding(16.dp),
+                index = 0,
+                total = 0,
+                text = "Player ready — press UP, then Start playback",
+            )
+        }
+
         if (loadState is LoadState.Failed) {
             val failed = loadState as LoadState.Failed
             val baseReason = failed.reason
@@ -1044,6 +1063,15 @@ fun WebPlayerScreen(
             PlayerControlBar(
                 firstFocus = controlsFocus,
                 showNextPrev = showNextPrev,
+                onStartPlayback = if (pendingPlayback) {
+                    {
+                        DebugLog.i(TAG, "user start — requesting pending HTML5 video playback")
+                        pendingPlayback = false
+                        webViewRef?.evaluateJavascript(START_PENDING_MEDIA_JS, null)
+                        controlsVisible = false
+                        webViewRef?.requestFocus()
+                    }
+                } else null,
                 onSwitchAudio = onSwitchAudio?.let {
                     {
                         controlsVisible = false
@@ -1109,7 +1137,12 @@ private data class ActiveSource(
 )
 
 @Composable
-private fun MirrorWalkChip(modifier: Modifier, index: Int, total: Int) {
+private fun MirrorWalkChip(
+    modifier: Modifier,
+    index: Int,
+    total: Int,
+    text: String? = null,
+) {
     Box(
         modifier = modifier
             .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
@@ -1117,7 +1150,7 @@ private fun MirrorWalkChip(modifier: Modifier, index: Int, total: Int) {
             .padding(horizontal = 10.dp, vertical = 6.dp),
     ) {
         Text(
-            text = "Trying mirror $index of $total…",
+            text = text ?: "Trying mirror $index of $total…",
             color = Color.White.copy(alpha = 0.85f),
             style = MaterialTheme.typography.labelMedium,
         )
@@ -1228,6 +1261,7 @@ private fun RelatedCard(
 private fun PlayerControlBar(
     firstFocus: FocusRequester,
     showNextPrev: Boolean,
+    onStartPlayback: (() -> Unit)? = null,
     onReconnect: () -> Unit,
     onPrev: () -> Unit,
     onNext: () -> Unit,
@@ -1253,9 +1287,20 @@ private fun PlayerControlBar(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Reconnect is always first and takes initial focus — it's the only
-        // control on a movie/non-episodic embed and the stall escape hatch.
-        ControlButton("↻  Reconnect", onClick = onReconnect, modifier = Modifier.focusRequester(firstFocus))
+        if (onStartPlayback != null) {
+            ControlButton(
+                "▶  Start playback",
+                onClick = onStartPlayback,
+                modifier = Modifier.focusRequester(firstFocus),
+            )
+        }
+        // Reconnect is the default first control; when a player is waiting for
+        // a gesture, Start playback takes initial focus instead.
+        ControlButton(
+            "↻  Reconnect",
+            onClick = onReconnect,
+            modifier = if (onStartPlayback == null) Modifier.focusRequester(firstFocus) else Modifier,
+        )
         if (showNextPrev) {
             ControlButton("⏮  Prev", onClick = onPrev)
             ControlButton("Next Episode  ▶|", onClick = onNext)
@@ -1345,6 +1390,39 @@ private fun resumePlaybackScript(positionMs: Long): String {
         })();
     """.trimIndent()
 }
+
+/** Ask a same-document/same-origin HTML5 player to start after a user
+ * gesture. [probeForPlayer] only reports `video-pending` when it can see this
+ * media element, so this never attempts to pierce an opaque cross-origin
+ * frame. */
+private val START_PENDING_MEDIA_JS = """
+    (function() {
+      function findMedia(root) {
+        try {
+          var media = root.querySelector('video');
+          if (media) return media;
+          var frames = root.querySelectorAll('iframe');
+          for (var i = 0; i < frames.length; i++) {
+            try {
+              var doc = frames[i].contentDocument;
+              if (doc) {
+                var nested = findMedia(doc);
+                if (nested) return nested;
+              }
+            } catch (e) {}
+          }
+        } catch (e) {}
+        return null;
+      }
+      var media = findMedia(document);
+      if (media) {
+        try {
+          var p = media.play();
+          if (p && p.catch) p.catch(function() {});
+        } catch (e) {}
+      }
+    })();
+""".trimIndent()
 
 private val WEB_PROGRESS_JS = """
     (function() {

@@ -11,6 +11,8 @@ data class SearchResult(
     val kind: MediaKind,
     /** True for an in-progress live broadcast (currently YouTube only). */
     val isLive: Boolean = false,
+    /** Optional channel/uploader label for wide video-card metadata. */
+    val subtitle: String? = null,
     /** Wide 16:9 backdrop (TMDb), for the Home hero banner. Null = use poster. */
     val backdrop: String? = null,
 )

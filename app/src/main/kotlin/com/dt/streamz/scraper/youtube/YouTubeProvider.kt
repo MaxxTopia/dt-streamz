@@ -14,6 +14,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import org.schabi.newpipe.extractor.NewPipe
@@ -54,6 +55,13 @@ class YouTubeProvider(
     // never reach it. Defaults to none so the provider works standalone. See
     // [browse].
     private val recentWatchIds: suspend () -> List<String> = { emptyList() },
+    // Explicit YouTube searches are a second durable intent signal. They let
+    // the grid recover a useful profile even when YouTube returns an empty
+    // related-video shelf for a watched ID.
+    private val recentSearchTerms: suspend () -> List<String> = { emptyList() },
+    // Titles are persisted alongside watched IDs so a cold process can still
+    // search the user's actual viewing context when the related shelf is thin.
+    private val recentWatchTitles: suspend () -> List<String> = { emptyList() },
     // Max video height the native extractor will pick, read live from the
     // user's quality preference. Defaults to 1080 so the provider still works
     // standalone (tests, cold start). See [pickVideo].
@@ -78,21 +86,39 @@ class YouTubeProvider(
         // tap YouTube's own watch-next graph: for each video you actually
         // watched, `relatedVideos` returns what YouTube recommends after it
         // (collaborative-filtered by YouTube, not by us). The grid is driven
-        // entirely by WHAT YOU WATCH on YouTube; we only fall back to generic
-        // popular seeds when there's nothing watched yet (cold start / off).
+        // entirely by WHAT YOU WATCH on YouTube, with explicit searches as a
+        // second signal; generic popular seeds only top up a sparse profile.
         //
         // The watch signal is YOUTUBE-ONLY (see [recentWatchIds]) — movies and
         // shows can't drift this grid.
         //
-        // Tiers drained in priority order: related-from-watches first (your
-        // "for you"), then generic filler only to top up / cold-start.
+        // Tiers drained in priority order: related-from-watches first, then
+        // explicit search interests, then generic filler only to top up.
         val watchIds = runCatching { recentWatchIds() }.getOrNull().orEmpty().distinct().take(5)
+        val searchTerms = runCatching { recentSearchTerms() }.getOrNull().orEmpty()
+            .map { it.trim() }
+            .filter { it.length >= 2 }
+            .distinctBy { it.lowercase() }
+            .take(4)
+        val watchedTitleTerms = runCatching { recentWatchTitles() }.getOrNull().orEmpty()
+            .map { it.trim() }
+            .filter { it.length >= 3 }
+            .distinctBy { it.lowercase() }
+            .take(3)
 
         // Tier 1: YouTube's own recommendations for what you watched.
         val relatedTier = watchIds.map { id ->
             async(Dispatchers.IO) { runCatching { innertube.relatedVideos(id) }.getOrNull().orEmpty() }
         }.awaitAll()
-        // Tier 2: generic popular filler (also the entire grid at cold start).
+        // Tier 2: explicit searches from the YouTube tab. This keeps the feed
+        // useful even when a watched video's related shelf is empty or blocked.
+        val interestTier = (watchedTitleTerms + searchTerms)
+            .distinctBy { it.lowercase() }
+            .take(6)
+            .map { term ->
+            async(Dispatchers.IO) { runCatching { innertube.search(term) }.getOrNull()?.videos.orEmpty() }
+            }.awaitAll()
+        // Tier 3: generic popular filler (also the entire grid at cold start).
         val fillerTier = RECOMMEND_SEEDS.map { seed ->
             async(Dispatchers.IO) { runCatching { innertube.search(seed) }.getOrNull()?.videos.orEmpty() }
         }.awaitAll()
@@ -108,7 +134,7 @@ class YouTubeProvider(
             for (i in 0 until maxLen) {
                 for (videos in tier) {
                     val v = videos.getOrNull(i) ?: continue
-                    if (v.isLive || v.videoId in watched || !isLikelyEnglish(v.title)) continue
+                    if (v.isLive || v.videoId in watched || !isRecommendationCandidate(v.title)) continue
                     if (seen.add(v.videoId)) out.add(v.toSearchResult())
                     if (out.size >= 24) return true
                 }
@@ -116,6 +142,7 @@ class YouTubeProvider(
             return false
         }
         if (drain(relatedTier)) return@coroutineScope out
+        if (drain(interestTier)) return@coroutineScope out
         drain(fillerTier)
         if (out.isNotEmpty()) return@coroutineScope out
 
@@ -123,7 +150,7 @@ class YouTubeProvider(
         val piped = runCatching { piped.trending() }.getOrNull()
         piped.orEmpty()
             .filterNot { it.isLive }
-            .filter { isLikelyEnglish(it.title) }
+            .filter { isRecommendationCandidate(it.title) }
             .take(24)
             .map { it.toSearchResult() }
     }
@@ -225,6 +252,19 @@ class YouTubeProvider(
         // Keep when non-Latin letters are a minority. 0.30 tolerates the
         // odd accented/foreign word in an otherwise-English title.
         return nonLatin.toDouble() / total < 0.30
+    }
+
+    /** Keep the personalized shelf from being filled by obvious placeholder
+     * or malformed titles returned by public YouTube backends. This is a
+     * narrow quality gate, not a topic filter: news, music, gaming, and long
+     * titles remain eligible when they match the user's history. */
+    private fun isRecommendationCandidate(title: String): Boolean {
+        val clean = title.trim()
+        if (clean.length !in 3..180 || !isLikelyEnglish(clean)) return false
+        val letters = clean.filter { it.isLetterOrDigit() }
+        if (letters.length >= 6 && letters.toSet().size <= 2) return false
+        if (clean.count { it == '#' } > 5) return false
+        return true
     }
 
     /**
@@ -384,7 +424,22 @@ class YouTubeProvider(
         withContext(Dispatchers.IO) {
             val videoId = videoIdOf(titleId)
 
-            // PRIMARY: native stream extraction via NewPipeExtractor, played by
+            // PRIMARY: Piped's direct stream API. The box log showed YouTube's
+            // normal playback route hitting a bot wall, then the WebView
+            // fallback failing as well. Piped resolves the signed googlevideo
+            // URLs off-device, so it avoids both failure modes.
+            val pipedSources = runCatching {
+                withTimeoutOrNull(PIPED_STREAM_TIMEOUT_MS) { piped.streams(videoId) }
+                    ?.let(::pipedSources)
+                    .orEmpty()
+            }.onFailure { DebugLog.w(TAG, "Piped streams($videoId) failed", it) }
+                .getOrDefault(emptyList())
+            if (pipedSources.isNotEmpty()) {
+                DebugLog.i(TAG, "Piped supplied ${pipedSources.size} playable source(s) for $videoId")
+                return@withContext pipedSources + youtubeEmbedSources(videoId)
+            }
+
+            // SECONDARY: native stream extraction via NewPipeExtractor, played by
             // ExoPlayer. The IFrame embed is a 2026 dead end (YouTube ramping
             // ads into embeds, tiny non-TV UI, unfixable embed-disabled errors),
             // so we extract real stream URLs and play them in our native player:
@@ -393,31 +448,121 @@ class YouTubeProvider(
             // enforcement, so no login or attestation token is needed. (The old
             // API-33 URLEncoder crash on this box is now handled by the `_nio`
             // core-library desugaring enabled in build.gradle.kts.)
-            val native = runCatching { extractNative(videoId) }
+            val native = runCatching {
+                withTimeoutOrNull(NATIVE_STREAM_TIMEOUT_MS) { extractNative(videoId) }
+            }
                 .onFailure { DebugLog.w(TAG, "native extract($videoId) failed", it) }
                 .getOrNull()
-            if (!native.isNullOrEmpty()) return@withContext native
+            if (!native.isNullOrEmpty()) return@withContext native + youtubeEmbedSources(videoId)
 
             // FALLBACK: the hosted IFrame embed + watch page, used only when
             // extraction yields nothing playable (a video YouTube has fully
             // locked down). WebPlayerScreen expands `ytembed://` into a
             // full-screen IFrame-API player; the watch page plays the rest.
             DebugLog.i(TAG, "native extract empty for $videoId — falling back to embed")
-            listOf(
+            youtubeEmbedSources(videoId)
+        }
+
+    private fun youtubeEmbedSources(videoId: String): List<StreamSource> = listOf(
+        StreamSource(
+            url = "ytembed://$videoId",
+            kind = StreamKind.DirectEmbed,
+            serverLabel = "YouTube (embed)",
+            headers = emptyMap(),
+        ),
+        StreamSource(
+            url = "https://www.youtube.com/watch?v=$videoId",
+            kind = StreamKind.DirectEmbed,
+            serverLabel = "YouTube (page)",
+            headers = mapOf("Referer" to "https://www.youtube.com/"),
+        ),
+    )
+
+    /** Convert Piped's adaptive tracks into the same native source model used
+     * by NewPipe. Keep the box-friendly AVC/AAC preference and honor the app's
+     * quality cap; use Piped's MPD/HLS only as a last resort. */
+    private fun pipedSources(streams: PipedStreams): List<StreamSource> {
+        if (streams.livestream && !streams.hls.isNullOrBlank()) {
+            return listOf(
                 StreamSource(
-                    url = "ytembed://$videoId",
-                    kind = StreamKind.DirectEmbed,
-                    serverLabel = "YouTube (embed)",
-                    headers = emptyMap(),
-                ),
-                StreamSource(
-                    url = "https://www.youtube.com/watch?v=$videoId",
-                    kind = StreamKind.DirectEmbed,
-                    serverLabel = "YouTube (page)",
-                    headers = mapOf("Referer" to "https://www.youtube.com/"),
+                    url = streams.hls,
+                    kind = StreamKind.Hls,
+                    serverLabel = "YouTube · Piped Live",
+                    isLive = true,
                 ),
             )
         }
+
+        val cap = qualityCap().coerceAtLeast(360)
+        val videos = streams.videoStreams
+            .filter { it.videoOnly && pipedResolution(it) in 1..cap }
+            .sortedWith(compareBy<PipedStream>({ pipedCodecRank(it) }, { -pipedResolution(it) }))
+        val audio = streams.audioStreams
+            .sortedWith(compareBy<PipedStream>({ pipedAudioCodecRank(it) }, { -pipedBitrate(it) }))
+            .firstOrNull()
+        val adaptiveVideo = videos.firstOrNull()
+        if (adaptiveVideo != null && audio != null) {
+            val height = pipedResolution(adaptiveVideo)
+            return listOf(
+                StreamSource(
+                    url = adaptiveVideo.url,
+                    audioUrl = audio.url,
+                    kind = StreamKind.Mp4,
+                    serverLabel = "YouTube · Piped ${height}p",
+                ),
+            )
+        }
+
+        val muxed = streams.videoStreams
+            .filter { !it.videoOnly && pipedResolution(it) in 1..cap }
+            .maxByOrNull { pipedResolution(it) }
+        if (muxed != null) {
+            val height = pipedResolution(muxed)
+            return listOf(
+                StreamSource(
+                    url = muxed.url,
+                    kind = StreamKind.Mp4,
+                    serverLabel = "YouTube · Piped ${height}p",
+                ),
+            )
+        }
+
+        // Some instances omit the parsed track arrays but still expose a
+        // valid manifest. StreamKind.Dash treats [dash] as a remote MPD URL.
+        if (!streams.dash.isNullOrBlank()) {
+            return listOf(
+                StreamSource(
+                    url = streams.dash,
+                    kind = StreamKind.Dash,
+                    serverLabel = "YouTube · Piped adaptive",
+                ),
+            )
+        }
+        return emptyList()
+    }
+
+    private fun pipedResolution(stream: PipedStream): Int =
+        Regex("""(\d{3,4})p""").find(stream.quality.orEmpty())
+            ?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+
+    private fun pipedBitrate(stream: PipedStream): Int =
+        Regex("""(\d{2,4})""").find(stream.quality.orEmpty())
+            ?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+
+    private fun pipedCodecRank(stream: PipedStream): Int {
+        val codec = (stream.format.orEmpty() + " " + stream.mimeType.orEmpty()).lowercase()
+        return when {
+            "avc" in codec || "h264" in codec -> 0
+            "vp9" in codec || "vp09" in codec -> 1
+            "av01" in codec || "av1" in codec -> 3
+            else -> 2
+        }
+    }
+
+    private fun pipedAudioCodecRank(stream: PipedStream): Int {
+        val codec = (stream.format.orEmpty() + " " + stream.mimeType.orEmpty()).lowercase()
+        return if ("mp4a" in codec || "aac" in codec || "m4a" in codec) 0 else 1
+    }
 
     /**
      * Extract playable stream URLs for [videoId] via NewPipeExtractor.
@@ -660,6 +805,7 @@ class YouTubeProvider(
             year = null,
             kind = MediaKind.Movie,
             isLive = isLive,
+            subtitle = uploader,
         )
         cache[videoId] = CachedItem(title, thumbnail)
         return r
@@ -674,6 +820,7 @@ class YouTubeProvider(
             year = null,
             kind = MediaKind.Movie,
             isLive = isLive,
+            subtitle = uploaderName,
         )
         cache[videoId] = CachedItem(title, thumbnail)
         return r
@@ -690,6 +837,7 @@ class YouTubeProvider(
             year = null,
             kind = MediaKind.Movie,
             isLive = streamType == org.schabi.newpipe.extractor.stream.StreamType.LIVE_STREAM,
+            subtitle = uploaderName,
         )
         cache[videoId] = CachedItem(name ?: videoId, poster)
         return r
@@ -699,6 +847,8 @@ class YouTubeProvider(
 
     companion object {
         private const val TAG = "YouTubeProvider"
+        private const val PIPED_STREAM_TIMEOUT_MS = 9_000L
+        private const val NATIVE_STREAM_TIMEOUT_MS = 14_000L
 
         // Whole-word foreign-language markers (ASCII-folded, lowercase) used by
         // [looksForeignLatin]. Curated to never collide with English words:

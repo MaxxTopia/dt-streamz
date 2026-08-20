@@ -242,6 +242,8 @@ fun DtApp() {
             val nextId = runCatching { registry.get("youtube").related(videoId) }
                 .getOrNull()?.firstOrNull()
             if (nextId == null) { popToTabs(); return@launch }
+            app.youtubeInterests.recordWatch(nextId)
+            com.dt.streamz.scraper.BrowseCache.invalidate("youtube")
             val ep = com.dt.streamz.data.Episode(id = "watch", number = 1, title = "Watch")
             val sources = runCatching { registry.get("youtube").streams(nextId, ep) }
                 .getOrDefault(emptyList())
@@ -281,6 +283,7 @@ fun DtApp() {
                             // it (genuine personalisation, no login). titleId IS
                             // the videoId.
                             app.youtubeInterests.recordWatch(titleId)
+                            com.dt.streamz.scraper.BrowseCache.invalidate("youtube")
                             val ep = com.dt.streamz.data.Episode(
                                 id = "watch", number = 1, title = "Watch",
                             )
@@ -556,30 +559,52 @@ fun DtApp() {
                             advanceEpisode(r, delta = 1, manual = false)
                         }
                     },
-                    // YouTube native playback failed (codec/URL/box quirk) —
-                    // fall straight back to the IFrame embed for this SAME
-                    // video. No re-extraction (the embed source is built
-                    // locally), so the switch is immediate. WebPlayer then
-                    // walks to the watch page if embedding is also blocked.
+                    // YouTube native playback failed (bot wall, codec, URL, or
+                    // box quirk) — consume the next native source first. This
+                    // is important now that Piped is a real backup, not merely
+                    // a search backend. Only fall into the IFrame/watch page
+                    // pair after every native source has failed.
                     onPlaybackError = if (isYouTube) {
                         {
-                            val vid = r.titleId.orEmpty()
-                            Log.i(TAG, "YT native failed -> embed fallback for $vid")
-                            replaceTop(Route.WebPlayer(
-                                embedUrl = "ytembed://$vid",
-                                title = r.title,
-                                fallbacks = listOf(
-                                    StreamSource(
-                                        url = "https://www.youtube.com/watch?v=$vid",
-                                        kind = StreamKind.DirectEmbed,
-                                        serverLabel = "YouTube (page)",
-                                        headers = mapOf("Referer" to "https://www.youtube.com/"),
+                            val next = r.fallbacks.firstOrNull()
+                            if (next != null) {
+                                val nextLabel = next.serverLabel ?: "YouTube backup"
+                                Log.i(TAG, "YT native failed -> $nextLabel")
+                                Toast.makeText(
+                                    ctx,
+                                    "YouTube source failed — trying $nextLabel",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                                replaceTop(
+                                    playRouteFor(
+                                        next,
+                                        r.title,
+                                        r.sourceChoices.ifEmpty { r.fallbacks },
+                                        providerId = r.providerId,
+                                        titleId = r.titleId,
+                                        episodeId = r.episodeId,
+                                        startPositionMs = r.startPositionMs,
                                     ),
-                                ),
-                                providerId = "youtube",
-                                titleId = vid,
-                                episodeId = "watch",
-                            ))
+                                )
+                            } else {
+                                val vid = r.titleId.orEmpty()
+                                Log.i(TAG, "YT native failed -> embed fallback for $vid")
+                                replaceTop(Route.WebPlayer(
+                                    embedUrl = "ytembed://$vid",
+                                    title = r.title,
+                                    fallbacks = listOf(
+                                        StreamSource(
+                                            url = "https://www.youtube.com/watch?v=$vid",
+                                            kind = StreamKind.DirectEmbed,
+                                            serverLabel = "YouTube (page)",
+                                            headers = mapOf("Referer" to "https://www.youtube.com/"),
+                                        ),
+                                    ),
+                                    providerId = "youtube",
+                                    titleId = vid,
+                                    episodeId = "watch",
+                                ))
+                            }
                         }
                     } else if (r.fallbacks.isNotEmpty()) {
                         {

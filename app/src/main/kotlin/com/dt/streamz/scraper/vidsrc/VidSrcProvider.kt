@@ -324,13 +324,12 @@ class VidSrcProvider(
         // TMDb-native players that work on the box; keep IMDB-accepting live
         // mirrors as fallbacks for when the lookup misses.
         //
-        // 2026-06-22: vidsrc.cc went dead (origin HTTP 522) and its player CDN
-        // cloudnestra.com lost all DNS (parked at njalla) — verified from a
-        // clean network, so it was NOT a box-DNS issue. Replaced it with
-        // vidfast.pro (TMDb-native, verified live) as the second TMDb mirror.
-        // Once a TMDb id is available, keep only the two current native
-        // players selectable. The older VidSrc.to/VidSrc.me pages can stall or
-        // challenge, so they must not be offered as a user-facing fallback.
+        // 2026-08-19: the uploaded box log caught vidfast.pro redirecting to
+        // vidfast.vc, then failing with ERR_SSL_PROTOCOL_ERROR. A source that
+        // is live on a desktop but fails transport on the target box must not
+        // remain in the automatic chain; keep the known current VidLink route
+        // and the guarded IMDB fallback instead of burning the user's first
+        // retry on a dead redirect.
         Log.i(TAG, "streams imdb=$imdb tv=$isTv s=$season e=$number tmdb=$tmdb")
 
         if (tmdb != null && ((tmdb.first == "tv") != isTv)) {
@@ -349,13 +348,10 @@ class VidSrcProvider(
         if (tmdb != null) {
             val tid = tmdb.second
             if (isAnime) {
-                out += src("vidfast", "https://vidfast.pro/tv/$tid/$season/$number")
                 out += src("vidlink", "https://vidlink.pro/tv/$tid/$season/$number")
             } else if (isTv) {
-                out += src("vidfast (HD Series)", "https://vidfast.pro/tv/$tid/$season/$number")
                 out += src("vidlink", "https://vidlink.pro/tv/$tid/$season/$number")
             } else {
-                out += src("vidfast (HD Movies)", "https://vidfast.pro/movie/$tid")
                 out += src("vidlink", "https://vidlink.pro/movie/$tid")
             }
         }

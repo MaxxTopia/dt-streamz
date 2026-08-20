@@ -131,16 +131,15 @@ class TmdbProvider : Provider {
         fun src(label: String, url: String, referer: String) =
             StreamSource(url = url, kind = StreamKind.DirectEmbed, serverLabel = label,
                 headers = mapOf("Referer" to referer))
-        // vidlink (TMDb-native, proven on the box) leads. The old vidsrc.cc
-        // origin is dead; vidfast is the current clean PC mirror and
-        // vidsrc.mov remains the IMDB/TMDb fallback.
+        // vidlink leads. The box debug log showed vidfast.pro redirecting to
+        // vidfast.vc and failing with ERR_SSL_PROTOCOL_ERROR, so a desktop-
+        // reachable mirror is not safe to keep in the automatic TV/movie
+        // chain. VidSrc remains the guarded IMDB/TMDb fallback.
         return if (isMovie) listOf(
             src("vidlink", "https://vidlink.pro/movie/$tmdbId", "https://vidlink.pro/"),
-            src("vidfast", "https://vidfast.pro/movie/$tmdbId", "https://vidfast.pro/"),
             src("vidsrc.mov", "https://vidsrc.mov/embed/movie/$tmdbId", "https://vidsrc.mov/"),
         ) else listOf(
             src("vidlink", "https://vidlink.pro/tv/$tmdbId/$season/$ep", "https://vidlink.pro/"),
-            src("vidfast", "https://vidfast.pro/tv/$tmdbId/$season/$ep", "https://vidfast.pro/"),
             src("vidsrc.mov", "https://vidsrc.mov/embed/tv/$tmdbId/$season/$ep", "https://vidsrc.mov/"),
         )
     }

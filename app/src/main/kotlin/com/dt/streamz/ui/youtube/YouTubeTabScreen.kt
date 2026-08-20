@@ -34,6 +34,7 @@ import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import com.dt.streamz.DtApplication
 import com.dt.streamz.data.SearchResult
 import com.dt.streamz.scraper.BrowseCache
 import com.dt.streamz.scraper.Provider
@@ -82,12 +83,15 @@ fun YouTubeTabScreen(
     var editorOpen by remember { mutableStateOf(false) }
     var trending by remember { mutableStateOf<List<SearchResult>?>(null) }
     var searching by remember { mutableStateOf(false) }
+    var refreshing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     var searchJob by remember { mutableStateOf<Job?>(null) }
 
     // Recent YouTube searches, persisted so the on-screen keyboard isn't
     // needed to re-run a past query (shown as chips in the search dialog).
     val ctx = androidx.compose.ui.platform.LocalContext.current
+    val dtApp = ctx.applicationContext as? DtApplication
+    val hasPersonalProfile = dtApp?.youtubeInterests?.hasData() == true
     val ytPrefs = remember {
         ctx.getSharedPreferences("yt_search_history", android.content.Context.MODE_PRIVATE)
     }
@@ -103,19 +107,37 @@ fun YouTubeTabScreen(
         dtApp?.youtubeInterests?.recordSearch(t)
         // Also feed the cross-app model for the (non-YouTube) "For You" rows.
         dtApp?.interests?.recordSearch(t)
+        BrowseCache.invalidate(provider.id)
         val cur = ytPrefs.getString("queries", "").orEmpty().split("\n").filter { it.isNotBlank() }
         val next = (listOf(t) + cur.filterNot { it.equals(t, ignoreCase = true) }).take(12)
         ytPrefs.edit().putString("queries", next.joinToString("\n")).apply()
         historyTick++
     }
 
-    LaunchedEffect(provider.id) {
-        // 5s cap — NewPipeExtractor on Android 9 can hang for tens of
-        // seconds on filtered networks while it retries YouTube's
-        // anti-bot endpoints. Fail fast and let the user search instead.
+    suspend fun loadRecommendations(force: Boolean) {
+        if (force) BrowseCache.invalidate(provider.id)
+        trending = null
         trending = runCatching {
-            kotlinx.coroutines.withTimeoutOrNull(5_000) { BrowseCache.browse(provider) } ?: emptyList()
+            kotlinx.coroutines.withTimeoutOrNull(8_000) { BrowseCache.browse(provider) } ?: emptyList()
         }.getOrDefault(emptyList())
+    }
+
+    LaunchedEffect(provider.id) {
+        // BrowseCache is invalidated after a YouTube watch/search, so a return
+        // to this tab immediately reflects the new profile instead of showing
+        // the old five-minute generic shelf.
+        refreshing = true
+        loadRecommendations(force = false)
+        refreshing = false
+    }
+
+    fun refreshRecommendations() {
+        if (refreshing) return
+        scope.launch {
+            refreshing = true
+            loadRecommendations(force = true)
+            refreshing = false
+        }
     }
 
     // Debounced live search — typing in the dialog will pre-warm results
@@ -157,24 +179,40 @@ fun YouTubeTabScreen(
                     searchJob?.cancel()
                 })
             }
+            RefreshButton(
+                label = if (refreshing) "Refreshing…" else "Refresh",
+                onClick = ::refreshRecommendations,
+            )
         }
 
         when {
             query.isBlank() -> {
                 val list = trending
-                Text(
-                    text = "Trending on YouTube",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(
+                        text = if (hasPersonalProfile) "Recommended for you" else "Popular picks",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                    Hint(
+                        if (hasPersonalProfile) {
+                            "Built from your recent YouTube watches and searches."
+                        } else {
+                            "Watch or search a few videos and this row will adapt to you."
+                        },
+                    )
+                }
                 when {
-                    list == null -> Hint("Loading trending…")
+                    list == null -> Hint("Loading recommendations…")
                     list.isEmpty() -> Hint(
-                        "Trending unavailable on this network — open the search bar above to look up a video by name.",
+                        "Recommendations unavailable on this network — use Search to look up a video by name.",
                     )
                     else -> ResultsGrid(
                         list,
                         onOpenTitle,
+                        onRecordWatch = { result ->
+                            dtApp?.youtubeInterests?.recordWatch(result.id, result.title)
+                        },
                         modifier = Modifier.fillMaxWidth().weight(1f),
                     )
                 }
@@ -193,6 +231,9 @@ fun YouTubeTabScreen(
                     else -> ResultsGrid(
                         r,
                         onOpenTitle,
+                        onRecordWatch = { result ->
+                            dtApp?.youtubeInterests?.recordWatch(result.id, result.title)
+                        },
                         modifier = Modifier.fillMaxWidth().weight(1f),
                     )
                 }
@@ -302,6 +343,44 @@ private fun ClearButton(onClick: () -> Unit) {
 }
 
 @Composable
+private fun RefreshButton(
+    label: String,
+    onClick: () -> Unit,
+) {
+    var focused by remember { mutableStateOf(false) }
+    Surface(
+        onClick = onClick,
+        modifier = Modifier
+            .height(46.dp)
+            .onFocusChanged { focused = it.isFocused }
+            .pointerClickable(onClick),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = MaterialTheme.colorScheme.surface,
+            focusedContainerColor = MaterialTheme.colorScheme.surface,
+        ),
+    ) {
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .border(
+                    width = if (focused) 2.dp else 1.dp,
+                    color = if (focused) Color(0xFFFF0000)
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                    shape = RoundedCornerShape(8.dp),
+                )
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+    }
+}
+
+@Composable
 private fun Hint(text: String) {
     Text(
         text = text,
@@ -314,6 +393,7 @@ private fun Hint(text: String) {
 private fun ResultsGrid(
     results: List<SearchResult>,
     onOpen: (String, String) -> Unit,
+    onRecordWatch: (SearchResult) -> Unit,
     modifier: Modifier = Modifier.fillMaxWidth(),
 ) {
     LazyVerticalGrid(
@@ -325,7 +405,10 @@ private fun ResultsGrid(
         items(results, key = { "${it.providerId}:${it.id}" }) { result ->
             VideoCard(
                 result = result,
-                onClick = { onOpen(result.providerId, result.id) },
+                onClick = {
+                    onRecordWatch(result)
+                    onOpen(result.providerId, result.id)
+                },
             )
         }
     }
@@ -395,5 +478,13 @@ private fun VideoCard(
             color = if (focused) MaterialTheme.colorScheme.onBackground
             else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
         )
+        result.subtitle?.takeIf { it.isNotBlank() }?.let { subtitle ->
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
+            )
+        }
     }
 }

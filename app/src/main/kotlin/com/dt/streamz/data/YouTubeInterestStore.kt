@@ -11,9 +11,9 @@ import android.content.Context
  * by what you do on YouTube:
  *   - searches you run in the YouTube tab ([recordSearch]) — explicit intent,
  *   - YouTube videos you actually open ([recordWatch]) — recorded as bare
- *     11-char video IDs so the grid can pull YouTube's OWN watch-next graph
- *     (`relatedVideos`) for them, which is the real personalisation, no login
- *     required.
+ *     11-char video IDs plus a local title snapshot so the grid can pull
+ *     YouTube's OWN watch-next graph (`relatedVideos`) and recover title-based
+ *     context after a process restart, with no login required.
  *
  * Movies / shows / anime never reach this store, so they can't drift the
  * YouTube recommendations or anything else on YouTube.
@@ -39,7 +39,11 @@ class YouTubeInterestStore(context: Context) {
             !prefs.getString(KEY_WATCHES, null).isNullOrBlank()
 
     fun clear() {
-        prefs.edit().remove(KEY_SEARCHES).remove(KEY_WATCHES).apply()
+        prefs.edit()
+            .remove(KEY_SEARCHES)
+            .remove(KEY_WATCHES)
+            .remove(KEY_WATCH_TITLES)
+            .apply()
     }
 
     /** A search the user ran in the YouTube tab. */
@@ -52,15 +56,30 @@ class YouTubeInterestStore(context: Context) {
     }
 
     /** A YouTube video the user opened. [videoId] is the 11-char watch ID. */
-    fun recordWatch(videoId: String) {
+    fun recordWatch(videoId: String, title: String? = null) {
         if (!isEnabled()) return
         val clean = videoId.trim()
         if (clean.length < 6) return
+        val now = System.currentTimeMillis()
         // Drop any prior occurrence so the newest watch floats to the end and
         // the list stays distinct without growing unbounded on re-watches.
-        val rows = (readRows(KEY_WATCHES).filter { it.text != clean } + Row(System.currentTimeMillis(), clean))
+        val rows = (readRows(KEY_WATCHES).filter { it.text != clean } + Row(now, clean))
             .takeLast(MAX_WATCHES)
         write(KEY_WATCHES, rows)
+        val cleanTitle = title
+            ?.replace('\t', ' ')
+            ?.replace('\n', ' ')
+            ?.trim()
+            ?.take(140)
+            .orEmpty()
+        if (cleanTitle.length >= 3) {
+            val titleRows = (
+                readRows(KEY_WATCH_TITLES).filter {
+                    it.text.substringBefore('|') != clean
+                } + Row(now, "$clean|$cleanTitle")
+            ).takeLast(MAX_WATCH_TITLES)
+            write(KEY_WATCH_TITLES, titleRows)
+        }
     }
 
     /**
@@ -92,6 +111,17 @@ class YouTubeInterestStore(context: Context) {
         return readRows(KEY_WATCHES).map { it.text }.asReversed().distinct().take(n)
     }
 
+    /** Recent watched titles, newest first, for title-based recommendation
+     * recovery after a process restart. */
+    fun recentWatchTitles(n: Int): List<String> {
+        if (!isEnabled() || n <= 0) return emptyList()
+        return readRows(KEY_WATCH_TITLES)
+            .asReversed()
+            .mapNotNull { it.text.substringAfter('|', "").trim().takeIf { t -> t.length >= 3 } }
+            .distinctBy { it.lowercase() }
+            .take(n)
+    }
+
     private data class Row(val ts: Long, val text: String)
 
     private fun readRows(key: String): List<Row> {
@@ -113,8 +143,10 @@ class YouTubeInterestStore(context: Context) {
         private const val KEY_ENABLED = "enabled"
         private const val KEY_SEARCHES = "searches"
         private const val KEY_WATCHES = "watches"
+        private const val KEY_WATCH_TITLES = "watch_titles"
         private const val MAX_SEARCHES = 100
         private const val MAX_WATCHES = 40
+        private const val MAX_WATCH_TITLES = 40
         private const val HALF_LIFE_MS = 14L * 24 * 60 * 60 * 1000
     }
 }

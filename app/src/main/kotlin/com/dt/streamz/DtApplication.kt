@@ -139,6 +139,8 @@ class DtApplication : Application(), SingletonImageLoader.Factory {
                 add(
                     YouTubeProvider(
                         recentWatchIds = { youtubeInterests.recentWatchIds(5) },
+                        recentSearchTerms = { youtubeInterests.topSearchTerms(4) },
+                        recentWatchTitles = { youtubeInterests.recentWatchTitles(3) },
                         qualityCap = { playbackPrefs.qualityCap() },
                     ),
                 )

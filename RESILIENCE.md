@@ -28,6 +28,47 @@ The physical VSeeBox smoke test remains user-owned: open a movie, a series
 episode, and an anime episode; confirm controls and duration; wait long enough
 to catch buffering; and confirm no popup or external window appears.
 
+## v0.4.103 playback and recommendation hardening checkpoint (2026-08-19)
+
+- The uploaded box telemetry narrowed the movie/TV failure to provider and
+  watchdog behavior rather than a catalog-wide failure. VidLink reached a
+  player but was abandoned after 12 seconds of `video-pending`; VidFast
+  redirected from `.pro` to `.vc`, where the box WebView reported
+  `ERR_SSL_PROTOCOL_ERROR`; VidSrc then reached an ad/verification gate. The
+  same VidFast route was present in both the TMDb and VidSrc provider lists.
+- VidFast is no longer an automatic movie, TV, or anime source on the box. The
+  remaining sources stay short and fail closed when a provider shows a gate or
+  cannot load. The legacy VidFast WebView compatibility code remains only for
+  already-saved/legacy routes and is not selected by the current source lists.
+- A real player that has not exposed a frame is no longer immediately treated
+  as dead. WebPlayer keeps the route alive, exposes a focused `Start playback`
+  action from D-pad Up, and still offers Reconnect/Prev/Next/Back. A playback
+  error now consumes the provider's native fallback chain before opening an
+  embed or page route.
+- YouTube now tries bounded native Piped streams first, then NewPipe extraction,
+  then the existing embed/page fallback. Adaptive video and audio are paired,
+  the quality cap is honored, and AVC is preferred for TV compatibility. Public
+  Piped instances remain volatile; a failed instance is not treated as proof
+  that YouTube itself is unavailable.
+- YouTube recommendations now use recent watches, saved searches, and watched
+  title signals, filter obvious low-quality/noise results, label channels, and
+  provide refresh plus per-tab cache invalidation. Opening a result records the
+  watch signal before playback, so the row can adapt on the next load.
+- Local verification passed `:app:assembleDebug`, `:app:assembleRelease`,
+  `:app:lintDebug`, `:app:testDebugUnitTest` (no unit-test sources), and
+  `git diff --check`. The API-30 TV emulator installed and launched the debug
+  build, and a real YouTube video rendered after Piped instances failed and
+  the NewPipe AVC fallback was selected. This does not replace the physical
+  VSeeBox gate.
+- Release preparation: v0.4.103 / versionCode 117, local release SHA-256
+  `4F7B82FD346F618A2A14366448D4D12A8F980F5D6B328316319F1358071F91DB`, signed
+  by the expected `CN=DT Streamz, O=Personal, L=Local, C=US` certificate.
+- Diggy-owned next test: install v0.4.103 on the physical VSeeBox and test one
+  movie, one TV episode, and one YouTube video. Confirm sustained playback,
+  D-pad focus on `Start playback`, no popup/external window, and acceptable
+  remote navigation. Provider availability and YouTube anti-bot behavior can
+  still change upstream.
+
 ## v0.4.102 VidNest / episode-continuity release checkpoint (2026-08-17)
 
 - Root cause confirmed from the live provider surface: `vidnest.fun/anime/...`

@@ -47,6 +47,8 @@ object BrowseCache {
     private fun fresh(id: String): List<SearchResult>? =
         cache[id]?.takeIf { System.currentTimeMillis() - it.atMs < TTL_MS }?.items
 
-    /** Drop all cached browse results — call after a manual content refresh. */
-    fun invalidate() = cache.clear()
+    /** Drop cached browse results — optionally only for one provider. */
+    fun invalidate(providerId: String? = null) {
+        if (providerId == null) cache.clear() else cache.remove(providerId)
+    }
 }
