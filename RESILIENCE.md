@@ -59,6 +59,17 @@ to catch buffering; and confirm no popup or external window appears.
   the red `LIVE` badge/aura; and Genre/Action headings were fully visible.
   These checks do not replace the physical VSeeBox smoke test, and the
   uploaded telemetry was from app version 0.4.102 rather than this build.
+- Release: v0.4.104 / versionCode 118 was committed as `3fcdc8c`, tagged,
+  pushed, and published by GitHub Actions run `32334155460`. The non-draft,
+  non-prerelease release is live at
+  `https://github.com/MaxxTopia/dt-streamz/releases/tag/v0.4.104`; its
+  `dt-streamz.apk` asset is 13,081,796 bytes with hosted SHA-256
+  `71492d8af8c32de9506b761cf7476309bf09576d026937068d5ba6faac8eee81`.
+  The hosted APK reports package `com.dt.streamz`, version `0.4.104`,
+  versionCode `118`, and the expected
+  `CN=DT Streamz, O=Personal, L=Local, C=US` signing certificate. The old
+  updater API route returned HTTP 200 with `v0.4.104`, and the APK URL
+  returned HTTP 200 with Android package content type.
 - Diggy-owned next test: install v0.4.104 on the physical VSeeBox and retry
   Adventure Time, Soulm8te, and one live YouTube result. Confirm sustained
   playback, D-pad Start behavior, no popup or external window, and acceptable
