@@ -60,9 +60,16 @@ to catch buffering; and confirm no popup or external window appears.
   build, and a real YouTube video rendered after Piped instances failed and
   the NewPipe AVC fallback was selected. This does not replace the physical
   VSeeBox gate.
-- Release preparation: v0.4.103 / versionCode 117, local release SHA-256
-  `4F7B82FD346F618A2A14366448D4D12A8F980F5D6B328316319F1358071F91DB`, signed
-  by the expected `CN=DT Streamz, O=Personal, L=Local, C=US` certificate.
+- Release: v0.4.103 / versionCode 117 was published by GitHub Actions run
+  `32327225017`. The non-draft, non-prerelease release is live at
+  `https://github.com/MaxxTopia/dt-streamz/releases/tag/v0.4.103`; its
+  `dt-streamz.apk` asset is 13,081,796 bytes with hosted SHA-256
+  `72DDAFC441C20A86229A86F4F5354A0E1C6549BC3BB4A419CDC857A8CFC1D274`.
+  The hosted APK reports package `com.dt.streamz`, version `0.4.103`,
+  versionCode `117`, and the expected
+  `CN=DT Streamz, O=Personal, L=Local, C=US` signing certificate. The local
+  release hash was different because CI packaging is not byte-for-byte
+  deterministic; package/version/signing identity matched.
 - Diggy-owned next test: install v0.4.103 on the physical VSeeBox and test one
   movie, one TV episode, and one YouTube video. Confirm sustained playback,
   D-pad focus on `Start playback`, no popup/external window, and acceptable
