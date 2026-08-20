@@ -137,6 +137,8 @@ internal class PipedClient {
         val thumb = obj["thumbnail"]?.jsonPrimitive?.contentOrNull
         val uploader = obj["uploaderName"]?.jsonPrimitive?.contentOrNull
         val duration = obj["duration"]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
+        val uploadedLabel = obj["uploadedDateText"]?.jsonPrimitive?.contentOrNull
+        val uploadedAt = obj["uploadedDate"]?.jsonPrimitive?.contentOrNull
         // Piped marks live broadcasts with duration == -1 (and some instances
         // also set an explicit `livestream`/`isShort` flag). duration < 0 is
         // the reliable cross-instance signal.
@@ -149,6 +151,8 @@ internal class PipedClient {
             uploaderName = uploader,
             durationSeconds = duration,
             isLive = live,
+            published = uploadedAt,
+            publishedLabel = uploadedLabel,
         )
     }
 
@@ -222,6 +226,8 @@ internal data class PipedVideo(
     val uploaderName: String?,
     val durationSeconds: Long?,
     val isLive: Boolean = false,
+    val published: String? = null,
+    val publishedLabel: String? = null,
 )
 
 internal data class PipedStreams(

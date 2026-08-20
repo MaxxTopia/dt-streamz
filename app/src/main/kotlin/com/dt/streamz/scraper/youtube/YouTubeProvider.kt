@@ -13,6 +13,8 @@ import com.dt.streamz.scraper.Provider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.contentOrNull
@@ -24,6 +26,9 @@ import org.schabi.newpipe.extractor.stream.StreamInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import org.schabi.newpipe.extractor.stream.StreamType
 import org.schabi.newpipe.extractor.stream.VideoStream
+import java.time.Duration
+import java.time.Instant
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * YouTube provider — two backends with auto-fallback:
@@ -76,6 +81,7 @@ class YouTubeProvider(
     private val innertube = InnerTubeClient()
     private val service = ServiceList.YouTube
     private val cache = mutableMapOf<String, CachedItem>()
+    private val streamCache = ConcurrentHashMap<String, CachedStreams>()
 
     override suspend fun browse(): List<SearchResult> = kotlinx.coroutines.coroutineScope {
         // Genuinely personalised "Recommended" grid — no login needed.
@@ -134,7 +140,9 @@ class YouTubeProvider(
             for (i in 0 until maxLen) {
                 for (videos in tier) {
                     val v = videos.getOrNull(i) ?: continue
-                    if (v.isLive || v.videoId in watched || !isRecommendationCandidate(v.title)) continue
+                    if (v.isLive || isLiveTitle(v.title) || v.videoId in watched ||
+                        !isRecommendationCandidate(v.title)
+                    ) continue
                     if (seen.add(v.videoId)) out.add(v.toSearchResult())
                     if (out.size >= 24) return true
                 }
@@ -149,7 +157,7 @@ class YouTubeProvider(
         // Last-ditch fallback: Piped trending (rarely up now).
         val piped = runCatching { piped.trending() }.getOrNull()
         piped.orEmpty()
-            .filterNot { it.isLive }
+            .filterNot { it.isLive || isLiveTitle(it.title) }
             .filter { isRecommendationCandidate(it.title) }
             .take(24)
             .map { it.toSearchResult() }
@@ -168,9 +176,10 @@ class YouTubeProvider(
         if (itResult != null && itResult.videos.isNotEmpty()) {
             val out = mutableListOf<SearchResult>()
             val seen = mutableSetOf<String>()
+            val videos = markCurrentLive(itResult.videos)
             // English-only: drop any non-English title (the box should never
             // surface a foreign-language video). See [isLikelyEnglish].
-            for (v in itResult.videos) {
+            for (v in videos) {
                 if (!isLikelyEnglish(v.title)) continue
                 if (seen.add(v.videoId)) out.add(v.toSearchResult())
             }
@@ -300,6 +309,25 @@ class YouTubeProvider(
         return u.contains(q) || q.contains(u)
     }
 
+    private fun isLiveTitle(title: String): Boolean =
+        Regex("\\blive\\b", RegexOption.IGNORE_CASE).containsMatchIn(title)
+
+    /** Confirm likely live search hits instead of trusting a stale badge alone. */
+    private suspend fun markCurrentLive(videos: List<YtVideo>): List<YtVideo> =
+        coroutineScope {
+            videos.map { video ->
+                if (!video.isLive && !isLiveTitle(video.title)) {
+                    async { video }
+                } else {
+                    async {
+                        val confirmed = runCatching { innertube.isLiveNow(video.videoId) }
+                            .getOrNull()
+                        video.copy(isLive = confirmed ?: video.isLive)
+                    }
+                }
+            }.awaitAll()
+        }
+
     /**
      * Type-ahead suggestions from Google's public YouTube autocomplete
      * endpoint (the `client=firefox` shape returns clean JSON instead of
@@ -423,44 +451,57 @@ class YouTubeProvider(
     override suspend fun streams(titleId: String, episode: Episode): List<StreamSource> =
         withContext(Dispatchers.IO) {
             val videoId = videoIdOf(titleId)
-
-            // PRIMARY: Piped's direct stream API. The box log showed YouTube's
-            // normal playback route hitting a bot wall, then the WebView
-            // fallback failing as well. Piped resolves the signed googlevideo
-            // URLs off-device, so it avoids both failure modes.
-            val pipedSources = runCatching {
-                withTimeoutOrNull(PIPED_STREAM_TIMEOUT_MS) { piped.streams(videoId) }
-                    ?.let(::pipedSources)
-                    .orEmpty()
-            }.onFailure { DebugLog.w(TAG, "Piped streams($videoId) failed", it) }
-                .getOrDefault(emptyList())
-            if (pipedSources.isNotEmpty()) {
-                DebugLog.i(TAG, "Piped supplied ${pipedSources.size} playable source(s) for $videoId")
-                return@withContext pipedSources + youtubeEmbedSources(videoId)
+            val now = System.currentTimeMillis()
+            streamCache[videoId]?.takeIf { now - it.createdAtMs < STREAM_CACHE_TTL_MS }?.let {
+                DebugLog.d(TAG, "stream cache hit for $videoId")
+                return@withContext it.sources
             }
 
-            // SECONDARY: native stream extraction via NewPipeExtractor, played by
-            // ExoPlayer. The IFrame embed is a 2026 dead end (YouTube ramping
-            // ads into embeds, tiny non-TV UI, unfixable embed-disabled errors),
-            // so we extract real stream URLs and play them in our native player:
-            // genuinely ad-free, full D-pad transport, higher quality. NewPipe
-            // v0.26.3 hops to the ANDROID_VR/iOS clients to dodge SABR/PoToken
-            // enforcement, so no login or attestation token is needed. (The old
-            // API-33 URLEncoder crash on this box is now handled by the `_nio`
-            // core-library desugaring enabled in build.gradle.kts.)
-            val native = runCatching {
-                withTimeoutOrNull(NATIVE_STREAM_TIMEOUT_MS) { extractNative(videoId) }
+            // Resolve both native paths at once. The old sequential flow made a
+            // healthy NewPipe result wait behind every dead Piped instance (or
+            // made a healthy Piped result wait behind a cold NewPipe extractor).
+            // Whichever backend returns a non-empty playable list first wins;
+            // an empty result keeps the other backend in the race.
+            val direct = coroutineScope {
+                val results = Channel<List<StreamSource>>(capacity = 2)
+                val pipedJob = async {
+                    val resolved = runCatching {
+                        withTimeoutOrNull(PIPED_STREAM_TIMEOUT_MS) { piped.streams(videoId) }
+                            ?.let(::pipedSources)
+                            ?.takeIf { it.isNotEmpty() }
+                    }.onFailure { DebugLog.w(TAG, "Piped streams($videoId) failed", it) }
+                        .getOrNull()
+                    results.send(resolved.orEmpty())
+                }
+                val nativeJob = async {
+                    val resolved = runCatching {
+                        withTimeoutOrNull(NATIVE_STREAM_TIMEOUT_MS) { extractNative(videoId) }
+                            ?.takeIf { it.isNotEmpty() }
+                    }.onFailure { DebugLog.w(TAG, "native extract($videoId) failed", it) }
+                        .getOrNull()
+                    results.send(resolved.orEmpty())
+                }
+                val first = results.receive()
+                val winner = if (first.isNotEmpty()) first else results.receive()
+                pipedJob.cancel()
+                nativeJob.cancel()
+                results.close()
+                winner
             }
-                .onFailure { DebugLog.w(TAG, "native extract($videoId) failed", it) }
-                .getOrNull()
-            if (!native.isNullOrEmpty()) return@withContext native + youtubeEmbedSources(videoId)
 
-            // FALLBACK: the hosted IFrame embed + watch page, used only when
-            // extraction yields nothing playable (a video YouTube has fully
-            // locked down). WebPlayerScreen expands `ytembed://` into a
-            // full-screen IFrame-API player; the watch page plays the rest.
-            DebugLog.i(TAG, "native extract empty for $videoId — falling back to embed")
-            youtubeEmbedSources(videoId)
+            val sources = if (!direct.isNullOrEmpty()) {
+                DebugLog.i(TAG, "native YouTube source resolved for $videoId (${direct.size} track(s))")
+                direct + youtubeEmbedSources(videoId)
+            } else {
+                // FALLBACK: the hosted IFrame embed + watch page, used only when
+                // extraction yields nothing playable (a video YouTube has fully
+                // locked down). WebPlayerScreen bounds this path too, so a bot
+                // wall cannot leave the box in an infinite loading state.
+                DebugLog.i(TAG, "native extract empty for $videoId — falling back to embed")
+                youtubeEmbedSources(videoId)
+            }
+            streamCache[videoId] = CachedStreams(sources, now)
+            sources
         }
 
     private fun youtubeEmbedSources(videoId: String): List<StreamSource> = listOf(
@@ -801,13 +842,14 @@ class YouTubeProvider(
             providerId = id,
             id = videoId,
             title = title,
-            poster = thumbnail,
+            poster = thumbnail ?: youtubeThumbnail(videoId),
             year = null,
             kind = MediaKind.Movie,
             isLive = isLive,
             subtitle = uploader,
+            publishedLabel = publishedLabel ?: relativeAgeLabel(published),
         )
-        cache[videoId] = CachedItem(title, thumbnail)
+        cache[videoId] = CachedItem(title, thumbnail ?: youtubeThumbnail(videoId))
         return r
     }
 
@@ -816,13 +858,14 @@ class YouTubeProvider(
             providerId = id,
             id = videoId,
             title = title,
-            poster = thumbnail,
+            poster = thumbnail ?: youtubeThumbnail(videoId),
             year = null,
             kind = MediaKind.Movie,
             isLive = isLive,
             subtitle = uploaderName,
+            publishedLabel = publishedLabel ?: relativeAgeLabel(published),
         )
-        cache[videoId] = CachedItem(title, thumbnail)
+        cache[videoId] = CachedItem(title, thumbnail ?: youtubeThumbnail(videoId))
         return r
     }
 
@@ -833,22 +876,54 @@ class YouTubeProvider(
             providerId = id,
             id = videoId,
             title = name ?: videoId,
-            poster = poster,
+            poster = poster ?: youtubeThumbnail(videoId),
             year = null,
             kind = MediaKind.Movie,
             isLive = streamType == org.schabi.newpipe.extractor.stream.StreamType.LIVE_STREAM,
             subtitle = uploaderName,
+            publishedLabel = textualUploadDate?.takeIf { it.isNotBlank() },
         )
-        cache[videoId] = CachedItem(name ?: videoId, poster)
+        cache[videoId] = CachedItem(name ?: videoId, poster ?: youtubeThumbnail(videoId))
         return r
     }
 
     private data class CachedItem(val title: String, val poster: String?)
+    private data class CachedStreams(val sources: List<StreamSource>, val createdAtMs: Long)
+
+    private fun youtubeThumbnail(videoId: String): String =
+        "https://i.ytimg.com/vi/$videoId/hqdefault.jpg"
+
+    /** Preserve provider wording when available, otherwise derive a compact age. */
+    private fun relativeAgeLabel(raw: String?): String? {
+        val value = raw?.trim().orEmpty()
+        if (value.isBlank()) return null
+        val lower = value.lowercase()
+        if (lower.contains("ago") || lower.contains("streamed") ||
+            lower == "today" || lower == "yesterday" || lower == "just now"
+        ) return value
+        val numeric = value.toLongOrNull()
+        val publishedAt = if (numeric != null) {
+            if (numeric > 100_000_000_000L) numeric else numeric * 1000L
+        } else runCatching { Instant.parse(value).toEpochMilli() }.getOrNull()
+        if (publishedAt == null) return value.takeIf { it.length <= 32 }
+        val seconds = Duration.between(Instant.ofEpochMilli(publishedAt), Instant.now())
+            .seconds.coerceAtLeast(0L)
+        return when {
+            seconds < 60 -> "just now"
+            seconds < 3_600 -> "${seconds / 60} minute${if (seconds / 60 == 1L) "" else "s"} ago"
+            seconds < 86_400 -> "${seconds / 3_600} hour${if (seconds / 3_600 == 1L) "" else "s"} ago"
+            seconds < 604_800 -> "${seconds / 86_400} day${if (seconds / 86_400 == 1L) "" else "s"} ago"
+            seconds < 2_592_000 -> "${seconds / 604_800} week${if (seconds / 604_800 == 1L) "" else "s"} ago"
+            seconds < 31_536_000 -> "${seconds / 2_592_000} month${if (seconds / 2_592_000 == 1L) "" else "s"} ago"
+            else -> "${seconds / 31_536_000} year${if (seconds / 31_536_000 == 1L) "" else "s"} ago"
+        }
+    }
 
     companion object {
         private const val TAG = "YouTubeProvider"
         private const val PIPED_STREAM_TIMEOUT_MS = 9_000L
         private const val NATIVE_STREAM_TIMEOUT_MS = 14_000L
+        private const val STREAM_CACHE_TTL_MS = 120_000L
 
         // Whole-word foreign-language markers (ASCII-folded, lowercase) used by
         // [looksForeignLatin]. Curated to never collide with English words:

@@ -415,7 +415,11 @@ private fun ForYouRow(
         results = runCatching { load() }.getOrDefault(emptyList())
     }
     val rawList = results ?: return
-    val list = rawList.filter(resultFilter)
+    // A recommendation row should add something new, not relabel titles the
+    // user is already following in Continue Watching.
+    val list = rawList
+        .filter(resultFilter)
+        .filterNot { "${it.providerId}:${it.id}" in watchedKeys }
     if (list.isEmpty()) return
     Text(
         text = "✨ For You",

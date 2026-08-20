@@ -176,8 +176,18 @@ internal class InnerTubeClient {
         val live = v["thumbnailOverlays"]?.jsonArrayOrNull?.any { ov ->
             ov.jsonObjectOrNull?.get("thumbnailOverlayTimeStatusRenderer")?.jsonObjectOrNull
                 ?.get("style")?.jsonPrimitive?.contentOrNull == "LIVE"
-        } == true
-        return YtVideo(videoId, title, uploader, null, thumbOf(videoId), live, published = "")
+        } == true || (title.trimStart().startsWith("LIVE:", ignoreCase = true) &&
+            v["lengthText"] == null)
+        return YtVideo(
+            videoId,
+            title,
+            uploader,
+            null,
+            thumbOf(videoId),
+            live,
+            published = "",
+            publishedLabel = v["publishedTimeText"]?.textOrNull(),
+        )
     }
 
     /**
@@ -249,6 +259,7 @@ internal class InnerTubeClient {
                 thumbnail = thumbOf(vid),
                 isLive = false,
                 published = published,
+                publishedLabel = null,
             )
         }.sortedByDescending { it.published }.toList()
     }
@@ -280,8 +291,18 @@ internal class InnerTubeClient {
         } == true || v["thumbnailOverlays"]?.jsonArrayOrNull?.any { ov ->
             ov.jsonObjectOrNull?.get("thumbnailOverlayTimeStatusRenderer")?.jsonObjectOrNull
                 ?.get("style")?.jsonPrimitive?.contentOrNull == "LIVE"
-        } == true
-        return YtVideo(videoId, title, uploader, channelId, thumbOf(videoId), live, published = "")
+        } == true || (title.trimStart().startsWith("LIVE:", ignoreCase = true) &&
+            v["lengthText"] == null)
+        return YtVideo(
+            videoId,
+            title,
+            uploader,
+            channelId,
+            thumbOf(videoId),
+            live,
+            published = "",
+            publishedLabel = v["publishedTimeText"]?.textOrNull(),
+        )
     }
 
     private fun parseChannel(c: JsonObject): YtChannel? {
@@ -389,6 +410,7 @@ internal data class YtVideo(
     val thumbnail: String?,
     val isLive: Boolean,
     val published: String,
+    val publishedLabel: String? = null,
 )
 
 internal data class YtChannel(

@@ -5,6 +5,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -32,6 +36,7 @@ fun PosterImage(
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Crop,
 ) {
+    var imageFailed by remember(model) { mutableStateOf(false) }
     Box(modifier = modifier.background(brush = fallbackBrush(title)), contentAlignment = Alignment.Center) {
         Text(
             text = title.ifBlank { "?" },
@@ -41,12 +46,14 @@ fun PosterImage(
             maxLines = 3,
             modifier = Modifier.padding(horizontal = 10.dp),
         )
-        if (!model.isNullOrBlank()) {
+        if (!model.isNullOrBlank() && !imageFailed) {
             AsyncImage(
                 model = model,
                 contentDescription = title,
                 contentScale = contentScale,
                 modifier = Modifier.fillMaxSize(),
+                onSuccess = { imageFailed = false },
+                onError = { imageFailed = true },
             )
         }
     }

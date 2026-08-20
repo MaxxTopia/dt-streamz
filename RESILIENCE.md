@@ -28,6 +28,43 @@ The physical VSeeBox smoke test remains user-owned: open a movie, a series
 episode, and an anime episode; confirm controls and duration; wait long enough
 to catch buffering; and confirm no popup or external window appears.
 
+## v0.4.104 playback, YouTube discovery, and TV layout checkpoint (2026-08-19)
+
+- The new box report narrowed the Adventure Time and Soulm8te loader to two
+  independent failure modes: some VidLink routes returned a player shell with
+  no usable source, while the old WebPlayer watchdog returned on
+  `video-pending` and the Start action had no bounded post-start confirmation.
+  VidFast TLS failure and VidSrc verification gates remain upstream failures;
+  no guessed or gate-bypassing route was added.
+- WebPlayer now treats cross-origin and pending-media shells as a bounded
+  startup state, attempts visible play/start controls and the media element,
+  then either confirms playback or advances the ordered mirror chain with a
+  clear failure. The focused D-pad Start action remains available, but it can
+  no longer leave the box on an infinite loading circle.
+- YouTube native resolution now races Piped and NewPipe extraction, accepts the
+  first usable result, and keeps a short session cache. A result is guarded
+  against duplicate taps while it opens, with an `Opening...` state. Cards now
+  show upload age, a red `LIVE` badge and aura for confirmed live streams, and
+  a compact age label for past live streams and ordinary videos. Missing
+  YouTube thumbnails fall back to the standard image host.
+- Genre headings now live in a single vertical list above their horizontal
+  rows, avoiding the clipped top labels caused by nested vertical scrolling.
+  Poster failures now leave a title gradient fallback instead of a blank card,
+  and For You removes already-watched items before filling the row.
+- Local verification passed `:app:assembleDebug`, `:app:assembleRelease`,
+  `:app:lintDebug`, `:app:testDebugUnitTest` (no unit-test sources), and
+  `git diff --check`. On the API-30 TV emulator, Adventure Time reached the
+  VidLink player with a visible Play control and 11:17 duration; YouTube
+  recommendations and search displayed age labels; a Lofi Girl search showed
+  the red `LIVE` badge/aura; and Genre/Action headings were fully visible.
+  These checks do not replace the physical VSeeBox smoke test, and the
+  uploaded telemetry was from app version 0.4.102 rather than this build.
+- Diggy-owned next test: install v0.4.104 on the physical VSeeBox and retry
+  Adventure Time, Soulm8te, and one live YouTube result. Confirm sustained
+  playback, D-pad Start behavior, no popup or external window, and acceptable
+  remote navigation. Provider availability, DNS, and YouTube anti-bot checks
+  can still change upstream.
+
 ## v0.4.103 playback and recommendation hardening checkpoint (2026-08-19)
 
 - The uploaded box telemetry narrowed the movie/TV failure to provider and

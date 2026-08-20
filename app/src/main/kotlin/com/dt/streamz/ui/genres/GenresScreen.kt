@@ -2,13 +2,13 @@ package com.dt.streamz.ui.genres
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -82,19 +82,8 @@ fun GenresScreen(
         }.awaitAll().flatten()
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 28.dp, vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text(
-            text = "Genres",
-            style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.onBackground,
-        )
-        GENRES.forEach { genre ->
+    val genreRows = remember(allResults, vidSrc) {
+        GENRES.mapNotNull { genre ->
             val titles = allResults.filter { result ->
                 when (genre) {
                     "Anime" -> result.kind == MediaKind.Anime &&
@@ -102,24 +91,44 @@ fun GenresScreen(
                     else -> vidSrc != null && genre in vidSrc.genresFor(result.id)
                 }
             }
-            if (titles.isEmpty()) return@forEach
+            genre.takeIf { titles.isNotEmpty() }?.let { it to titles }
+        }
+    }
+
+    // One lazy vertical owner prevents the first headings from being clipped
+    // by the old nested Column.verticalScroll + LazyRow combination.
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 28.dp, end = 28.dp, top = 22.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        item {
             Text(
-                text = genre,
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
+                text = "Genres",
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.onBackground,
             )
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                items(titles, key = { "${it.providerId}:${it.id}" }) { item ->
-                    PosterCard(
-                        result = item,
-                        watched = "${item.providerId}:${item.id}" in watchedKeys,
-                        favorited = "${item.providerId}:${item.id}" in favoriteKeys,
-                        onClick = { onOpenTitle(item.providerId, item.id) },
-                        onToggleFavorite = { toggleFav(item) },
-                    )
+        }
+        items(genreRows, key = { it.first }) { (genre, titles) ->
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = genre,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
+                )
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    items(titles, key = { "${it.providerId}:${it.id}" }) { item ->
+                        PosterCard(
+                            result = item,
+                            watched = "${item.providerId}:${item.id}" in watchedKeys,
+                            favorited = "${item.providerId}:${item.id}" in favoriteKeys,
+                            onClick = { onOpenTitle(item.providerId, item.id) },
+                            onToggleFavorite = { toggleFav(item) },
+                        )
+                    }
                 }
             }
         }

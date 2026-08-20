@@ -57,6 +57,7 @@ import kotlinx.coroutines.launch
 fun YouTubeTabScreen(
     registry: ProviderRegistry,
     onOpenTitle: (providerId: String, titleId: String) -> Unit,
+    openingVideoId: String? = null,
     // Search state is hoisted to DtApp scope so it survives the player route —
     // without this, BACK from a searched video lands on the recommended grid
     // instead of the search results you opened the video from.
@@ -210,6 +211,7 @@ fun YouTubeTabScreen(
                     else -> ResultsGrid(
                         list,
                         onOpenTitle,
+                        openingVideoId = openingVideoId,
                         onRecordWatch = { result ->
                             dtApp?.youtubeInterests?.recordWatch(result.id, result.title)
                         },
@@ -231,6 +233,7 @@ fun YouTubeTabScreen(
                     else -> ResultsGrid(
                         r,
                         onOpenTitle,
+                        openingVideoId = openingVideoId,
                         onRecordWatch = { result ->
                             dtApp?.youtubeInterests?.recordWatch(result.id, result.title)
                         },
@@ -393,6 +396,7 @@ private fun Hint(text: String) {
 private fun ResultsGrid(
     results: List<SearchResult>,
     onOpen: (String, String) -> Unit,
+    openingVideoId: String? = null,
     onRecordWatch: (SearchResult) -> Unit,
     modifier: Modifier = Modifier.fillMaxWidth(),
 ) {
@@ -405,9 +409,12 @@ private fun ResultsGrid(
         items(results, key = { "${it.providerId}:${it.id}" }) { result ->
             VideoCard(
                 result = result,
+                isOpening = openingVideoId == result.id,
                 onClick = {
-                    onRecordWatch(result)
-                    onOpen(result.providerId, result.id)
+                    if (openingVideoId != result.id) {
+                        onRecordWatch(result)
+                        onOpen(result.providerId, result.id)
+                    }
                 },
             )
         }
@@ -417,6 +424,7 @@ private fun ResultsGrid(
 @Composable
 private fun VideoCard(
     result: SearchResult,
+    isOpening: Boolean = false,
     onClick: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -424,14 +432,14 @@ private fun VideoCard(
         verticalArrangement = Arrangement.spacedBy(6.dp),
         modifier = Modifier
             .onFocusChanged { focused = it.isFocused }
-            .pointerClickable(onClick),
+            .pointerClickable { if (!isOpening) onClick() },
     ) {
         Surface(
-            onClick = onClick,
+            onClick = { if (!isOpening) onClick() },
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(16f / 9f)
-                .focusGlow(focused, GlowYouTube),
+                .focusGlow(focused || result.isLive, GlowYouTube),
             colors = ClickableSurfaceDefaults.colors(
                 containerColor = MaterialTheme.colorScheme.surface,
                 focusedContainerColor = MaterialTheme.colorScheme.surface,
@@ -442,8 +450,16 @@ private fun VideoCard(
                     .fillMaxSize()
                     .clip(RoundedCornerShape(8.dp))
                     .border(
-                        width = if (focused) 2.dp else 0.dp,
-                        color = if (focused) Color.White else Color.Transparent,
+                        width = when {
+                            result.isLive -> 3.dp
+                            focused -> 2.dp
+                            else -> 0.dp
+                        },
+                        color = when {
+                            result.isLive -> Color(0xFFFF3333)
+                            focused -> Color.White
+                            else -> Color.Transparent
+                        },
                         shape = RoundedCornerShape(8.dp),
                     ),
                 contentAlignment = Alignment.Center,
@@ -469,6 +485,20 @@ private fun VideoCard(
                         )
                     }
                 }
+                if (isOpening) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.62f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "Opening…",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Color.White,
+                        )
+                    }
+                }
             }
         }
         Text(
@@ -484,6 +514,15 @@ private fun VideoCard(
                 style = MaterialTheme.typography.labelSmall,
                 maxLines = 1,
                 color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
+            )
+        }
+        result.publishedLabel?.takeIf { it.isNotBlank() }?.let { age ->
+            Text(
+                text = age,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                color = if (result.isLive) Color(0xFFFF6B6B)
+                else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.48f),
             )
         }
     }

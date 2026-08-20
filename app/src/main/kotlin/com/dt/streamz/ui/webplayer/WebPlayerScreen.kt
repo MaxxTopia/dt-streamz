@@ -119,6 +119,10 @@ private const val NEXT_MEDIA_CHECK_MS = 6_000L
 private const val FIRST_BLANK_CUTOFF_MS = 6_000L
 private const val NEXT_BLANK_CUTOFF_MS = 3_500L
 
+/** A visible player still has to start; never leave that state unbounded. */
+private const val PENDING_PLAYBACK_GRACE_MS = 10_000L
+private const val START_REQUEST_TIMEOUT_MS = 8_000L
+
 /**
  * VidFast chooses its highest rendition when its `level` preference is
  * missing or set to Auto. That is commonly 1080p, which leaves too little
@@ -358,6 +362,10 @@ fun WebPlayerScreen(
     // user gesture. Keep that mirror on screen and expose a D-pad start action
     // instead of silently walking to a known-bad fallback.
     var pendingPlayback by remember { mutableStateOf(false) }
+    // True after the user presses Start playback. Keep the pending state until
+    // a real media/video-ready signal arrives so a failed play() cannot turn
+    // into a permanent black spinner.
+    var playbackStartRequested by remember { mutableStateOf(false) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
     var chromeClientRef by remember { mutableStateOf<FullscreenChromeClient?>(null) }
     var attempt by remember(activeUrl) { mutableStateOf(0) }
@@ -502,6 +510,7 @@ fun WebPlayerScreen(
     LaunchedEffect(activeUrl) {
         loadState = LoadState.Loading
         pendingPlayback = false
+        playbackStartRequested = false
         blockedHosts.clear()
         mainFrameHost = hostOf(activeUrl)
         ytEmbedActive.value = activeUrl.startsWith(YT_EMBED_SCHEME)
@@ -614,6 +623,7 @@ fun WebPlayerScreen(
             if (signal == "media" || signal == "video-ready" || signal == "iframe-video-ready") {
                 DebugLog.i(TAG, "play confirmed mirror=$mirrorIndex via $signal")
                 pendingPlayback = false
+                playbackStartRequested = false
                 reportMirror(activeUrl, success = true)
                 return@LaunchedEffect
             }
@@ -633,13 +643,14 @@ fun WebPlayerScreen(
         // fetch anything. In both cases a *player iframe is present* even
         // though we saw no media bytes. Auto-walking away from those (the old
         // behavior) is exactly why nothing played. So:
-        //   - player iframe/video present -> KEEP it; the user can press play.
-        //     Don't walk, don't error. A video element is the stronger signal
-        //     and gets a native "Start playback" action in the control bar.
+        //   - player iframe/video present -> expose a bounded Start playback
+        //     action. The follow-up watchdog below either confirms media or
+        //     advances; it never leaves the mirror pending forever.
         //   - genuinely blank (none) -> walk to the next mirror; only error
         //     once every mirror came back blank.
         if (lastSignal == "iframe-cross-origin" || lastSignal == "video-pending") {
-            pendingPlayback = lastSignal == "video-pending"
+            pendingPlayback = true
+            playbackStartRequested = false
             DebugLog.i(TAG, "keeping mirror=$mirrorIndex — player present, no autostart traffic (press play)")
             return@LaunchedEffect
         }
@@ -664,6 +675,50 @@ fun WebPlayerScreen(
                     "resolver (1.1.1.1 / 8.8.8.8). The app can't override system DNS, and " +
                     "in-app 'Block ads in player' is NOT the cause.",
                 0,
+            )
+        }
+    }
+
+    // A provider can render a player shell without ever starting a stream (or
+    // can reject the first play() call behind an interaction gate). Give the
+    // user a fair, explicit window to press Start, then walk the same bounded
+    // mirror chain used for transport failures. This is the guard that turns
+    // "Player ready" from an infinite loading state into a recoverable state.
+    LaunchedEffect(activeUrl, pendingPlayback, playbackStartRequested) {
+        if (!pendingPlayback || ytEmbedActive.value) return@LaunchedEffect
+        val waitMs = if (playbackStartRequested) START_REQUEST_TIMEOUT_MS else PENDING_PLAYBACK_GRACE_MS
+        val deadline = System.currentTimeMillis() + waitMs
+        while (System.currentTimeMillis() < deadline) {
+            delay(500)
+            if (!pendingPlayback) return@LaunchedEffect
+            val wv = webViewRef ?: return@LaunchedEffect
+            val signal = probeForPlayer(wv)
+            if (signal == "media" || signal == "video-ready" || signal == "iframe-video-ready") {
+                DebugLog.i(TAG, "play confirmed mirror=$mirrorIndex after pending start via $signal")
+                pendingPlayback = false
+                playbackStartRequested = false
+                reportMirror(activeUrl, success = true)
+                return@LaunchedEffect
+            }
+            if (signal == "vidnest-error") break
+        }
+        if (!pendingPlayback) return@LaunchedEffect
+        val reason = if (playbackStartRequested) {
+            "start request produced no playable media"
+        } else {
+            "player stayed pending without a start action"
+        }
+        DebugLog.w(TAG, "$reason mirror=$mirrorIndex; advancing")
+        reportMirror(activeUrl, success = false)
+        pendingPlayback = false
+        playbackStartRequested = false
+        if (mirrorIndex + 1 < totalMirrors) {
+            mirrorIndex += 1
+        } else {
+            loadState = LoadState.Failed(
+                "The player opened but did not start playback. " +
+                    "The provider may be offline or this title may be unavailable there. " +
+                    "Try Retry or Choose server.",
             )
         }
     }
@@ -1016,7 +1071,8 @@ fun WebPlayerScreen(
                 modifier = Modifier.align(Alignment.TopCenter).padding(16.dp),
                 index = 0,
                 total = 0,
-                text = "Player ready — press UP, then Start playback",
+                text = if (playbackStartRequested) "Starting playback…"
+                else "Player ready — press UP, then Start playback",
             )
         }
 
@@ -1044,6 +1100,8 @@ fun WebPlayerScreen(
                         blockedHosts.clear()
                         mirrorIndex = 0
                         loadState = LoadState.Loading
+                        pendingPlayback = false
+                        playbackStartRequested = false
                         // A user-requested Retry starts a fresh bounded
                         // VidNest retry budget; it must not inherit an
                         // exhausted automatic-retry counter.
@@ -1063,13 +1121,15 @@ fun WebPlayerScreen(
             PlayerControlBar(
                 firstFocus = controlsFocus,
                 showNextPrev = showNextPrev,
-                onStartPlayback = if (pendingPlayback) {
+                onStartPlayback = if (pendingPlayback && !playbackStartRequested) {
                     {
-                        DebugLog.i(TAG, "user start — requesting pending HTML5 video playback")
-                        pendingPlayback = false
-                        webViewRef?.evaluateJavascript(START_PENDING_MEDIA_JS, null)
-                        controlsVisible = false
-                        webViewRef?.requestFocus()
+                        if (!playbackStartRequested) {
+                            DebugLog.i(TAG, "user start — requesting pending HTML5 video playback")
+                            playbackStartRequested = true
+                            webViewRef?.evaluateJavascript(START_PENDING_MEDIA_JS, null)
+                            controlsVisible = false
+                            webViewRef?.requestFocus()
+                        }
                     }
                 } else null,
                 onSwitchAudio = onSwitchAudio?.let {
@@ -1087,6 +1147,8 @@ fun WebPlayerScreen(
                     controlsVisible = false
                     blockedHosts.clear()
                     loadState = LoadState.Loading
+                    pendingPlayback = false
+                    playbackStartRequested = false
                     attempt = 0
                     lastLoadedUrl = activeUrl
                     webViewRef?.let {
@@ -1397,6 +1459,34 @@ private fun resumePlaybackScript(positionMs: Long): String {
  * frame. */
 private val START_PENDING_MEDIA_JS = """
     (function() {
+      function visible(el) {
+        try {
+          var s = window.getComputedStyle(el);
+          var r = el.getBoundingClientRect();
+          return s.display !== 'none' && s.visibility !== 'hidden' &&
+            Number(s.opacity || 1) > 0 && r.width > 0 && r.height > 0;
+        } catch (e) { return false; }
+      }
+      function clickPlayControls(root) {
+        try {
+          var controls = root.querySelectorAll(
+            'button,[role="button"],[aria-label],[title],.play,.start'
+          );
+          for (var i = 0; i < controls.length; i++) {
+            var el = controls[i];
+            if (!visible(el)) continue;
+            var label = ((el.getAttribute('aria-label') || '') + ' ' +
+              (el.getAttribute('title') || '') + ' ' +
+              (el.textContent || '')).toLowerCase();
+            if (!/(^|\\b)(play|start|watch|resume|unmute)(\\b|$)/.test(label)) continue;
+            try { el.focus(); } catch (e) {}
+            try { el.click(); } catch (e) {}
+            try { el.dispatchEvent(new MouseEvent('click', {bubbles:true})); } catch (e) {}
+            return true;
+          }
+        } catch (e) {}
+        return false;
+      }
       function findMedia(root) {
         try {
           var media = root.querySelector('video');
@@ -1414,8 +1504,21 @@ private val START_PENDING_MEDIA_JS = """
         } catch (e) {}
         return null;
       }
+      clickPlayControls(document);
+      var frames = document.querySelectorAll('iframe');
+      for (var f = 0; f < frames.length; f++) {
+        try {
+          if (visible(frames[f])) {
+            frames[f].focus();
+            frames[f].click();
+          }
+        } catch (e) {}
+      }
       var media = findMedia(document);
       if (media) {
+        try { media.focus(); } catch (e) {}
+        try { media.load(); } catch (e) {}
+        try { media.dispatchEvent(new Event('play', {bubbles:true})); } catch (e) {}
         try {
           var p = media.play();
           if (p && p.catch) p.catch(function() {});

@@ -13,6 +13,8 @@ data class SearchResult(
     val isLive: Boolean = false,
     /** Optional channel/uploader label for wide video-card metadata. */
     val subtitle: String? = null,
+    /** Human-readable upload age for YouTube cards (for example, "2 days ago"). */
+    val publishedLabel: String? = null,
     /** Wide 16:9 backdrop (TMDb), for the Home hero banner. Null = use poster. */
     val backdrop: String? = null,
 )

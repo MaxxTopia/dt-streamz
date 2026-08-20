@@ -126,6 +126,9 @@ fun DtApp() {
     var ytSearchResults by remember {
         mutableStateOf<List<com.dt.streamz.data.SearchResult>?>(null)
     }
+    // Prevent repeated OK presses from launching several concurrent YouTube
+    // resolvers while the first native source is still being selected.
+    var youtubeOpeningId by remember { mutableStateOf<String?>(null) }
 
     // Central source -> route: single source plays; explicit Sub/Dub variants
     // always stay a user choice. Older builds stored a global audio preference
@@ -267,30 +270,33 @@ fun DtApp() {
                 onYtQueryChange = { ytSearchQuery = it },
                 ytResults = ytSearchResults,
                 onYtResultsChange = { ytSearchResults = it },
+                youtubeOpeningId = youtubeOpeningId,
                 onOpenTitle = { providerId, titleId ->
                     if (providerId == "youtube") {
-                        // YouTube plays through our hosted embed, which only
-                        // needs the videoId — there is nothing to fetch first.
-                        // The old flow opened the details screen, where the
-                        // Piped/NewPipe backends hang ~20s on this box, fail
-                        // with "backend may be unreachable", and force a manual
-                        // "Watch" tap before anything plays. Skip all of it:
-                        // resolve the (network-free) embed sources and play
-                        // immediately.
-                        scope.launch {
-                            // YouTube-only watch signal: record the opened video
-                            // ID so the grid can pull YouTube's related-graph for
-                            // it (genuine personalisation, no login). titleId IS
-                            // the videoId.
-                            app.youtubeInterests.recordWatch(titleId)
-                            com.dt.streamz.scraper.BrowseCache.invalidate("youtube")
-                            val ep = com.dt.streamz.data.Episode(
-                                id = "watch", number = 1, title = "Watch",
-                            )
-                            val sources = runCatching {
-                                registry.get("youtube").streams(titleId, ep)
-                            }.getOrDefault(emptyList())
-                            routeForSources("YouTube", sources, "youtube", titleId, "watch")?.let { push(it) }
+                        if (youtubeOpeningId == null) {
+                            // Resolve native sources immediately in the
+                            // background; the card stays visible with an
+                            // Opening… state and duplicate taps are ignored.
+                            youtubeOpeningId = titleId
+                            scope.launch {
+                                try {
+                                    // YouTube-only watch signal: record the
+                                    // opened video so the next feed uses its
+                                    // related graph for personalization.
+                                    app.youtubeInterests.recordWatch(titleId)
+                                    com.dt.streamz.scraper.BrowseCache.invalidate("youtube")
+                                    val ep = com.dt.streamz.data.Episode(
+                                        id = "watch", number = 1, title = "Watch",
+                                    )
+                                    val sources = runCatching {
+                                        registry.get("youtube").streams(titleId, ep)
+                                    }.getOrDefault(emptyList())
+                                    routeForSources("YouTube", sources, "youtube", titleId, "watch")
+                                        ?.let { push(it) }
+                                } finally {
+                                    if (youtubeOpeningId == titleId) youtubeOpeningId = null
+                                }
+                            }
                         }
                     } else {
                         push(Route.Details(providerId, titleId))
@@ -776,6 +782,7 @@ private fun TabsDestination(
     onYtQueryChange: (String) -> Unit,
     ytResults: List<com.dt.streamz.data.SearchResult>?,
     onYtResultsChange: (List<com.dt.streamz.data.SearchResult>?) -> Unit,
+    youtubeOpeningId: String? = null,
 ) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as DtApplication
@@ -961,6 +968,7 @@ private fun TabsDestination(
             Section.YouTube -> YouTubeTabScreen(
                 registry = app.providerRegistry,
                 onOpenTitle = onOpenTitle,
+                openingVideoId = youtubeOpeningId,
                 query = ytQuery,
                 onQueryChange = onYtQueryChange,
                 results = ytResults,
@@ -1231,15 +1239,20 @@ private fun recommenderFor(
     if (provs.isEmpty()) return@recommend emptyList()
     val terms = app.interests.topTerms(4)
     if (terms.isEmpty()) return@recommend emptyList()
-    val out = LinkedHashMap<String, com.dt.streamz.data.SearchResult>()
-    for (term in terms) {
-        for (p in provs) {
-            val res = runCatching { p.search(term) }.getOrNull().orEmpty()
-            for (r in res) {
-                if (!kindFilter(r.kind)) continue
-                out.putIfAbsent("${r.providerId}:${r.id}", r)
-                if (out.size >= 24) break
+    // Search each learned term/provider pair concurrently, but keep the
+    // deferred creation order so stronger terms still win the dedupe pass.
+    val searchResults = kotlinx.coroutines.coroutineScope {
+        terms.flatMap { term ->
+            provs.map { provider ->
+                async { runCatching { provider.search(term) }.getOrDefault(emptyList()) }
             }
+        }.awaitAll()
+    }
+    val out = LinkedHashMap<String, com.dt.streamz.data.SearchResult>()
+    for (res in searchResults) {
+        for (r in res) {
+            if (!kindFilter(r.kind)) continue
+            out.putIfAbsent("${r.providerId}:${r.id}", r)
             if (out.size >= 24) break
         }
         if (out.size >= 24) break
