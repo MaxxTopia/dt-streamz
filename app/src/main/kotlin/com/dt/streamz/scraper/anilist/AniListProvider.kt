@@ -68,6 +68,16 @@ class AniListProvider : Provider {
         val cached = cache[titleId]
         val data = graphql(DETAILS_Q, """{"id":${titleId.toIntOrNull() ?: 0}}""")
         val media = data?.path("data", "Media")
+        if (media == null && cached == null) {
+            // API is unreachable and we have no cached metadata. Throwing here
+            // is deliberate: returning a TitleDetails with the raw titleId as
+            // the title and only 12 default episodes causes the resume handler
+            // to permanently delete the continue-watching entry because the
+            // identity check will always fail. Propagating the error lets the
+            // caller (Binge.details → resume flow) treat this as a transient
+            // failure and keep the entry intact for retry.
+            throw java.io.IOException("AniList API unavailable and no cached metadata for $titleId")
+        }
         val title = media?.let { animeTitle(it) } ?: cached?.title ?: titleId
         val poster = media?.path("coverImage")?.get("large").str() ?: cached?.poster
         val banner = media?.get("bannerImage").str() ?: poster

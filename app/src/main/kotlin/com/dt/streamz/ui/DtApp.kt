@@ -351,8 +351,14 @@ fun DtApp() {
                             return@launch
                         }
                         val details = Binge.details(provider, resumeEntry.titleId)
-                        if (details == null ||
-                            details.providerId != resumeEntry.providerId ||
+                        if (details == null) {
+                            // API unreachable — do NOT delete the entry. The
+                            // user can retry once the source comes back online.
+                            Log.w(TAG, "resume deferred: details unavailable for ${resumeEntry.providerId}:${resumeEntry.titleId}")
+                            Toast.makeText(ctx, "Couldn't reach the source — try again later", Toast.LENGTH_SHORT).show()
+                            return@launch
+                        }
+                        if (details.providerId != resumeEntry.providerId ||
                             details.id != resumeEntry.titleId ||
                             canonicalSearchTitle(details.title) != canonicalSearchTitle(resumeEntry.titleName)
                         ) {
