@@ -69,13 +69,30 @@ class AniListProvider : Provider {
         val data = graphql(DETAILS_Q, """{"id":${titleId.toIntOrNull() ?: 0}}""")
         val media = data?.path("data", "Media")
         if (media == null && cached == null) {
-            // API is unreachable and we have no cached metadata. Throwing here
-            // is deliberate: returning a TitleDetails with the raw titleId as
-            // the title and only 12 default episodes causes the resume handler
-            // to permanently delete the continue-watching entry because the
-            // identity check will always fail. Propagating the error lets the
-            // caller (Binge.details → resume flow) treat this as a transient
-            // failure and keep the entry intact for retry.
+            // Hardcoded fallback for Naruto: Shippuden — Diggy's primary
+            // watch target. The playback URLs (VidNest + MegaPlay) don't
+            // need AniList at all, so a known-good metadata stub keeps the
+            // show fully watchable even during extended API outages.
+            if (titleId == NARUTO_FALLBACK_ID) {
+                DebugLog.w(TAG, "AniList down — using hardcoded Naruto: Shippuden fallback")
+                return@withContext TitleDetails(
+                    providerId = id, id = titleId,
+                    title = "Naruto: Shippuden",
+                    poster = NARUTO_FALLBACK_POSTER,
+                    backdrop = NARUTO_FALLBACK_POSTER,
+                    synopsis = null, year = 2007,
+                    kind = MediaKind.Anime,
+                    episodes = (1..NARUTO_FALLBACK_EPISODES).map {
+                        Episode(
+                            id = "ep:$it", number = it,
+                            title = "Episode $it",
+                            isFiller = FillerCatalog.isNarutoShippudenFiller(titleId, it),
+                        )
+                    },
+                )
+            }
+            // For all other titles, propagate the failure so the resume
+            // handler treats it as a transient error and keeps the entry.
             throw java.io.IOException("AniList API unavailable and no cached metadata for $titleId")
         }
         val title = media?.let { animeTitle(it) } ?: cached?.title ?: titleId
@@ -247,6 +264,15 @@ class AniListProvider : Provider {
         private const val API = "https://graphql.anilist.co"
         private val JSON_MEDIA = "application/json".toMediaType()
         private val cache = mutableMapOf<String, SearchResult>()
+
+        // Hardcoded fallback for the canonical Naruto: Shippuden title so
+        // playback survives extended AniList outages. Values sourced from
+        // CatalogIdentity.kt — duplicated here to keep the fallback self-
+        // contained and the CatalogIdentity constants private.
+        private const val NARUTO_FALLBACK_ID = "1735"
+        private const val NARUTO_FALLBACK_EPISODES = 500
+        private const val NARUTO_FALLBACK_POSTER =
+            "https://s4.anilist.co/file/anilistcdn/media/anime/cover/medium/bx1735-kGfVm0YqCPcu.png"
 
         private const val MEDIA_FIELDS =
             "id title{romaji english} episodes coverImage{large} seasonYear format"
