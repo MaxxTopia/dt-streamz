@@ -45,7 +45,13 @@ class AniListProvider : Provider {
     override val supportsAnime = true
 
     override suspend fun browse(): List<SearchResult> = withContext(Dispatchers.IO) {
-        val data = graphql(BROWSE_Q, "{}") ?: return@withContext emptyList()
+        val data = graphql(BROWSE_Q, "{}")
+        if (data == null) {
+            // AniList down — show the hardcoded Naruto entry so the Anime
+            // tab isn't empty and the user can still navigate to it.
+            DebugLog.w(TAG, "browse() AniList down — returning Naruto fallback")
+            return@withContext listOf(NARUTO_FALLBACK_RESULT)
+        }
         val media = data.path("data", "Page")?.get("media") as? JsonArray ?: return@withContext emptyList()
         val out = media.mapNotNull { (it as? JsonObject)?.toResult() }
         DebugLog.i(TAG, "browse() -> ${out.size} trending anime")
@@ -56,6 +62,12 @@ class AniListProvider : Provider {
         if (query.isBlank()) return@withContext emptyList()
         val data = graphql(SEARCH_Q, """{"s":${query.q()}}""") ?: run {
             DebugLog.w(TAG, "search($query) null (AniList unreachable)")
+            // AniList down — return the Naruto fallback if the query matches
+            // so the user can still find and play their show.
+            val q = query.lowercase().trim()
+            if (q.contains("naruto") || q.contains("shippuden")) {
+                return@withContext listOf(NARUTO_FALLBACK_RESULT)
+            }
             return@withContext emptyList()
         }
         val media = data.path("data", "Page")?.get("media") as? JsonArray ?: return@withContext emptyList()
@@ -273,6 +285,11 @@ class AniListProvider : Provider {
         private const val NARUTO_FALLBACK_EPISODES = 500
         private const val NARUTO_FALLBACK_POSTER =
             "https://s4.anilist.co/file/anilistcdn/media/anime/cover/medium/bx1735-kGfVm0YqCPcu.png"
+        private val NARUTO_FALLBACK_RESULT = SearchResult(
+            providerId = "anilist", id = NARUTO_FALLBACK_ID,
+            title = "Naruto: Shippuden", poster = NARUTO_FALLBACK_POSTER,
+            year = 2007, kind = MediaKind.Anime,
+        )
 
         private const val MEDIA_FIELDS =
             "id title{romaji english} episodes coverImage{large} seasonYear format"
