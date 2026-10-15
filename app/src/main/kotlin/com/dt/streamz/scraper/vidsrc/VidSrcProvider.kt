@@ -9,6 +9,7 @@ import com.dt.streamz.data.StreamSource
 import com.dt.streamz.data.TitleDetails
 import com.dt.streamz.scraper.Http
 import com.dt.streamz.scraper.Provider
+import com.dt.streamz.scraper.vidnest.VidNestNativeResolver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -318,11 +319,11 @@ class VidSrcProvider(
             s to (ep.substringAfter('e').toIntOrNull() ?: episode.number)
         } else 1 to 1
 
-        // The box can only actually PLAY vidlink so far, and vidlink (plus the
-        // whole modern embed crowd) wants a TMDb id, not IMDB. vidsrc.to is
-        // dead post-injunction. So: resolve IMDB -> TMDb once and lead with the
-        // TMDb-native players that work on the box; keep IMDB-accepting live
-        // mirrors as fallbacks for when the lookup misses.
+        // The native APKBox/VidNest resolver is the first movie/TV route. The
+        // remaining modern embeds want a TMDb id, not IMDB, while vidsrc.to is
+        // dead post-injunction. Resolve IMDB -> TMDb once and keep the
+        // IMDB-accepting mirror as a guarded final fallback when lookup or the
+        // native route misses.
         //
         // 2026-08-19: the uploaded box log caught vidfast.pro redirecting to
         // vidfast.vc, then failing with ERR_SSL_PROTOCOL_ERROR. A source that
@@ -347,6 +348,14 @@ class VidSrcProvider(
 
         if (tmdb != null) {
             val tid = tmdb.second
+            if (!isAnime) {
+                val native = if (isTv) {
+                    VidNestNativeResolver.resolveTv(tid, season.toString(), number.toString())
+                } else {
+                    VidNestNativeResolver.resolveMovie(tid)
+                }
+                if (native != null) out += native
+            }
             if (isAnime) {
                 out += src("vidlink", "https://vidlink.pro/tv/$tid/$season/$number")
             } else if (isTv) {

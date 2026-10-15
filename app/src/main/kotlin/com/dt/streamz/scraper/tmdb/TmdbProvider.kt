@@ -9,6 +9,7 @@ import com.dt.streamz.data.StreamSource
 import com.dt.streamz.data.TitleDetails
 import com.dt.streamz.scraper.Http
 import com.dt.streamz.scraper.Provider
+import com.dt.streamz.scraper.vidnest.VidNestNativeResolver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -131,17 +132,22 @@ class TmdbProvider : Provider {
         fun src(label: String, url: String, referer: String) =
             StreamSource(url = url, kind = StreamKind.DirectEmbed, serverLabel = label,
                 headers = mapOf("Referer" to referer))
-        // vidlink leads. The box debug log showed vidfast.pro redirecting to
-        // vidfast.vc and failing with ERR_SSL_PROTOCOL_ERROR, so a desktop-
-        // reachable mirror is not safe to keep in the automatic TV/movie
-        // chain. VidSrc remains the guarded IMDB/TMDb fallback.
-        return if (isMovie) listOf(
+        // Resolve through the same first-party, popup-free VidNest route used
+        // by the web APKBox. Only a manifest plus a real first segment is
+        // admitted; the old embed mirrors remain a bounded last resort.
+        val native = if (isMovie) {
+            VidNestNativeResolver.resolveMovie(tmdbId)
+        } else {
+            VidNestNativeResolver.resolveTv(tmdbId, season, ep)
+        }
+        val embeds = if (isMovie) listOf(
             src("vidlink", "https://vidlink.pro/movie/$tmdbId", "https://vidlink.pro/"),
             src("vidsrc.mov", "https://vidsrc.mov/embed/movie/$tmdbId", "https://vidsrc.mov/"),
         ) else listOf(
             src("vidlink", "https://vidlink.pro/tv/$tmdbId/$season/$ep", "https://vidlink.pro/"),
             src("vidsrc.mov", "https://vidsrc.mov/embed/tv/$tmdbId/$season/$ep", "https://vidsrc.mov/"),
         )
+        return listOfNotNull(native) + embeds
     }
 
     // --- internals ---

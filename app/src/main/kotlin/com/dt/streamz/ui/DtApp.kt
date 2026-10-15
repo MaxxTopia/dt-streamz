@@ -1086,6 +1086,7 @@ private fun playRouteFor(
         sourceChoices = siblings,
         startupFallbackDelayMs = if (
             source.serverLabel.orEmpty().contains("MegaPlay", ignoreCase = true)
+                || source.serverLabel.orEmpty().contains("VidNest Native", ignoreCase = true)
         ) {
             12_000L
         } else {
@@ -1147,20 +1148,24 @@ private fun resumeStartMs(entry: WatchEntry?, episodeId: String): Long {
 private fun isFinished(entry: WatchEntry): Boolean =
     entry.durationMs > 0 && entry.positionMs > entry.durationMs - RESUME_END_GUARD_MS
 
-/** Embed host used as the reliability-stats key (e.g. "vidlink.pro"). */
+/** Host used as the reliability-stats key (e.g. "vidlink.pro"). */
 private fun hostKey(url: String): String =
     runCatching { android.net.Uri.parse(url).host?.lowercase() }.getOrNull().orEmpty()
 
 /**
- * Orders embed mirrors most-likely-to-work first: by learned reliability score,
- * with any host marked dead this session shoved to the back. This is what makes
- * the player try the optimal server first instead of the provider's fixed order.
+ * Orders native media before page embeds, then uses learned reliability with
+ * any host marked dead this session shoved to the back. This keeps the
+ * popup-free APKBox route ahead of a provider shell while retaining the
+ * existing fallback chain.
  */
 private fun rankSources(app: DtApplication, sources: List<StreamSource>): List<StreamSource> =
-    sources.sortedByDescending { src ->
-        if (com.dt.streamz.ui.webplayer.DeadHostRegistry.isDead(src.url)) -1.0
-        else app.serverStats.score(hostKey(src.url))
-    }
+    sources.sortedWith(
+        compareByDescending<StreamSource> { if (it.kind == StreamKind.DirectEmbed) 0 else 1 }
+            .thenByDescending { src ->
+                if (com.dt.streamz.ui.webplayer.DeadHostRegistry.isDead(src.url)) -1.0
+                else app.serverStats.score(hostKey(src.url))
+            },
+    )
 
 private enum class AudioVariant {
     Dub,

@@ -16,17 +16,42 @@ box, its DNS, and its network.
 
 ## Provider order
 
-The initial order is environment-specific: the current PC audit places VidFast
-first, while the movie/series VSeeBox order retains the previously box-proven
-VidLink first and the anime path places VidFast first. The app's learned server
-score can reorder providers after real playback evidence. A real box test is
-required before changing the box-proven default.
+Movie and TV playback now try the first-party APKBox/VidNest native resolver
+first. It uses the reviewed provider order and admits a route only after the
+relay returns an HLS playlist and a real TS/fMP4 segment. VidLink and VidSrc
+remain bounded page fallbacks for routes the native resolver cannot admit; the
+app's learned server score still orders equivalent fallbacks after the native
+route. A real box test is required before treating any provider as permanently
+healthy.
 
 ## Release boundary
 
 The physical VSeeBox smoke test remains user-owned: open a movie, a series
 episode, and an anime episode; confirm controls and duration; wait long enough
 to catch buffering; and confirm no popup or external window appears.
+
+## v0.4.108 native APKBox playback checkpoint (2026-10-15)
+
+- Root cause for the reported Avatar failure was provider-page playback: the
+  VidLink route exposed no usable media within the bounded startup window and
+  VidSrc handed WebView an anti-framing/provider-verification page. The app
+  correctly failed closed, but had no native path using the existing APKBox
+  resolver and relay.
+- Added a native VidNest resolver for movie and TV routes. It calls the
+  first-party `/api/vidnest` contract, uses the existing provider order and
+  `/stream` relay, keeps source hosts allow-listed, follows HLS playlists, and
+  probes the first segment before handing Media3 a source. Verification pages,
+  X-Frame-Options stripping, CAPTCHA, and arbitrary mirror discovery remain
+  excluded.
+- The exact title `Avatar Aang: The Last Airbender` resolved to TMDb `980431`
+  and was admitted through `catflix` on the API-30 TV emulator. Media3 rendered
+  the Paramount+ intro and then later film frames; controls showed `00:36 / 1:40:15`
+  with pause available. This is Android-emulator playback proof, not proof of
+  the physical VSeeBox's DNS, remote, audio, or long-session behavior.
+- Local release gate passed: `:app:lintDebug`, `:app:testDebugUnitTest`
+  (no unit-test sources), `:app:assembleDebug`, `:app:assembleRelease`, and
+  `git diff --check`. The unrelated telemetry, photos, `.wrangler/`, and
+  `_emutest/` work remains outside the release commit.
 
 ## v0.4.104 playback, YouTube discovery, and TV layout checkpoint (2026-08-19)
 
