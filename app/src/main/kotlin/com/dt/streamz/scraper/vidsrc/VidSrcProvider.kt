@@ -50,6 +50,7 @@ class VidSrcProvider(
 
     /** IMDB id -> resolved (mediaType, tmdbId), or null for a cached miss. */
     private val tmdbCache = mutableMapOf<String, Pair<String, String>?>(
+        "tt27419420" to ("movie" to "1153576"),
         "tt0114563" to ("movie" to "12613"),
     )
 
@@ -465,6 +466,9 @@ class VidSrcProvider(
         // straight from the m.media-amazon.com slug. Swap entries here when
         // popular picks change.
         private val CURATED: List<CuratedEntry> = listOf(
+            CuratedEntry("tt27419420", "Street Fighter", 2026, MediaKind.Movie,
+                "https://image.tmdb.org/t/p/w500/dJPT2Uf12X6aFg8i5N67NTpIZ9t.jpg",
+                listOf("Action", "Fantasy", "Adventure")),
             CuratedEntry("tt0114563", "Street Fighter II: The Animated Movie", 1994, MediaKind.Movie,
                 "https://image.tmdb.org/t/p/w500/dZ1rqmE4eIhPbUCr7sn2Pw2wwGW.jpg",
                 listOf("Action", "Animation", "Anime", "English Dub")),

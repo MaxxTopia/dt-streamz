@@ -28,6 +28,7 @@ internal fun catalogTitleKey(title: String): String = title
 internal fun canonicalSearchTitle(title: String): String {
     return when (catalogTitleKey(title)) {
         "naruto shippuden", "naruto shippuuden" -> "naruto shippuden"
+        "street fighter 2026", "street fighter movie 2026", "streetfighter 2026" -> "street fighter 2026"
         "street fighter ii the animated movie", "street fighter ii the movie", "street fighter the animated movie", "street fighter 2 the animated movie", "streetfighter ii the animated movie", "streetfighter the animated movie" -> "street fighter ii the animated movie"
         else -> catalogTitleKey(title)
     }
