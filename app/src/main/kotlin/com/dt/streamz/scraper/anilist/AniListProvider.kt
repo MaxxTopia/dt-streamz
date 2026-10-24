@@ -10,6 +10,7 @@ import com.dt.streamz.diag.DebugLog
 import com.dt.streamz.scraper.Http
 import com.dt.streamz.scraper.Provider
 import com.dt.streamz.scraper.megaplay.MegaPlayResolver
+import com.dt.streamz.scraper.vidnest.VidNestNativeResolver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
@@ -47,31 +48,42 @@ class AniListProvider : Provider {
     override suspend fun browse(): List<SearchResult> = withContext(Dispatchers.IO) {
         val data = graphql(BROWSE_Q, "{}")
         if (data == null) {
-            // AniList down — show the hardcoded Naruto entry so the Anime
-            // tab isn't empty and the user can still navigate to it.
-            DebugLog.w(TAG, "browse() AniList down — returning Naruto fallback")
-            return@withContext listOf(NARUTO_FALLBACK_RESULT)
+            // AniList down — show hardcoded fallbacks so the Anime tab isn't empty.
+            DebugLog.w(TAG, "browse() AniList down — returning fallbacks")
+            return@withContext listOf(NARUTO_FALLBACK_RESULT, STREET_FIGHTER_FALLBACK_RESULT)
         }
         val media = data.path("data", "Page")?.get("media") as? JsonArray ?: return@withContext emptyList()
-        val out = media.mapNotNull { (it as? JsonObject)?.toResult() }
+        val out = media.mapNotNull { (it as? JsonObject)?.toResult() }.toMutableList()
+        if (out.none { it.id == STREET_FIGHTER_ID }) {
+            out.add(STREET_FIGHTER_FALLBACK_RESULT)
+        }
         DebugLog.i(TAG, "browse() -> ${out.size} trending anime")
         out
     }
 
     override suspend fun search(query: String): List<SearchResult> = withContext(Dispatchers.IO) {
         if (query.isBlank()) return@withContext emptyList()
-        val data = graphql(SEARCH_Q, """{"s":${query.q()}}""") ?: run {
+        val normalizedQuery = query.trim()
+            .replace(Regex("(?i)streetfighter"), "street fighter")
+        val data = graphql(SEARCH_Q, """{"s":${normalizedQuery.q()}}""") ?: run {
             DebugLog.w(TAG, "search($query) null (AniList unreachable)")
-            // AniList down — return the Naruto fallback if the query matches
-            // so the user can still find and play their show.
-            val q = query.lowercase().trim()
+            val q = normalizedQuery.lowercase()
             if (q.contains("naruto") || q.contains("shippuden")) {
                 return@withContext listOf(NARUTO_FALLBACK_RESULT)
+            }
+            if (q.contains("street") || q.contains("fighter")) {
+                return@withContext listOf(STREET_FIGHTER_FALLBACK_RESULT)
             }
             return@withContext emptyList()
         }
         val media = data.path("data", "Page")?.get("media") as? JsonArray ?: return@withContext emptyList()
-        val out = media.mapNotNull { (it as? JsonObject)?.toResult() }
+        val out = media.mapNotNull { (it as? JsonObject)?.toResult() }.toMutableList()
+        val q = normalizedQuery.lowercase()
+        if (q.contains("street") && q.contains("fighter")) {
+            if (out.none { it.id == STREET_FIGHTER_ID }) {
+                out.add(0, STREET_FIGHTER_FALLBACK_RESULT)
+            }
+        }
         DebugLog.i(TAG, "search($query) -> ${out.size} anime")
         out
     }
@@ -101,6 +113,24 @@ class AniListProvider : Provider {
                             isFiller = FillerCatalog.isNarutoShippudenFiller(titleId, it),
                         )
                     },
+                )
+            }
+            if (titleId == STREET_FIGHTER_ID) {
+                DebugLog.w(TAG, "AniList down — using hardcoded Street Fighter fallback")
+                return@withContext TitleDetails(
+                    providerId = id, id = titleId,
+                    title = "Street Fighter II: The Animated Movie",
+                    poster = STREET_FIGHTER_POSTER,
+                    backdrop = STREET_FIGHTER_BACKDROP,
+                    synopsis = "Bison, the ruthless leader of the international terrorist organization Shadowlaw, has been desperately searching for the greatest fighter on the planet for years. He finds it in Ryu, a young wanderer who never stays in one place long enough for Bison to find him.",
+                    year = 1994,
+                    kind = MediaKind.Anime,
+                    episodes = listOf(
+                        Episode(
+                            id = "ep:1", number = 1,
+                            title = "Street Fighter II: The Animated Movie (English Dub)",
+                        ),
+                    ),
                 )
             }
             // For all other titles, propagate the failure so the resume
@@ -147,19 +177,22 @@ class AniListProvider : Provider {
             serverLabel = label,
             headers = mapOf("Referer" to "https://vidnest.fun/"),
         )
-        // VidNest's internal MegaPlay lookup currently returns 404 for this
-        // catalog entry even though MegaPlay still serves the episode. Resolve
-        // the live MegaPlay HLS source directly first; keep VidNest as a
-        // same-language backup so a provider-side change cannot remove Dub.
-        val megaPlayDub = MegaPlayResolver.resolveNarutoDub(titleId, ep)
+        // For Naruto: Shippuden, MegaPlay provides the direct dub HLS.
+        // For other anime (such as Street Fighter II), VidNestNativeResolver queries
+        // the first-party gogoanime/megavid relay endpoint for direct popup-free playback.
+        val nativeDub = if (titleId == NARUTO_FALLBACK_ID) {
+            MegaPlayResolver.resolveNarutoDub(titleId, ep)
+        } else {
+            VidNestNativeResolver.resolveAnimeDub(titleId, ep)
+        }
         DebugLog.i(
             TAG,
             "streams($titleId ep=$ep) -> " +
-                if (megaPlayDub != null) "native MegaPlay Dub + VidNest Dub/Sub"
+                if (nativeDub != null) "native Dub + VidNest Dub/Sub"
                 else "VidNest English Dub + original audio",
         )
         return listOfNotNull(
-            megaPlayDub,
+            nativeDub,
             src("VidNest - English Dub", "dub"),
             src("Original Japanese Audio + Subtitles", "sub"),
         )
@@ -289,6 +322,17 @@ class AniListProvider : Provider {
             providerId = "anilist", id = NARUTO_FALLBACK_ID,
             title = "Naruto: Shippuden", poster = NARUTO_FALLBACK_POSTER,
             year = 2007, kind = MediaKind.Anime,
+        )
+
+        private const val STREET_FIGHTER_ID = "1362"
+        private const val STREET_FIGHTER_POSTER =
+            "https://image.tmdb.org/t/p/w500/dZ1rqmE4eIhPbUCr7sn2Pw2wwGW.jpg"
+        private const val STREET_FIGHTER_BACKDROP =
+            "https://image.tmdb.org/t/p/w1280/ckjqoqCGbPyf8HknxXu4hXS9N4M.jpg"
+        private val STREET_FIGHTER_FALLBACK_RESULT = SearchResult(
+            providerId = "anilist", id = STREET_FIGHTER_ID,
+            title = "Street Fighter II: The Animated Movie", poster = STREET_FIGHTER_POSTER,
+            year = 1994, kind = MediaKind.Anime,
         )
 
         private const val MEDIA_FIELDS =

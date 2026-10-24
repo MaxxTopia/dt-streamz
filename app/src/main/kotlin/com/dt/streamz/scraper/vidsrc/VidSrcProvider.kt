@@ -49,7 +49,9 @@ class VidSrcProvider(
     private val cache = mutableMapOf<String, CachedResult>()
 
     /** IMDB id -> resolved (mediaType, tmdbId), or null for a cached miss. */
-    private val tmdbCache = mutableMapOf<String, Pair<String, String>?>()
+    private val tmdbCache = mutableMapOf<String, Pair<String, String>?>(
+        "tt0114563" to ("movie" to "12613"),
+    )
 
     override suspend fun browse(): List<SearchResult> = withContext(Dispatchers.IO) {
         // Curated list of IMDB IDs for the Movies tab home row. No network —
@@ -463,6 +465,9 @@ class VidSrcProvider(
         // straight from the m.media-amazon.com slug. Swap entries here when
         // popular picks change.
         private val CURATED: List<CuratedEntry> = listOf(
+            CuratedEntry("tt0114563", "Street Fighter II: The Animated Movie", 1994, MediaKind.Movie,
+                "https://image.tmdb.org/t/p/w500/dZ1rqmE4eIhPbUCr7sn2Pw2wwGW.jpg",
+                listOf("Action", "Animation", "Anime", "English Dub")),
             CuratedEntry("tt15398776", "Oppenheimer", 2023, MediaKind.Movie,
                 "https://m.media-amazon.com/images/M/MV5BMDBmYTZjNjUtN2M1MS00MTQ2LTk2ODgtNzc2M2QyZGE5NTVjXkEyXkFqcGc@._V1_.jpg",
                 listOf("Drama", "Thriller")),

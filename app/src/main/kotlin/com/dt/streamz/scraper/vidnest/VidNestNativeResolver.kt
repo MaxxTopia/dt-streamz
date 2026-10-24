@@ -87,6 +87,28 @@ object VidNestNativeResolver {
     suspend fun resolveTv(tmdbId: String, season: String, episode: String): StreamSource? =
         resolve("tv", tmdbId, season, episode)
 
+    suspend fun resolveAnimeDub(anilistId: String, episode: Int = 1): StreamSource? = withContext(Dispatchers.IO) {
+        if (!anilistId.matches(Regex("\\d+"))) return@withContext null
+        val endpoint = "$API_BASE/anime/$anilistId/$episode/dub?server=gogoanime"
+        val payload = getJson(endpoint) ?: return@withContext null
+        val candidates = candidates(payload)
+        for (candidate in candidates) {
+            if (!isAllowedSource(candidate.url)) continue
+            if (!isHls(candidate)) continue
+            val relayUrl = relayUrl(candidate.url, candidate.headers)
+            if (!probeHls(relayUrl)) continue
+            return@withContext StreamSource(
+                url = relayUrl,
+                kind = StreamKind.Hls,
+                quality = candidate.quality ?: "1080p",
+                headers = emptyMap(),
+                captionsDefaultOn = false,
+                serverLabel = "MegaVid · English Dub",
+            )
+        }
+        null
+    }
+
     private suspend fun resolve(
         kind: String,
         tmdbId: String,
@@ -158,6 +180,11 @@ object VidNestNativeResolver {
     private fun candidates(root: JsonObject): List<Candidate> {
         val rootHeaders = root["headers"].headersOrEmpty()
         val out = mutableListOf<Candidate>()
+        val sources = root["sources"] as? JsonArray
+        sources.orEmpty().forEach { element ->
+            val obj = element as? JsonObject ?: return@forEach
+            candidateFrom(obj, rootHeaders)?.let(out::add)
+        }
         val streams = root["streams"] as? JsonArray
         streams.orEmpty().forEach { element ->
             val obj = element as? JsonObject ?: return@forEach
