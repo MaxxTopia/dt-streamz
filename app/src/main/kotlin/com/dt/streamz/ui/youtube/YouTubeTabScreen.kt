@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items as rowItems
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -35,10 +37,13 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.dt.streamz.DtApplication
+import com.dt.streamz.data.MediaKind
 import com.dt.streamz.data.SearchResult
+import com.dt.streamz.data.YouTubeWatchEntry
 import com.dt.streamz.scraper.BrowseCache
 import com.dt.streamz.scraper.Provider
 import com.dt.streamz.scraper.ProviderRegistry
+import com.dt.streamz.ui.onMenuKeyUp
 import com.dt.streamz.ui.pointerClickable
 import com.dt.streamz.ui.search.SearchEditorDialog
 import kotlinx.coroutines.Job
@@ -99,6 +104,9 @@ fun YouTubeTabScreen(
     var historyTick by remember { mutableStateOf(0) }
     val recentSearches = remember(historyTick) {
         ytPrefs.getString("queries", "").orEmpty().split("\n").filter { it.isNotBlank() }
+    }
+    val watchEntries = remember(historyTick) {
+        dtApp?.youtubeInterests?.watchEntries(8).orEmpty()
     }
     fun rememberSearch(q: String) {
         val t = q.trim()
@@ -189,6 +197,39 @@ fun YouTubeTabScreen(
         when {
             query.isBlank() -> {
                 val list = trending
+                if (watchEntries.isNotEmpty()) {
+                    Text(
+                        text = "Continue watching  ·  Press MENU to remove",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
+                    )
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.fillMaxWidth().height(188.dp),
+                    ) {
+                        rowItems(
+                            watchEntries,
+                            key = { it.videoId },
+                        ) { entry ->
+                            VideoCard(
+                                result = entry.toSearchResult(),
+                                modifier = Modifier.width(220.dp),
+                                onRequestRemove = {
+                                    dtApp?.youtubeInterests?.removeWatch(entry.videoId)
+                                    historyTick++
+                                },
+                                onClick = {
+                                    dtApp?.youtubeInterests?.recordWatch(
+                                        entry.videoId,
+                                        entry.title,
+                                        entry.poster,
+                                    )
+                                    onOpenTitle("youtube", entry.videoId)
+                                },
+                            )
+                        }
+                    }
+                }
                 Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(
                         text = if (hasPersonalProfile) "Recommended for you" else "Popular picks",
@@ -213,7 +254,11 @@ fun YouTubeTabScreen(
                         onOpenTitle,
                         openingVideoId = openingVideoId,
                         onRecordWatch = { result ->
-                            dtApp?.youtubeInterests?.recordWatch(result.id, result.title)
+                            dtApp?.youtubeInterests?.recordWatch(
+                                result.id,
+                                result.title,
+                                result.poster,
+                            )
                         },
                         modifier = Modifier.fillMaxWidth().weight(1f),
                     )
@@ -235,7 +280,11 @@ fun YouTubeTabScreen(
                         onOpenTitle,
                         openingVideoId = openingVideoId,
                         onRecordWatch = { result ->
-                            dtApp?.youtubeInterests?.recordWatch(result.id, result.title)
+                            dtApp?.youtubeInterests?.recordWatch(
+                                result.id,
+                                result.title,
+                                result.poster,
+                            )
                         },
                         modifier = Modifier.fillMaxWidth().weight(1f),
                     )
@@ -424,14 +473,21 @@ private fun ResultsGrid(
 @Composable
 private fun VideoCard(
     result: SearchResult,
+    modifier: Modifier = Modifier,
     isOpening: Boolean = false,
+    onRequestRemove: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
     Column(
         verticalArrangement = Arrangement.spacedBy(6.dp),
-        modifier = Modifier
+        modifier = modifier
             .onFocusChanged { focused = it.isFocused }
+            .then(
+                onRequestRemove?.let { remove ->
+                    Modifier.onMenuKeyUp(focused, remove)
+                } ?: Modifier,
+            )
             .pointerClickable { if (!isOpening) onClick() },
     ) {
         Surface(
@@ -499,6 +555,23 @@ private fun VideoCard(
                         )
                     }
                 }
+                result.progressFraction?.let { rawFraction ->
+                    val fraction = rawFraction.coerceIn(0f, 1f)
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .height(4.dp)
+                            .background(Color.Black.copy(alpha = 0.62f)),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(fraction)
+                                .height(4.dp)
+                                .background(Color(0xFFFF0000)),
+                        )
+                    }
+                }
             }
         }
         Text(
@@ -527,3 +600,16 @@ private fun VideoCard(
         }
     }
 }
+
+private fun YouTubeWatchEntry.toSearchResult(): SearchResult = SearchResult(
+    providerId = "youtube",
+    id = videoId,
+    title = title,
+    poster = poster,
+    kind = MediaKind.Movie,
+    progressFraction = if (durationMs > 0) {
+        (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+    } else {
+        null
+    },
+)

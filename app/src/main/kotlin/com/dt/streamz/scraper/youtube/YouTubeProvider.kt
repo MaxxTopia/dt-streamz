@@ -460,8 +460,9 @@ class YouTubeProvider(
             // Resolve both native paths at once. The old sequential flow made a
             // healthy NewPipe result wait behind every dead Piped instance (or
             // made a healthy Piped result wait behind a cold NewPipe extractor).
-            // Whichever backend returns a non-empty playable list first wins;
-            // an empty result keeps the other backend in the race.
+            // The first playable result gets a short head start, but we keep
+            // the other backend alive briefly so a stronger DASH source can
+            // join the fallback list instead of being cancelled immediately.
             val direct = coroutineScope {
                 val results = Channel<List<StreamSource>>(capacity = 2)
                 val pipedJob = async {
@@ -482,11 +483,24 @@ class YouTubeProvider(
                     results.send(resolved.orEmpty())
                 }
                 val first = results.receive()
-                val winner = if (first.isNotEmpty()) first else results.receive()
+                val nativeResults = mutableListOf<List<StreamSource>>()
+                if (first.isNotEmpty()) {
+                    nativeResults += first
+                    // Piped commonly wins the race with a progressive adaptive
+                    // URL, while NewPipe's wrapped DASH source is more stable
+                    // on TV boxes. Wait only a bounded grace period so a cold
+                    // extractor cannot make every tap feel slow.
+                    withTimeoutOrNull(NATIVE_BACKUP_GRACE_MS) {
+                        nativeResults += results.receive()
+                    }
+                } else {
+                    // An empty result keeps the other backend in the race.
+                    results.receive().takeIf { it.isNotEmpty() }?.let(nativeResults::add)
+                }
                 pipedJob.cancel()
                 nativeJob.cancel()
                 results.close()
-                winner
+                rankNativeSources(nativeResults.flatten())
             }
 
             val sources = if (!direct.isNullOrEmpty()) {
@@ -503,6 +517,16 @@ class YouTubeProvider(
             streamCache[videoId] = CachedStreams(sources, now)
             sources
         }
+
+    /** Prefer TV-friendly wrapped DASH while retaining a native backup. */
+    private fun rankNativeSources(sources: List<StreamSource>): List<StreamSource> =
+        sources
+            .distinctBy { "${it.kind}:${it.url}" }
+            .sortedWith(
+                compareByDescending<StreamSource> { it.isLive && it.kind == StreamKind.Hls }
+                    .thenByDescending { it.dashManifest != null }
+                    .thenByDescending { it.kind == StreamKind.Hls },
+            )
 
     private fun youtubeEmbedSources(videoId: String): List<StreamSource> = listOf(
         StreamSource(
@@ -923,6 +947,7 @@ class YouTubeProvider(
         private const val TAG = "YouTubeProvider"
         private const val PIPED_STREAM_TIMEOUT_MS = 9_000L
         private const val NATIVE_STREAM_TIMEOUT_MS = 14_000L
+        private const val NATIVE_BACKUP_GRACE_MS = 2_000L
         private const val STREAM_CACHE_TTL_MS = 120_000L
 
         // Whole-word foreign-language markers (ASCII-folded, lowercase) used by

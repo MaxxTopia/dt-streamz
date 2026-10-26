@@ -53,6 +53,72 @@ to catch buffering; and confirm no popup or external window appears.
   `git diff --check`. The unrelated telemetry, photos, `.wrangler/`, and
   `_emutest/` work remains outside the release commit.
 
+## v0.4.110 Twitch and YouTube couch-first improvement checkpoint (2026-10-26, working tree)
+
+- Scope: improve the two live/video tabs without adding account login or
+  sending viewing history off the box.
+- YouTube changes: native Piped/NewPipe resolution now keeps a short backup
+  race and ranks a wrapped DASH source ahead of a progressive source when both
+  arrive; a local Continue Watching shelf stores title, thumbnail, position,
+  and duration; native and embed playback restore position and remove a row on
+  clean completion; the shelf is D-pad safe and MENU removes a row.
+- Twitch changes: pinned channels probe live state on entry, on demand, and
+  every minute; live channels sort first; probe failure is shown as
+  unavailable rather than falsely offline; channel and add cards use the same
+  TV Surface and pointer path as the rest of the app.
+- Verification: `:app:assembleDebug`, `:app:assembleRelease`,
+  `:app:lintDebug`, `:app:testDebugUnitTest` (no unit-test sources), and
+  `git diff --check` passed. Only the existing YouTube extractor and WebView
+  deprecation warnings remain.
+- Release state: this is an uncommitted working-tree improvement based on
+  v0.4.110. No version bump, commit, tag, push, deployment, or publish was
+  performed. Existing telemetry-worker, photos, `.wrangler/`, `_emutest/`, and
+  recovery-file changes remain unrelated and untouched.
+- Diggy-owned test: install the current release APK on the physical VSeeBox
+  and test one pinned Twitch channel while live, one offline or unavailable
+  channel, a YouTube video that is stopped and resumed, a native-to-backup
+  YouTube start, D-pad navigation, BACK, MENU removal, and a longer session.
+  Emulator/build proof does not establish physical-box playback, DNS, remote,
+  or upstream Twitch/YouTube health.
+- Best next move: run that physical-box smoke test. If one concrete failure
+  remains, capture the title/channel and the player log before changing the
+  provider path again.
+
+## v0.4.110 discovery and archive follow-up (2026-10-26, working tree)
+
+- For You: the recommendation loader now uses the user's learned terms across
+  multiple provider buckets, interleaves those buckets so one provider cannot
+  crowd out every other source, removes titles already in Continue Watching,
+  and falls back to browse data when a profile is cold or search returns too
+  little. The same behavior is reused by Home, Anime, Movies, and TV filters.
+- Movies and TV: HomeScreen owns a five-minute refresh cycle plus a manual
+  `Refresh picks` action. BrowseCache is invalidated before a refresh, and TMDb
+  category rows rotate across pages 1-3 so a refresh can show different titles
+  instead of repainting the same first page. Each row also rotates its display
+  window for long-lived tabs.
+- Twitch: the tab now searches public channels through Twitch GraphQL, shows
+  the selected channel's newest archived broadcasts, and resolves a selected
+  VOD through the existing PlaybackAccessToken boundary and Usher HLS. VODs
+  intentionally use the normal player without live chat/live buffer tuning.
+  Search, archive loading, live status, and VOD playback fail independently;
+  an upstream empty/error response is not presented as a valid catalog.
+- Verification after this follow-up: `:app:compileDebugKotlin`,
+  `:app:lintDebug`, `:app:testDebugUnitTest` (NO-SOURCE),
+  `:app:assembleDebug`, `:app:assembleRelease`, and `git diff --check` pass.
+  Only the existing YouTube extractor and WebView deprecation warnings remain.
+- Release state: still an uncommitted working tree based on v0.4.110. No
+  version bump, commit, tag, push, deployment, or publish was performed.
+  Unrelated telemetry, photos, `.wrangler/`, `_emutest/`, and recovery-file
+  changes remain outside this app work and were not staged.
+- Diggy-owned test: install the current release APK on the physical VSeeBox.
+  On Home/Movies, use `Refresh picks` and confirm rows change; leave a tab open
+  for five minutes and confirm it refreshes. In Twitch, search a known channel,
+  select it, open a past broadcast, then open a live channel and exercise the
+  remote. Capture the channel/title and player log for any failure.
+- Best next move: run that physical-box smoke test. The current source/build
+  proof does not establish box DNS, remote focus, provider availability, or
+  sustained VOD playback.
+
 ## v0.4.104 playback, YouTube discovery, and TV layout checkpoint (2026-08-19)
 
 - The new box report narrowed the Adventure Time and Soulm8te loader to two
@@ -766,3 +832,94 @@ infallible.
   updater URL returned HTTP 200 with the Android APK content type. The local
   signed artifact SHA-256 is
   `C897ABA5C5F263CD2FDC3FA7898A4FE52CC139C32921DFE06A0CA5831B5C02D9`.
+
+## Product improvement audit (2026-10-26, advisory; no code changes)
+
+The highest-value next action is the physical VSeeBox smoke test. The current
+APK is source/build verified, but the real remote, DNS, provider reachability,
+focus behavior, and sustained playback are still unverified.
+
+### Prioritized safeguard backlog
+
+1. **Last-known-good catalog and provider status (P1):** persist the last
+   successful browse snapshot, show `Updated ...` plus a retry affordance, and
+   distinguish `temporarily unavailable` from a genuinely empty catalog. The
+   current `BrowseCache` is memory-only and a failed fetch becomes an empty row
+   in the UI.
+2. **Honest, stronger For You ranking (P1):** add local `Not interested` and
+   `More like this` signals, score recency/provider health/diversity, and label
+   cold-start fallback as `Popular now` until the app has real preference data.
+   The current model learns from searches and watches, but has no negative
+   feedback.
+3. **Twitch archive depth (P1):** add `Load older`, archive search/filter, pin
+   from search results, and VOD resume. The current archive intentionally
+   loads only the newest twelve broadcasts.
+4. **Contract tests and box smoke script (P1):** add pure tests for the
+   recommender rotation, Twitch response parsing/VOD URL construction, and
+   resume thresholds. Keep the API-30 emulator smoke test and the physical-box
+   checklist separate; the current unit-test task has no test sources.
+5. **Optional remote provider controls (P2):** if this becomes a broader
+   distribution, add a versioned JSON control document on the existing Worker
+   for provider disable/enable, banners, and refresh limits. Cache the last
+   known-good document, fail open, and never make startup depend on it. This is
+   not the first move for a personal sideloaded APK because it adds another
+   critical dependency.
+
+### Risk register
+
+| Failure | Blast radius | Detection signal | Fix class | Plan B |
+|---|---|---|---|---|
+| Twitch GraphQL or playback-token contract changes | EVERYONE using Twitch | search/archive responses are empty or PAT/VOD HLS resolution fails repeatedly | REBUILD | Preserve cached channels/VOD metadata, show a clear provider error, and keep the ordinary player retry path; ship a provider adapter repair |
+| TMDb or a movie provider returns empty/blocked data during refresh | EVERYONE opening Movies/TV during the incident | refresh replaces a populated row with an empty row or repeated HTTP/parse failures | REBUILD | Serve the last successful snapshot and expose provider retry/status instead of silently hiding the row |
+| Five-minute refresh causes throttling or a stale loop | EVERYONE with a tab left open | refresh failure rate rises after the timer; identical timestamps or repeated 429/5xx responses | HOT/REBUILD | Exponential backoff and stale cache locally; reduce refresh cadence via the optional control document if distribution grows |
+| VSeeBox DNS or remote focus breaks playback | ONE physical box | host-resolution errors, no focused card, or D-pad actions fail while emulator works | REBUILD/device | Settings network diagnostics, visible provider status, and the existing Web/native fallback; require box evidence before changing providers |
+| Recommendation regression silently serves poor titles | SOME users | For You is duplicate-heavy, empty after a refresh, or cold-start titles are mislabeled as personalized | REBUILD | Keep the popular fallback, add local feedback, and use the recommender's bounded/deduplicated buckets |
+
+### Remote-control design boundary
+
+If the app ever serves more than a personal sideload, use the existing Worker
+as a small fail-open control channel with `schema_version`, `disabled_providers`,
+`refresh_interval_ms`, `banner`, and `min_supported_version`. Store the last
+known-good document locally, validate its version and bounds, log changes, and
+never block startup when the document is unavailable. Provider toggles and
+messaging are safe candidates; credentials, signing, and arbitrary code are
+not.
+
+## v0.4.111 release-candidate checkpoint (2026-10-26)
+
+- Discovery and recovery: the Home/Movies/TV browse cycle now refreshes every
+  five minutes or from `Refresh picks`; TMDb genre rows rotate pages; For You
+  accepts local `More like this` and `Not interested` feedback, deduplicates
+  against Continue Watching, and labels cold-start results as `Popular now`.
+  BrowseCache persists successful snapshots as a last-known-good fallback and
+  Settings exposes feedback/history cleanup plus the remote provider-control
+  state.
+- Video surfaces: YouTube has local resume and a bounded native-backend race;
+  Twitch supports public channel search, recent archives, archive filtering,
+  VOD resume, and native HLS VOD playback. Twitch pagination only advertises a
+  next-page action when the upstream response includes a usable cursor. Player
+  failures expose Retry, Change source, and Back instead of immediately
+  abandoning the route.
+- Verification: `:app:compileDebugKotlin`, `:app:testDebugUnitTest` (5 tests),
+  `:app:lintDebug`, `:app:assembleDebug`, `:app:assembleRelease`, and
+  `git diff --check` pass. Read-only Twitch checks returned channel search,
+  archive metadata, live/offline status, a playback token, and an HTTP 200 VOD
+  manifest. The API-30 `Television_1080p` emulator installed and launched the
+  final debug APK with `com.dt.streamz.debug` resumed and no fatal app-process
+  marker in the smoke log.
+- Release state: versionCode 125 / versionName 0.4.111 is ready for the
+  authorized tag, main push, and GitHub Actions release. No tag, push, or
+  publish has happened at this checkpoint. The physical VSeeBox remains the
+  human gate for D-pad feel, DNS, playback, Twitch archive/VOD behavior, and
+  long-session stability. Existing telemetry, photos, `.wrangler/`,
+  `_emutest/`, and recovery-file changes remain outside the intended release
+  scope.
+
+### Remaining risk register entries
+
+| Failure | Blast radius | Detection signal | Fix class | Plan B |
+|---|---|---|---|---|
+| Twitch changes the public GraphQL schema or playback-token hash | EVERYONE using Twitch | channel search/archive or PAT smoke returns errors/empty data | REBUILD/provider boundary | Keep the UI honest, use the normal player recovery controls, and update the adapter; no credentials are stored in the APK |
+| Persisted browse snapshot becomes stale for a long outage | EVERYONE browsing during the outage | Settings/provider status or stale copy remains visible while refresh retries fail | HOT/REBUILD | Keep the last-known-good row, expose retry/status, and let the remote control disable a bad provider |
+| Local feedback over-suppresses a title | ONE device/profile | For You gets sparse after repeated dismissals | HOT | Clear feedback in Settings and retain the popular fallback |
+| VSeeBox-only DNS, remote focus, or decoder failure | ONE physical box | emulator works but the box cannot resolve, focus, or sustain playback | REBUILD/device | Run the physical smoke checklist and capture the title/channel plus player log before changing provider order |

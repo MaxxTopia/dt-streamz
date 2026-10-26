@@ -12,12 +12,15 @@ import com.dt.streamz.adblock.BlocklistRefreshWorker
 import com.dt.streamz.adblock.HostBlocker
 import com.dt.streamz.config.ScraperConfigLoader
 import com.dt.streamz.data.ContinueWatchingStore
+import com.dt.streamz.data.ContentFeedbackStore
 import com.dt.streamz.data.FavoritesStore
 import com.dt.streamz.data.InterestStore
 import com.dt.streamz.data.YouTubeInterestStore
 import com.dt.streamz.data.PlaybackPrefs
 import com.dt.streamz.data.ServerStatsStore
+import com.dt.streamz.data.TwitchVodProgressStore
 import com.dt.streamz.networkmonitor.NetworkMonitor
+import com.dt.streamz.scraper.BrowseCache
 import com.dt.streamz.scraper.ProviderRegistry
 import com.dt.streamz.scraper.anicrush.AnicrushProvider
 import com.dt.streamz.scraper.anilist.AniListProvider
@@ -33,6 +36,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 class DtApplication : Application(), SingletonImageLoader.Factory {
@@ -89,6 +94,10 @@ class DtApplication : Application(), SingletonImageLoader.Factory {
         private set
     lateinit var playbackPrefs: PlaybackPrefs
         private set
+    lateinit var contentFeedback: ContentFeedbackStore
+        private set
+    lateinit var twitchVodProgress: TwitchVodProgressStore
+        private set
 
     private val _availableUpdate = MutableStateFlow<UpdateChecker.Update?>(null)
 
@@ -98,8 +107,15 @@ class DtApplication : Application(), SingletonImageLoader.Factory {
     override fun onCreate() {
         super.onCreate()
         com.dt.streamz.diag.Telemetry.init(this, BuildConfig.VERSION_NAME)
+        BrowseCache.init(this)
         scraperConfig = ScraperConfigLoader(this)
-        appScope.launch { scraperConfig.loadCachedThenRefresh() }
+        appScope.launch {
+            scraperConfig.loadCachedThenRefresh()
+            while (isActive) {
+                delay(ScraperConfigLoader.REFRESH_INTERVAL_HOURS * 60 * 60 * 1000L)
+                scraperConfig.refresh()
+            }
+        }
 
         // On-device interest model — must exist before the provider registry
         // so the YouTube provider can pull learned seeds for its grid.
@@ -110,6 +126,11 @@ class DtApplication : Application(), SingletonImageLoader.Factory {
         serverStats = ServerStatsStore(this)
         // Playback preferences (remembered captions choice + quality cap).
         playbackPrefs = PlaybackPrefs(this)
+        // Explicit For You feedback is kept separate from passive watch/search
+        // signals so a single bad recommendation can be corrected immediately.
+        contentFeedback = ContentFeedbackStore(this)
+        // Twitch VOD progress is independent from episode Continue Watching.
+        twitchVodProgress = TwitchVodProgressStore(this)
 
         // YouTube provider boots NewPipeExtractor lazily on first call,
         // but doing it here avoids the cold-start tax on first browse.
@@ -119,6 +140,9 @@ class DtApplication : Application(), SingletonImageLoader.Factory {
         // takes over as primary anime source — its hidden-WebView resolver
         // renders JS-heavy pages and captures direct m3u8 streams.
         providerRegistry = ProviderRegistry(
+            isProviderEnabled = { id ->
+                scraperConfig.config.value.providers[id]?.enabled ?: true
+            },
             providers = buildList {
                 // FixturesProvider is the offline dev/sanity catalog (Mux
                 // BipBop test stream etc.). It must NEVER ship in release —

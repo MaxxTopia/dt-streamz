@@ -38,6 +38,9 @@ class InterestStore(context: Context) {
     /** A title the user actually played. */
     fun recordWatch(title: String) = record(title, WEIGHT_WATCH, isQuery = false)
 
+    /** An explicit "More like this" choice — stronger than an ordinary watch. */
+    fun recordLike(title: String) = record(title, WEIGHT_LIKE, isQuery = false)
+
     private fun record(text: String, weight: Int, isQuery: Boolean) {
         if (!isEnabled()) return
         val clean = text.replace('\t', ' ').replace('\n', ' ').trim()
@@ -120,6 +123,7 @@ class InterestStore(context: Context) {
         private const val MAX_EVENTS = 200
         private const val WEIGHT_SEARCH = 3
         private const val WEIGHT_WATCH = 2
+        private const val WEIGHT_LIKE = 4
         private const val HALF_LIFE_MS = 14L * 24 * 60 * 60 * 1000
         private val TOKEN_SPLIT = Regex("[^a-z0-9]+")
 

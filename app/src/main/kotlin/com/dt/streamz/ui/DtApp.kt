@@ -45,6 +45,8 @@ import androidx.compose.ui.input.key.type
 import com.dt.streamz.DtApplication
 import com.dt.streamz.data.CANONICAL_ANILIST_PROVIDER_ID
 import com.dt.streamz.data.MediaKind
+import com.dt.streamz.data.ProgressMath
+import com.dt.streamz.data.RecommendationRanking
 import com.dt.streamz.data.StreamKind
 import com.dt.streamz.data.StreamSource
 import com.dt.streamz.data.WatchEntry
@@ -54,12 +56,14 @@ import com.dt.streamz.data.completedEpisodeIds
 import com.dt.streamz.data.displayLabel
 import com.dt.streamz.networkmonitor.NetworkIndicator
 import com.dt.streamz.scraper.Binge
+import com.dt.streamz.scraper.BrowseCache
 import com.dt.streamz.ui.brand.DtLogo
 import com.dt.streamz.ui.brand.UpdateChip
 import androidx.compose.runtime.collectAsState
 import com.dt.streamz.ui.details.DetailsScreen
 import com.dt.streamz.ui.genres.GenresScreen
 import com.dt.streamz.ui.home.CuratedRow
+import com.dt.streamz.ui.home.GenreFilter
 import com.dt.streamz.ui.home.HomeScreen
 import com.dt.streamz.scraper.tmdb.TmdbProvider
 import com.dt.streamz.ui.library.LibraryScreen
@@ -68,6 +72,7 @@ import com.dt.streamz.ui.search.SearchScreen
 import com.dt.streamz.ui.settings.SettingsScreen
 import com.dt.streamz.ui.sourcepicker.SourcePickerScreen
 import com.dt.streamz.twitch.TwitchStreamResolver
+import com.dt.streamz.twitch.TwitchVod
 import com.dt.streamz.ui.twitch.TwitchScreen
 import com.dt.streamz.ui.webplayer.WebPlayerScreen
 import com.dt.streamz.ui.youtube.YouTubeTabScreen
@@ -284,6 +289,7 @@ fun DtApp() {
                                     // opened video so the next feed uses its
                                     // related graph for personalization.
                                     app.youtubeInterests.recordWatch(titleId)
+                                    val resumeMs = app.youtubeInterests.resumePosition(titleId)
                                     com.dt.streamz.scraper.BrowseCache.invalidate("youtube")
                                     val ep = com.dt.streamz.data.Episode(
                                         id = "watch", number = 1, title = "Watch",
@@ -291,7 +297,9 @@ fun DtApp() {
                                     val sources = runCatching {
                                         registry.get("youtube").streams(titleId, ep)
                                     }.getOrDefault(emptyList())
-                                    routeForSources("YouTube", sources, "youtube", titleId, "watch")
+                                    routeForSources(
+                                        "YouTube", sources, "youtube", titleId, "watch", resumeMs,
+                                    )
                                         ?.let { push(it) }
                                 } finally {
                                     if (youtubeOpeningId == titleId) youtubeOpeningId = null
@@ -324,6 +332,44 @@ fun DtApp() {
                                     title = "twitch.tv/$channel",
                                     twitchChannel = channel,
                                     kind = StreamKind.Hls,
+                                ),
+                            )
+                        }
+                    }
+                },
+                onOpenTwitchBroadcast = { channel, broadcast ->
+                    Log.i(TAG, "onOpenTwitchBroadcast($channel, ${broadcast.id})")
+                    scope.launch {
+                        val url = runCatching {
+                            kotlinx.coroutines.withTimeoutOrNull(12_000) {
+                                twitchResolver.resolveVodHls(channel, broadcast.id)
+                            }
+                        }.onFailure {
+                            Log.w(TAG, "resolveVodHls($channel, ${broadcast.id}) threw", it)
+                        }.getOrNull()
+                        if (url == null) {
+                            Toast.makeText(
+                                ctx,
+                                "Twitch could not open that past broadcast",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        } else {
+                            val resumeMs = ProgressMath.resumePosition(
+                                app.twitchVodProgress.resumePosition(broadcast.id),
+                                broadcast.lengthSeconds * 1000L,
+                            )
+                            push(
+                                Route.Player(
+                                    url = url,
+                                    title = "$channel · ${broadcast.title}",
+                                    providerId = "twitch-vod",
+                                    titleId = broadcast.id,
+                                    episodeId = "vod",
+                                    startPositionMs = resumeMs,
+                                    kind = StreamKind.Hls,
+                                    // VODs are intentionally not tagged as live:
+                                    // no live buffer tuning and no live chat pane.
+                                    isLive = false,
                                 ),
                             )
                         }
@@ -546,9 +592,18 @@ fun DtApp() {
                         val pid = r.providerId
                         val tid = r.titleId
                         val eid = r.episodeId
-                        // YouTube isn't tracked in Continue Watching (it has no
-                        // episode catalog) — skip persisting position for it.
-                        if (!isYouTube && pid != null && tid != null && eid != null) {
+                        if (isYouTube && tid != null) {
+                            app.youtubeInterests.updateWatchProgress(tid, posMs, durMs)
+                        } else if (pid == "twitch-vod" && tid != null) {
+                            app.twitchVodProgress.update(
+                                vodId = tid,
+                                channel = r.title.substringBefore(" · ").removePrefix("twitch.tv/"),
+                                title = r.title.substringAfter(" · ", r.title),
+                                thumbnail = null,
+                                positionMs = posMs,
+                                durationMs = durMs,
+                            )
+                        } else if (pid != null && tid != null && eid != null) {
                             scope.launch {
                                 app.continueWatching.updatePosition(pid, tid, eid, posMs, durMs)
                             }
@@ -556,11 +611,16 @@ fun DtApp() {
                     },
                     // Episode Next/Prev only make sense for episodic content.
                     // YouTube uses autoplay-next-related on end instead.
-                    showNextButton = r.episodeId != null && !isYouTube,
+                    showNextButton = r.episodeId != null && !isYouTube && r.providerId != "twitch-vod",
                     onNext = { advanceEpisode(r, delta = 1, manual = true) },
                     onPrev = { advanceEpisode(r, delta = -1, manual = true) },
                     onEnded = {
-                        if (isYouTube) playYouTubeRelated(r.titleId)
+                        if (isYouTube) {
+                            r.titleId?.let { app.youtubeInterests.completeWatch(it) }
+                            playYouTubeRelated(r.titleId)
+                        } else if (r.providerId == "twitch-vod") {
+                            r.titleId?.let { app.twitchVodProgress.complete(it) }
+                        }
                         else scope.launch {
                             val pid = r.providerId
                             val tid = r.titleId
@@ -644,6 +704,20 @@ fun DtApp() {
                             )
                         }
                     } else null,
+                    onChangeSource = if (r.sourceChoices.size > 1) {
+                        {
+                            replaceTop(
+                                Route.SourcePicker(
+                                    title = r.title,
+                                    sources = r.sourceChoices,
+                                    providerId = r.providerId,
+                                    titleId = r.titleId,
+                                    episodeId = r.episodeId,
+                                    startPositionMs = r.startPositionMs,
+                                ),
+                            )
+                        }
+                    } else null,
                     startupFallbackDelayMs = r.startupFallbackDelayMs,
                     onExit = {
                         Log.i(TAG, "PlayerScreen.onExit() called -> back()")
@@ -672,11 +746,9 @@ fun DtApp() {
                         val pid = r.providerId
                         val tid = r.titleId
                         val eid = r.episodeId
-                        // YouTube embeds are not part of the catalog-backed
-                        // Continue Watching history. Anime/movie/TV embeds
-                        // report their HTML5 position back to the same store
-                        // used by native playback.
-                        if (r.providerId != "youtube" && pid != null && tid != null && eid != null) {
+                        if (r.providerId == "youtube" && tid != null) {
+                            app.youtubeInterests.updateWatchProgress(tid, posMs, durMs)
+                        } else if (pid != null && tid != null && eid != null) {
                             scope.launch {
                                 app.continueWatching.updatePosition(pid, tid, eid, posMs, durMs)
                             }
@@ -704,6 +776,9 @@ fun DtApp() {
                     onPrev = { advanceFrom(r.providerId, r.titleId, r.episodeId, r.title, -1, manual = true) },
                     onEmbedEnded = {
                         scope.launch {
+                            if (r.providerId == "youtube") {
+                                r.titleId?.let { app.youtubeInterests.completeWatch(it) }
+                            }
                             val pid = r.providerId
                             val tid = r.titleId
                             val eid = r.episodeId
@@ -782,6 +857,7 @@ private fun TabsDestination(
     onSelect: (Section) -> Unit,
     onOpenTitle: (providerId: String, titleId: String) -> Unit,
     onOpenTwitchChannel: (String) -> Unit,
+    onOpenTwitchBroadcast: (String, TwitchVod) -> Unit,
     onResume: (com.dt.streamz.data.WatchEntry) -> Unit,
     onRemoveContinue: (com.dt.streamz.data.WatchEntry) -> Unit,
     ytQuery: String,
@@ -792,6 +868,7 @@ private fun TabsDestination(
 ) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as DtApplication
+    val scraperConfig by app.scraperConfig.config.collectAsState()
 
     val tabTint = tabTintFor(selected)
     val bgColor = MaterialTheme.colorScheme.background
@@ -888,6 +965,9 @@ private fun TabsDestination(
                 showHero = true,
                 forYou = recommenderFor(app, { true }, { true }),
                 forYouFilter = { it.providerId != "youtube" },
+                contentFeedback = app.contentFeedback,
+                interests = app.interests,
+                forYouLabel = if (app.interests.hasData()) "✨ For You" else "✨ For You · starter mix",
             )
             // Each content tab gets its OWN search bar, scoped to that tab's
             // kind — searching Anime returns only anime, Movies only movies, so
@@ -915,6 +995,9 @@ private fun TabsDestination(
                         onRemoveContinue = onRemoveContinue,
                         forYou = recommenderFor(app, { it.supportsAnime }, { it == MediaKind.Anime }),
                         forYouFilter = { it.kind == MediaKind.Anime && it.providerId != "youtube" },
+                        contentFeedback = app.contentFeedback,
+                        interests = app.interests,
+                        forYouLabel = if (app.interests.hasData()) "✨ For You" else "✨ For You · starter mix",
                     )
                 },
             )
@@ -942,6 +1025,14 @@ private fun TabsDestination(
                         forYou = recommenderFor(app, { it.supportsMovies }, { it == MediaKind.Movie }),
                         forYouFilter = { it.kind == MediaKind.Movie && it.providerId != "youtube" },
                         curatedRows = curatedRowsFor(app, tv = false),
+                        contentFeedback = app.contentFeedback,
+                        interests = app.interests,
+                        forYouLabel = if (app.interests.hasData()) "✨ For You" else "✨ For You · starter mix",
+                        genreFilters = movieGenreFilters,
+                        loadGenre = { genre, key ->
+                            (app.providerRegistry.all.firstOrNull { it.id == "tmdb" } as? TmdbProvider)
+                                ?.genreRow("movie", genre.id, key).orEmpty()
+                        },
                     )
                 },
             )
@@ -968,6 +1059,14 @@ private fun TabsDestination(
                         forYou = recommenderFor(app, { it.supportsMovies }, { it == MediaKind.Series }),
                         forYouFilter = { it.kind == MediaKind.Series && it.providerId != "youtube" },
                         curatedRows = curatedRowsFor(app, tv = true),
+                        contentFeedback = app.contentFeedback,
+                        interests = app.interests,
+                        forYouLabel = if (app.interests.hasData()) "✨ For You" else "✨ For You · starter mix",
+                        genreFilters = tvGenreFilters,
+                        loadGenre = { genre, key ->
+                            (app.providerRegistry.all.firstOrNull { it.id == "tmdb" } as? TmdbProvider)
+                                ?.genreRow("tv", genre.id, key).orEmpty()
+                        },
                     )
                 },
             )
@@ -993,7 +1092,10 @@ private fun TabsDestination(
                 continueWatching = app.continueWatching,
                 onOpenTitle = onOpenTitle,
             )
-            Section.Twitch -> TwitchScreen(onOpenChannel = onOpenTwitchChannel)
+            Section.Twitch -> TwitchScreen(
+                onOpenChannel = onOpenTwitchChannel,
+                onOpenBroadcast = onOpenTwitchBroadcast,
+            )
             Section.Search -> SearchScreen(
                 registry = app.providerRegistry,
                 favorites = app.favorites,
@@ -1001,7 +1103,7 @@ private fun TabsDestination(
                 providerFilter = { !it.supportsYouTube },
                 resultFilter = { it.providerId != "youtube" },
             )
-            Section.Settings -> SettingsScreen()
+            Section.Settings -> SettingsScreen(remoteConfig = scraperConfig)
         }
     }
 }
@@ -1215,26 +1317,45 @@ private fun curatedRowsFor(app: DtApplication, tv: Boolean): List<CuratedRow> {
     val tmdb = app.providerRegistry.all.firstOrNull { it.id == "tmdb" } as? TmdbProvider
         ?: return emptyList()
     return if (tv) listOf(
-        CuratedRow("Popular") { tmdb.categoryRow("tv/popular") },
-        CuratedRow("Top Rated") { tmdb.categoryRow("tv/top_rated") },
-        CuratedRow("Trending this week") { tmdb.categoryRow("trending/tv/week") },
-        CuratedRow("New Episodes") { tmdb.categoryRow("tv/on_the_air") },
-        CuratedRow("Airing Today") { tmdb.categoryRow("tv/airing_today") },
+        CuratedRow("Popular") { refresh -> tmdb.categoryRow("tv/popular", refresh) },
+        CuratedRow("Top Rated") { refresh -> tmdb.categoryRow("tv/top_rated", refresh) },
+        CuratedRow("Trending this week") { refresh -> tmdb.categoryRow("trending/tv/week", refresh) },
+        CuratedRow("New Episodes") { refresh -> tmdb.categoryRow("tv/on_the_air", refresh) },
+        CuratedRow("Airing Today") { refresh -> tmdb.categoryRow("tv/airing_today", refresh) },
     ) else listOf(
-        CuratedRow("Popular") { tmdb.categoryRow("movie/popular") },
-        CuratedRow("Top Rated") { tmdb.categoryRow("movie/top_rated") },
-        CuratedRow("Now Playing") { tmdb.categoryRow("movie/now_playing") },
-        CuratedRow("Trending this week") { tmdb.categoryRow("trending/movie/week") },
-        CuratedRow("Upcoming") { tmdb.categoryRow("movie/upcoming") },
+        CuratedRow("Popular") { refresh -> tmdb.categoryRow("movie/popular", refresh) },
+        CuratedRow("Top Rated") { refresh -> tmdb.categoryRow("movie/top_rated", refresh) },
+        CuratedRow("New this week") { refresh -> tmdb.categoryRow("movie/now_playing", refresh) },
+        CuratedRow("Trending this week") { refresh -> tmdb.categoryRow("trending/movie/week", refresh) },
+        CuratedRow("Upcoming") { refresh -> tmdb.categoryRow("movie/upcoming", refresh) },
     )
 }
 
+private val movieGenreFilters = listOf(
+    GenreFilter(28, "Action"),
+    GenreFilter(35, "Comedy"),
+    GenreFilter(18, "Drama"),
+    GenreFilter(27, "Horror"),
+    GenreFilter(878, "Sci-Fi"),
+    GenreFilter(53, "Thriller"),
+    GenreFilter(16, "Animation"),
+)
+
+private val tvGenreFilters = listOf(
+    GenreFilter(10759, "Action & Adventure"),
+    GenreFilter(35, "Comedy"),
+    GenreFilter(18, "Drama"),
+    GenreFilter(99, "Documentary"),
+    GenreFilter(10765, "Sci-Fi & Fantasy"),
+    GenreFilter(80, "Crime"),
+    GenreFilter(16, "Animation"),
+)
+
 /**
  * Builds the per-tab "For You" recommender: searches the tab's providers with
- * the user's top learned interest terms and returns the matching titles,
- * deduped, capped. Returns empty when personalization is off or there's no
- * history yet (cold start) so the row simply doesn't render. Runs lazily —
- * HomeScreen calls it off the main thread when the tab paints.
+ * the user's top learned interest terms, interleaves the result buckets for
+ * variety, and falls back to popular browse data on a cold start or provider
+ * search miss. Runs lazily — HomeScreen calls it when the tab paints.
  */
 private fun recommenderFor(
     app: DtApplication,
@@ -1248,25 +1369,49 @@ private fun recommenderFor(
         .filter(providerFilter)
         .filter { it.id != "tmdb" && it.id != "youtube" }
     if (provs.isEmpty()) return@recommend emptyList()
-    val terms = app.interests.topTerms(4)
-    if (terms.isEmpty()) return@recommend emptyList()
-    // Search each learned term/provider pair concurrently, but keep the
-    // deferred creation order so stronger terms still win the dedupe pass.
-    val searchResults = kotlinx.coroutines.coroutineScope {
-        terms.flatMap { term ->
+    val terms = app.interests.topTerms(6)
+    // Each provider/term (or provider browse) remains a separate bucket. A
+    // round-robin pass below prevents one large provider response from
+    // crowding every other source out of the row.
+    var buckets: List<List<com.dt.streamz.data.SearchResult>> = if (terms.isEmpty()) {
+        kotlinx.coroutines.coroutineScope {
             provs.map { provider ->
-                async { runCatching { provider.search(term) }.getOrDefault(emptyList()) }
-            }
-        }.awaitAll()
+                async { runCatching { BrowseCache.browse(provider) }.getOrDefault(emptyList()) }
+            }.awaitAll()
+        }
+    } else {
+        kotlinx.coroutines.coroutineScope {
+            terms.flatMap { term ->
+                provs.map { provider ->
+                    async { runCatching { provider.search(term) }.getOrDefault(emptyList()) }
+                }
+            }.awaitAll()
+        }
     }
     val out = LinkedHashMap<String, com.dt.streamz.data.SearchResult>()
-    for (res in searchResults) {
-        for (r in res) {
-            if (!kindFilter(r.kind)) continue
-            out.putIfAbsent("${r.providerId}:${r.id}", r)
-            if (out.size >= 24) break
+    fun addBuckets(source: List<List<com.dt.streamz.data.SearchResult>>) {
+        val maxBucketSize = source.maxOfOrNull { it.size } ?: 0
+        for (position in 0 until maxBucketSize) {
+            for (bucket in source) {
+                val r = bucket.getOrNull(position) ?: continue
+                if (!kindFilter(r.kind)) continue
+                if (app.contentFeedback.isDismissed(r.providerId, r.id)) continue
+                out.putIfAbsent("${r.providerId}:${r.id}", r)
+                if (out.size >= 24) return
+            }
         }
-        if (out.size >= 24) break
+    }
+    addBuckets(buckets)
+    // Search is personalized but browse is the useful safety net when a
+    // provider's search endpoint is temporarily sparse or a new profile has
+    // only one interest term. The result still respects the selected tab kind.
+    if (out.size < 12) {
+        buckets = kotlinx.coroutines.coroutineScope {
+            provs.map { provider ->
+                async { runCatching { BrowseCache.browse(provider) }.getOrDefault(emptyList()) }
+            }.awaitAll()
+        }
+        addBuckets(buckets)
     }
     // For on-demand catalogs (movies / anime / TV), `isLive` only ever marks a
     // genuine livestream; those pass through, and any live-flagged one is
@@ -1277,17 +1422,23 @@ private fun recommenderFor(
     suspend fun liveNow(r: com.dt.streamz.data.SearchResult): Boolean =
         provById[r.providerId]
             ?.let { runCatching { it.isLiveNow(r.id) }.getOrDefault(false) } == true
-    kotlinx.coroutines.coroutineScope {
+    val liveResults = kotlinx.coroutines.coroutineScope {
         out.values.map { r ->
             async {
                 when {
-                    r.providerId == "youtube" -> if (liveNow(r)) r else null
                     !r.isLive -> r
-                    else -> if (liveNow(r)) r else null
+                    liveNow(r) -> r
+                    else -> null
                 }
             }
         }.awaitAll().filterNotNull()
     }
+    RecommendationRanking.rank(
+        items = liveResults,
+        key = { "${it.providerId}:${it.id}" },
+        score = { app.contentFeedback.score(it.providerId, it.id) },
+        limit = 24,
+    )
 }
 
 private const val TAG = "DtApp"

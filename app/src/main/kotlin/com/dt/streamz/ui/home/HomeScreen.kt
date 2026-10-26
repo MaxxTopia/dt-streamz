@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -39,8 +40,10 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import androidx.compose.runtime.collectAsState
 import com.dt.streamz.data.ContinueWatchingStore
+import com.dt.streamz.data.ContentFeedbackStore
 import com.dt.streamz.data.FavoriteEntry
 import com.dt.streamz.data.FavoritesStore
+import com.dt.streamz.data.InterestStore
 import com.dt.streamz.data.MediaKind
 import com.dt.streamz.data.SearchResult
 import com.dt.streamz.data.displayEpisodeLabel
@@ -50,11 +53,14 @@ import com.dt.streamz.scraper.Provider
 import com.dt.streamz.scraper.ProviderRegistry
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOf
 import com.dt.streamz.ui.theme.focusGlow
 import com.dt.streamz.ui.onMenuKeyUp
 import com.dt.streamz.ui.pointerClickable
 import kotlinx.coroutines.launch
+
+private const val HOME_REFRESH_MS = 5 * 60 * 1000L
 
 @Composable
 fun HomeScreen(
@@ -78,15 +84,32 @@ fun HomeScreen(
     // On-device "For You" recommender for this tab. Returns titles matched to
     // the user's learned interests; null or empty -> the row is hidden.
     forYou: (suspend () -> List<SearchResult>)? = null,
+    contentFeedback: ContentFeedbackStore? = null,
+    interests: InterestStore? = null,
+    forYouLabel: String = "✨ For You",
     // Final display guard for personalized results. This stays at the UI
     // boundary so stale/late provider results cannot cross category tabs.
     forYouFilter: (SearchResult) -> Boolean = { true },
     // Curated TMDb-fed rows (Popular / Top Rated / Trending / …) for the Movies
     // and TV tabs so they're full browsable listings, not one mixed row.
     curatedRows: List<CuratedRow> = emptyList(),
+    // Optional TMDb genre strip for Movies / TV.
+    genreFilters: List<GenreFilter> = emptyList(),
+    loadGenre: (suspend (GenreFilter, Int) -> List<SearchResult>)? = null,
     // Big featured hero banner at the very top (Home tab only).
     showHero: Boolean = false,
 ) {
+    var refreshKey by remember { mutableStateOf(0) }
+    // Keep all browse/curated rows fresh while the tab stays open. The manual
+    // button below also uses this same key, so every row changes together
+    // instead of leaving a mixture of old and new catalog snapshots.
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(HOME_REFRESH_MS)
+            BrowseCache.invalidate()
+            refreshKey++
+        }
+    }
     val rawContinueEntries by (continueWatching?.entries ?: flowOf(emptyList()))
         .collectAsState(initial = emptyList())
     val continueEntries = remember(rawContinueEntries, cwKind) {
@@ -126,6 +149,20 @@ fun HomeScreen(
     val watchedKeys = remember(continueEntries) {
         continueEntries.map { "${it.providerId}:${it.titleId}" }.toSet()
     }
+    var feedbackVersion by remember { mutableStateOf(0) }
+    var pendingFeedback by remember { mutableStateOf<SearchResult?>(null) }
+    var selectedGenre by remember { mutableStateOf<GenreFilter?>(null) }
+    val markMoreLike: (SearchResult) -> Unit = { result ->
+        contentFeedback?.markMoreLikeThis(result.providerId, result.id)
+        interests?.recordLike(result.title)
+        feedbackVersion++
+        pendingFeedback = null
+    }
+    val markNotInterested: (SearchResult) -> Unit = { result ->
+        contentFeedback?.markNotInterested(result.providerId, result.id)
+        feedbackVersion++
+        pendingFeedback = null
+    }
 
     Column(
         modifier = Modifier
@@ -134,23 +171,43 @@ fun HomeScreen(
             .padding(horizontal = 28.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        if (showHero && mustWatchProvider != null) {
-            HomeHero(provider = mustWatchProvider, onOpenTitle = onOpenTitle)
-        } else {
+        androidx.compose.foundation.layout.Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text(
-                text = title,
+                text = if (showHero && mustWatchProvider != null) "Featured" else title,
                 style = MaterialTheme.typography.headlineSmall,
                 color = MaterialTheme.colorScheme.onBackground,
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            HomeRefreshButton(
+                onClick = {
+                    BrowseCache.invalidate()
+                    refreshKey++
+                },
+            )
+        }
+        if (showHero && mustWatchProvider != null) {
+            HomeHero(
+                provider = mustWatchProvider,
+                refreshKey = refreshKey,
+                onOpenTitle = onOpenTitle,
             )
         }
         if (forYou != null) {
             ForYouRow(
                 load = forYou,
+                refreshKey = refreshKey,
                 resultFilter = forYouFilter,
                 watchedKeys = watchedKeys,
                 favoriteKeys = favoriteKeys,
+                dismissedKeys = contentFeedback?.dismissedKeys().orEmpty(),
+                feedbackVersion = feedbackVersion,
+                label = forYouLabel,
                 onOpenTitle = onOpenTitle,
                 onToggleFavorite = toggleFavorite,
+                onOpenFeedback = { pendingFeedback = it },
             )
         }
         if (continueEntries.isNotEmpty()) {
@@ -166,6 +223,7 @@ fun HomeScreen(
                 watchedKeys = watchedKeys,
                 favoriteKeys = favoriteKeys,
                 kindFilter = kindFilter,
+                refreshKey = refreshKey,
                 titleOverride = "🔥 Must Watch · trending now",
                 onOpenTitle = onOpenTitle,
                 onToggleFavorite = toggleFavorite,
@@ -174,11 +232,30 @@ fun HomeScreen(
         curatedRows.forEach { row ->
             CuratedRowView(
                 row = row,
+                refreshKey = refreshKey,
                 watchedKeys = watchedKeys,
                 favoriteKeys = favoriteKeys,
                 onOpenTitle = onOpenTitle,
                 onToggleFavorite = toggleFavorite,
             )
+        }
+        val genreLoader = loadGenre
+        if (genreFilters.isNotEmpty() && genreLoader != null) {
+            GenreFilterStrip(
+                filters = genreFilters,
+                selected = selectedGenre,
+                onSelect = { selectedGenre = if (selectedGenre == it) null else it },
+            )
+            selectedGenre?.let { genre ->
+                CuratedRowView(
+                    row = CuratedRow("${genre.label} picks") { key -> genreLoader(genre, key) },
+                    refreshKey = refreshKey,
+                    watchedKeys = watchedKeys,
+                    favoriteKeys = favoriteKeys,
+                    onOpenTitle = onOpenTitle,
+                    onToggleFavorite = toggleFavorite,
+                )
+            }
         }
         RandomPickCard(
             providers = visibleProviders,
@@ -197,6 +274,7 @@ fun HomeScreen(
                 watchedKeys = watchedKeys,
                 favoriteKeys = favoriteKeys,
                 kindFilter = kindFilter,
+                refreshKey = refreshKey,
                 titleOverride = "Because you watched · ${provider.displayName}",
                 onOpenTitle = onOpenTitle,
                 onToggleFavorite = toggleFavorite,
@@ -209,6 +287,7 @@ fun HomeScreen(
                 watchedKeys = watchedKeys,
                 favoriteKeys = favoriteKeys,
                 kindFilter = kindFilter,
+                refreshKey = refreshKey,
                 onOpenTitle = onOpenTitle,
                 onToggleFavorite = toggleFavorite,
             )
@@ -247,6 +326,15 @@ fun HomeScreen(
             onDismiss = { menuEntry = null },
         )
     }
+
+    pendingFeedback?.let { target ->
+        ForYouFeedbackDialog(
+            result = target,
+            onMoreLike = { markMoreLike(target) },
+            onNotInterested = { markNotInterested(target) },
+            onDismiss = { pendingFeedback = null },
+        )
+    }
 }
 
 /**
@@ -258,13 +346,14 @@ fun HomeScreen(
 @Composable
 private fun HomeHero(
     provider: Provider,
+    refreshKey: Int,
     onOpenTitle: (String, String) -> Unit,
 ) {
     var items by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
-    LaunchedEffect(Unit) {
-        items = runCatching { provider.browse() }.getOrDefault(emptyList())
+    LaunchedEffect(provider.id, refreshKey) {
+        items = runCatching { BrowseCache.browse(provider) }.getOrDefault(emptyList())
             .filter { !it.backdrop.isNullOrBlank() }
-            .take(6)
+            .let { rotateResults(it, refreshKey, "hero:${provider.id}", 6) }
     }
     if (items.isEmpty()) return
     var idx by remember { mutableStateOf(0) }
@@ -360,20 +449,63 @@ private fun HomeHero(
 /** A labelled, lazily-loaded row of titles (e.g. TMDb "Popular"). */
 data class CuratedRow(
     val title: String,
-    val load: suspend () -> List<SearchResult>,
+    val load: suspend (refreshKey: Int) -> List<SearchResult>,
 )
+
+data class GenreFilter(val id: Int, val label: String)
+
+@Composable
+private fun GenreFilterStrip(
+    filters: List<GenreFilter>,
+    selected: GenreFilter?,
+    onSelect: (GenreFilter) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Text(
+            text = "Browse by genre",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
+        )
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(filters, key = { it.id }) { filter ->
+                var focused by remember { mutableStateOf(false) }
+                Surface(
+                    onClick = { onSelect(filter) },
+                    modifier = Modifier.onFocusChanged { focused = it.isFocused },
+                    colors = ClickableSurfaceDefaults.colors(
+                        containerColor = if (selected?.id == filter.id)
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
+                        else MaterialTheme.colorScheme.surface,
+                        focusedContainerColor = MaterialTheme.colorScheme.primary,
+                    ),
+                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+                ) {
+                    Text(
+                        text = filter.label,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (focused || selected?.id == filter.id)
+                            MaterialTheme.colorScheme.onPrimary
+                        else MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    )
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun CuratedRowView(
     row: CuratedRow,
+    refreshKey: Int,
     watchedKeys: Set<String>,
     favoriteKeys: Set<String>,
     onOpenTitle: (String, String) -> Unit,
     onToggleFavorite: (SearchResult) -> Unit,
 ) {
-    var results by remember(row.title) { mutableStateOf<List<SearchResult>?>(null) }
-    LaunchedEffect(row.title) {
-        results = runCatching { row.load() }.getOrDefault(emptyList())
+    var results by remember(row.title, refreshKey) { mutableStateOf<List<SearchResult>?>(null) }
+    LaunchedEffect(row.title, refreshKey) {
+        results = runCatching { row.load(refreshKey) }.getOrDefault(emptyList())
     }
     val list = results ?: return
     if (list.isEmpty()) return
@@ -382,11 +514,12 @@ private fun CuratedRowView(
         style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
     )
+    val displayList = rotateResults(list, refreshKey, "curated:${row.title}", 18)
     LazyRow(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        items(list, key = { "${it.providerId}:${it.id}" }) { item ->
+        items(displayList, key = { "${it.providerId}:${it.id}" }) { item ->
             PosterCard(
                 result = item,
                 watched = "${item.providerId}:${item.id}" in watchedKeys,
@@ -401,28 +534,34 @@ private fun CuratedRowView(
 @Composable
 private fun ForYouRow(
     load: suspend () -> List<SearchResult>,
+    refreshKey: Int,
     resultFilter: (SearchResult) -> Boolean,
     watchedKeys: Set<String>,
     favoriteKeys: Set<String>,
+    dismissedKeys: Set<String>,
+    feedbackVersion: Int,
+    label: String,
     onOpenTitle: (String, String) -> Unit,
     onToggleFavorite: (SearchResult) -> Unit,
+    onOpenFeedback: (SearchResult) -> Unit,
 ) {
-    // Loads async so the rest of the tab paints immediately; renders nothing
-    // until results arrive (and stays hidden if there are none), so there's no
-    // empty "For You" header on a cold profile.
-    var results by remember { mutableStateOf<List<SearchResult>?>(null) }
-    LaunchedEffect(Unit) {
+    // Loads async so the rest of the tab paints immediately; the recommender
+    // supplies a browse fallback on a cold profile, and this row stays hidden
+    // only when every provider path is empty.
+    var results by remember(refreshKey, feedbackVersion) { mutableStateOf<List<SearchResult>?>(null) }
+    LaunchedEffect(refreshKey, feedbackVersion) {
         results = runCatching { load() }.getOrDefault(emptyList())
     }
     val rawList = results ?: return
     // A recommendation row should add something new, not relabel titles the
     // user is already following in Continue Watching.
-    val list = rawList
+    val list = rotateResults(rawList, refreshKey, "for-you", 24)
         .filter(resultFilter)
+        .filterNot { "${it.providerId}:${it.id}" in dismissedKeys }
         .filterNot { "${it.providerId}:${it.id}" in watchedKeys }
     if (list.isEmpty()) return
     Text(
-        text = "✨ For You",
+        text = label,
         style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
     )
@@ -437,6 +576,7 @@ private fun ForYouRow(
                 favorited = "${item.providerId}:${item.id}" in favoriteKeys,
                 onClick = { onOpenTitle(item.providerId, item.id) },
                 onToggleFavorite = { onToggleFavorite(item) },
+                onMenu = { onOpenFeedback(item) },
             )
         }
     }
@@ -494,6 +634,39 @@ internal fun ContinueOptionsDialog(
                 )
                 MenuButton("☰  Episodes", onClick = onEpisodes)
                 MenuButton("✕  Remove from row", onClick = onRemove)
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { androidx.compose.material3.Text("Cancel") }
+        },
+    )
+}
+
+@Composable
+private fun ForYouFeedbackDialog(
+    result: SearchResult,
+    onMoreLike: () -> Unit,
+    onNotInterested: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val firstFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { firstFocus.requestFocus() } }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { androidx.compose.material3.Text("Tune For You") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                androidx.compose.material3.Text(
+                    text = result.title,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+                )
+                MenuButton(
+                    "♥  More like this",
+                    onClick = onMoreLike,
+                    modifier = Modifier.focusRequester(firstFocus),
+                )
+                MenuButton("✕  Not interested", onClick = onNotInterested)
             }
         },
         confirmButton = {},
@@ -607,6 +780,7 @@ private fun ContinueCard(
 @Composable
 internal fun BrowseRow(
     provider: Provider,
+    refreshKey: Int = 0,
     watchedKeys: Set<String>,
     favoriteKeys: Set<String> = emptySet(),
     kindFilter: (MediaKind) -> Boolean = { true },
@@ -614,11 +788,13 @@ internal fun BrowseRow(
     onOpenTitle: (providerId: String, titleId: String) -> Unit,
     onToggleFavorite: (SearchResult) -> Unit = {},
 ) {
-    var results by remember(provider.id) { mutableStateOf<List<SearchResult>?>(null) }
-    LaunchedEffect(provider.id) {
-        results = runCatching { BrowseCache.browse(provider) }.getOrDefault(emptyList())
+    var snapshot by remember(provider.id, refreshKey) {
+        mutableStateOf<BrowseCache.Snapshot?>(null)
     }
-    val list = results
+    LaunchedEffect(provider.id, refreshKey) {
+        snapshot = runCatching { BrowseCache.snapshot(provider) }.getOrNull()
+    }
+    val list = snapshot?.items
     if (list == null) {
         Text(
             text = "Loading ${provider.displayName}…",
@@ -632,16 +808,29 @@ internal fun BrowseRow(
         kinded.filterNot { "${it.providerId}:${it.id}" in watchedKeys }
     } else kinded
     if (filtered.isEmpty()) return
+    val displayList = rotateResults(
+        filtered,
+        refreshKey,
+        "browse:${provider.id}:${titleOverride.orEmpty()}",
+        24,
+    )
     Text(
         text = titleOverride ?: "Latest · ${provider.displayName}",
         style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
     )
+    if (snapshot?.stale == true) {
+        Text(
+            text = "Using saved picks · provider is temporarily unavailable",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.55f),
+        )
+    }
     LazyRow(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        items(filtered, key = { "${it.providerId}:${it.id}" }) { item ->
+        items(displayList, key = { "${it.providerId}:${it.id}" }) { item ->
             PosterCard(
                 result = item,
                 watched = "${item.providerId}:${item.id}" in watchedKeys,
@@ -650,6 +839,43 @@ internal fun BrowseRow(
                 onToggleFavorite = { onToggleFavorite(item) },
             )
         }
+    }
+}
+
+/** Rotate a bounded catalog window on refresh so static and paged feeds both feel alive. */
+private fun rotateResults(
+    items: List<SearchResult>,
+    refreshKey: Int,
+    salt: String,
+    maxItems: Int,
+): List<SearchResult> {
+    val unique = items.distinctBy { "${it.providerId}:${it.id}" }
+    if (unique.isEmpty()) return emptyList()
+    val count = maxItems.coerceAtLeast(1).coerceAtMost(unique.size)
+    val start = Math.floorMod(refreshKey * 11 + salt.hashCode(), unique.size)
+    return (0 until count).map { offset -> unique[(start + offset) % unique.size] }
+}
+
+@Composable
+private fun HomeRefreshButton(onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    Surface(
+        onClick = onClick,
+        modifier = Modifier
+            .onFocusChanged { focused = it.isFocused }
+            .pointerClickable(onClick),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = MaterialTheme.colorScheme.surface,
+            focusedContainerColor = MaterialTheme.colorScheme.primary,
+        ),
+    ) {
+        Text(
+            text = "Refresh picks",
+            style = MaterialTheme.typography.labelLarge,
+            color = if (focused) MaterialTheme.colorScheme.onPrimary
+            else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+        )
     }
 }
 
@@ -726,6 +952,7 @@ internal fun PosterCard(
     favorited: Boolean = false,
     onClick: () -> Unit,
     onToggleFavorite: () -> Unit = {},
+    onMenu: (() -> Unit)? = null,
 ) {
     var focused by remember { mutableStateOf(false) }
     val border = if (focused) Color.White else Color.Transparent
@@ -734,7 +961,7 @@ internal fun PosterCard(
         modifier = Modifier
             .width(132.dp)
             .onFocusChanged { focused = it.isFocused }
-            .onMenuKeyUp(focused, onToggleFavorite)
+            .onMenuKeyUp(focused, onMenu ?: onToggleFavorite)
             .pointerClickable(onClick),
     ) {
         Surface(

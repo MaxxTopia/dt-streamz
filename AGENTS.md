@@ -17,9 +17,25 @@ editing. Preserve all unrelated and unfinished changes.
 - Do not stage `.wrangler/`, photos, emulator captures, or unrelated telemetry
   work. Do not use broad `git add -A`.
 
-Current checkpoint (2026-07-29): v0.4.49 / versionCode 63 fixes physical
-keyboard typing, Backspace, and Enter in the shared search editor and adds
-explicit pointer support to the top tabs plus YouTube search, clear, and video
-cards. Debug compile, Android lint, signed release build/install, live YouTube
-results, D-pad input, and hardware-key input were emulator-verified. The real
-VSeeBox remote remains Diggy's human-only check.
+Current checkpoint (2026-10-26, v0.4.111 candidate): based on v0.4.110, the
+Home, Movies, and TV surfaces now refresh their browse cache every five minutes
+or from a D-pad "Refresh picks" action. TMDb category rows rotate across three
+pages, while the per-tab For You recommender interleaves learned-interest
+search buckets, removes Continue Watching duplicates, accepts local
+More-like-this/Not-interested feedback, and falls back to popular browse data
+on a cold profile or provider miss. Successful browse results persist as a
+last-known-good snapshot and remote provider toggles fail open. Twitch still
+refreshes live state on entry, on demand, and every minute, sorts live channels
+first, distinguishes unavailable probes from offline channels, searches public
+channels, loads recent past broadcasts, filters archives, and resumes VODs.
+YouTube native resolution keeps a short Piped/NewPipe backup race and prefers a
+wrapped DASH source when available; the tab has an account-free local Continue
+Watching shelf with resume, D-pad activation, and MENU removal. Playback errors
+now expose Retry/Change source recovery, and `scripts/vseebox-smoke.ps1` gives
+an ASCII-safe emulator launch check. `:app:compileDebugKotlin`,
+`:app:testDebugUnitTest` (5 tests), `:app:lintDebug`, debug/release assembly,
+the Twitch GraphQL/PAT/Usher read-only smoke, API-30 emulator install/launch,
+and `git diff --check` pass. Release tag/push/publish is the next gate; the
+physical VSeeBox remote, playback, DNS, Twitch VOD, and long-session checks
+remain Diggy's human-only gate. See RESILIENCE.md and the newest continuity
+snapshot.

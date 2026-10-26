@@ -15,6 +15,8 @@ data class SearchResult(
     val subtitle: String? = null,
     /** Human-readable upload age for YouTube cards (for example, "2 days ago"). */
     val publishedLabel: String? = null,
+    /** Local YouTube resume progress, expressed as 0..1 for the card shelf. */
+    val progressFraction: Float? = null,
     /** Wide 16:9 backdrop (TMDb), for the Home hero banner. Null = use poster. */
     val backdrop: String? = null,
 )

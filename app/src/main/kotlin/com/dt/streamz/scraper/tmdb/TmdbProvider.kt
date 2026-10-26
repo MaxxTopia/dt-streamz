@@ -76,8 +76,24 @@ class TmdbProvider : Provider {
      * dedicated Popular / Top Rated / Trending / New-Episodes rows on the
      * Movies and TV tabs so they're full listings rather than one mixed row.
      */
-    suspend fun categoryRow(path: String): List<SearchResult> =
-        withContext(Dispatchers.IO) { fetchResults(path) }
+    suspend fun categoryRow(path: String, refreshKey: Int = 0): List<SearchResult> =
+        withContext(Dispatchers.IO) {
+            // Rotate through the first few TMDb pages on refresh. This keeps
+            // a long-lived Movies/TV tab from showing the same first 20 titles
+            // forever while retaining a deterministic, bounded request plan.
+            val page = (refreshKey.mod(CATEGORY_PAGE_COUNT)) + 1
+            fetchResults(path, page)
+        }
+
+    /** A rotating genre row for the Movies / TV filter strip. */
+    suspend fun genreRow(mediaType: String, genreId: Int, refreshKey: Int = 0): List<SearchResult> =
+        withContext(Dispatchers.IO) {
+            val page = (refreshKey.mod(CATEGORY_PAGE_COUNT)) + 1
+            fetchResults(
+                "discover/$mediaType?with_genres=$genreId&sort_by=popularity.desc",
+                page,
+            )
+        }
 
     override suspend fun details(titleId: String): TitleDetails = withContext(Dispatchers.IO) {
         val (mediaType, tmdbId) = parseId(titleId)
@@ -152,9 +168,10 @@ class TmdbProvider : Provider {
 
     // --- internals ---
 
-    private fun fetchResults(path: String): List<SearchResult> {
+    private fun fetchResults(path: String, page: Int = 1): List<SearchResult> {
         val sep = if (path.contains("?")) "&" else "?"
-        val obj = getJson("$API/$path$sep" + "language=en-US&page=1") ?: return emptyList()
+        val safePage = page.coerceIn(1, CATEGORY_PAGE_COUNT)
+        val obj = getJson("$API/$path$sep" + "language=en-US&page=$safePage") ?: return emptyList()
         val arr = obj["results"] as? JsonArray ?: return emptyList()
         return arr.mapNotNull { el ->
             val o = el as? JsonObject ?: return@mapNotNull null
@@ -261,5 +278,6 @@ class TmdbProvider : Provider {
         private const val POSTER = "https://image.tmdb.org/t/p/w342"
         private const val BACKDROP = "https://image.tmdb.org/t/p/w780"
         private const val MAX_ROW = 30
+        private const val CATEGORY_PAGE_COUNT = 3
     }
 }

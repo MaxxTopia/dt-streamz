@@ -11,6 +11,7 @@ object TwitchConfig {
     const val CLIENT_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko"
     const val GQL_URL = "https://gql.twitch.tv/gql"
     const val USHER_BASE = "https://usher.ttvnw.net/api/channel/hls"
+    const val USHER_VOD_BASE = "https://usher.ttvnw.net/vod"
 
     /**
      * persistedQuery sha256 for the PlaybackAccessToken operation. Twitch's

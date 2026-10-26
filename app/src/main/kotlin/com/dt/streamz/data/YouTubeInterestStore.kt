@@ -2,6 +2,16 @@ package com.dt.streamz.data
 
 import android.content.Context
 
+/** A local, account-free YouTube resume row shown on the YouTube tab. */
+data class YouTubeWatchEntry(
+    val videoId: String,
+    val title: String,
+    val poster: String?,
+    val timestamp: Long,
+    val positionMs: Long = 0,
+    val durationMs: Long = 0,
+)
+
 /**
  * YouTube-ONLY interest model — the on-device signal behind the genuinely
  * personalised YouTube "Recommended" grid.
@@ -43,6 +53,7 @@ class YouTubeInterestStore(context: Context) {
             .remove(KEY_SEARCHES)
             .remove(KEY_WATCHES)
             .remove(KEY_WATCH_TITLES)
+            .remove(KEY_WATCH_PROGRESS)
             .apply()
     }
 
@@ -56,7 +67,7 @@ class YouTubeInterestStore(context: Context) {
     }
 
     /** A YouTube video the user opened. [videoId] is the 11-char watch ID. */
-    fun recordWatch(videoId: String, title: String? = null) {
+    fun recordWatch(videoId: String, title: String? = null, poster: String? = null) {
         if (!isEnabled()) return
         val clean = videoId.trim()
         if (clean.length < 6) return
@@ -80,7 +91,58 @@ class YouTubeInterestStore(context: Context) {
             ).takeLast(MAX_WATCH_TITLES)
             write(KEY_WATCH_TITLES, titleRows)
         }
+        upsertWatchEntry(clean, cleanTitle, poster)
     }
+
+    /** Recent watched videos with local thumbnails and resume positions. */
+    fun watchEntries(n: Int = 8): List<YouTubeWatchEntry> {
+        if (!isEnabled() || n <= 0) return emptyList()
+        return readWatchEntries()
+            .asSequence()
+            .filter { it.title.length >= 3 }
+            .filterNot { isFinished(it) }
+            .sortedByDescending { it.timestamp }
+            .take(n)
+            .toList()
+    }
+
+    /** Resume position for a video before its next native/embed attempt. */
+    fun resumePosition(videoId: String): Long =
+        if (!isEnabled()) 0L else readWatchEntries()
+            .firstOrNull { it.videoId == videoId.trim() }
+            ?.takeUnless(::isFinished)
+            ?.positionMs
+            ?.coerceAtLeast(0L)
+            ?: 0L
+
+    /** Persist progress without changing the interest signal or row ordering. */
+    fun updateWatchProgress(videoId: String, positionMs: Long, durationMs: Long) {
+        if (!isEnabled()) return
+        val clean = videoId.trim()
+        if (clean.length < 6) return
+        val current = readWatchEntries()
+        var changed = false
+        val updated = current.map { entry ->
+            if (entry.videoId != clean) return@map entry
+            changed = true
+            entry.copy(
+                positionMs = positionMs.coerceAtLeast(0L),
+                durationMs = if (durationMs > 0) durationMs else entry.durationMs,
+            )
+        }
+        if (changed) writeWatchEntries(updated)
+    }
+
+    /** Remove a row from the local resume shelf while retaining its interests. */
+    fun removeWatch(videoId: String) {
+        val clean = videoId.trim()
+        val current = readWatchEntries()
+        val filtered = current.filterNot { it.videoId == clean }
+        if (filtered.size != current.size) writeWatchEntries(filtered)
+    }
+
+    /** A clean end removes the item from Continue Watching but not from history. */
+    fun completeWatch(videoId: String) = removeWatch(videoId)
 
     /**
      * Recent distinct YouTube search phrases, most-relevant first (time-decayed,
@@ -138,15 +200,79 @@ class YouTubeInterestStore(context: Context) {
         prefs.edit().putString(key, rows.joinToString("\n") { "${it.ts}\t${it.text}" }).apply()
     }
 
+    private fun upsertWatchEntry(videoId: String, title: String, poster: String?) {
+        val previous = readWatchEntries().firstOrNull { it.videoId == videoId }
+        val entry = YouTubeWatchEntry(
+            videoId = videoId,
+            title = title.ifBlank { previous?.title.orEmpty() },
+            poster = poster.cleanField().takeIf { it.isNotBlank() } ?: previous?.poster,
+            timestamp = System.currentTimeMillis(),
+            positionMs = previous?.takeUnless(::isFinished)?.positionMs ?: 0L,
+            durationMs = previous?.takeUnless(::isFinished)?.durationMs ?: 0L,
+        )
+        val rest = readWatchEntries().filterNot { it.videoId == videoId }
+        writeWatchEntries((listOf(entry) + rest).take(MAX_WATCH_PROGRESS_ROWS))
+    }
+
+    private fun readWatchEntries(): List<YouTubeWatchEntry> =
+        prefs.getString(KEY_WATCH_PROGRESS, null)
+            ?.split('\n')
+            ?.mapNotNull { line ->
+                val parts = line.split('\t', limit = 6)
+                if (parts.size < 6) return@mapNotNull null
+                val id = parts[0].trim()
+                val timestamp = parts[1].toLongOrNull() ?: return@mapNotNull null
+                val position = parts[2].toLongOrNull() ?: 0L
+                val duration = parts[3].toLongOrNull() ?: 0L
+                if (id.length < 6) return@mapNotNull null
+                YouTubeWatchEntry(
+                    videoId = id,
+                    title = parts[4].trim(),
+                    poster = parts[5].trim().takeIf { it.isNotBlank() },
+                    timestamp = timestamp,
+                    positionMs = position.coerceAtLeast(0L),
+                    durationMs = duration.coerceAtLeast(0L),
+                )
+            }
+            .orEmpty()
+
+    private fun writeWatchEntries(entries: List<YouTubeWatchEntry>) {
+        if (entries.isEmpty()) {
+            prefs.edit().remove(KEY_WATCH_PROGRESS).apply()
+            return
+        }
+        val raw = entries.joinToString("\n") { entry ->
+            listOf(
+                entry.videoId.cleanField(),
+                entry.timestamp.toString(),
+                entry.positionMs.toString(),
+                entry.durationMs.toString(),
+                entry.title.cleanField().take(140),
+                entry.poster.cleanField().take(600),
+            ).joinToString("\t")
+        }
+        prefs.edit().putString(KEY_WATCH_PROGRESS, raw).apply()
+    }
+
+    private fun isFinished(entry: YouTubeWatchEntry): Boolean =
+        entry.durationMs > 0 && entry.positionMs >=
+            (entry.durationMs - FINISHED_END_GUARD_MS).coerceAtLeast(0L)
+
+    private fun String?.cleanField(): String =
+        this.orEmpty().replace('\t', ' ').replace('\n', ' ').replace('\r', ' ').trim()
+
     companion object {
         private const val PREFS = "yt_interests"
         private const val KEY_ENABLED = "enabled"
         private const val KEY_SEARCHES = "searches"
         private const val KEY_WATCHES = "watches"
         private const val KEY_WATCH_TITLES = "watch_titles"
+        private const val KEY_WATCH_PROGRESS = "watch_progress"
         private const val MAX_SEARCHES = 100
         private const val MAX_WATCHES = 40
         private const val MAX_WATCH_TITLES = 40
+        private const val MAX_WATCH_PROGRESS_ROWS = 20
+        private const val FINISHED_END_GUARD_MS = 20_000L
         private const val HALF_LIFE_MS = 14L * 24 * 60 * 60 * 1000
     }
 }

@@ -32,6 +32,7 @@ import androidx.tv.material3.Text
 import com.dt.streamz.BuildConfig
 import com.dt.streamz.DtApplication
 import com.dt.streamz.adblock.HostBlocker
+import com.dt.streamz.config.ScraperConfig
 import com.dt.streamz.diag.DebugLog
 import com.dt.streamz.ui.pointerClickable
 import com.dt.streamz.updater.ApkInstaller
@@ -43,7 +44,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 
 @Composable
-fun SettingsScreen() {
+fun SettingsScreen(remoteConfig: ScraperConfig = ScraperConfig()) {
     val ctx = LocalContext.current
     val app = ctx.applicationContext as DtApplication
     val scope = rememberCoroutineScope()
@@ -165,6 +166,28 @@ fun SettingsScreen() {
         )
         add(
             SettingItem(
+                title = "For You feedback",
+                subtitle = "${app.contentFeedback.dismissedKeys().size} titles hidden. Clear this if your recommendations become too narrow.",
+                action = {
+                    app.contentFeedback.clear()
+                    Toast.makeText(ctx, "For You feedback cleared", Toast.LENGTH_SHORT).show()
+                },
+                actionLabel = "Clear",
+            ),
+        )
+        add(
+            SettingItem(
+                title = "Twitch VOD resume history",
+                subtitle = "${app.twitchVodProgress.entries(20).size} unfinished broadcasts saved on this device.",
+                action = {
+                    app.twitchVodProgress.clear()
+                    Toast.makeText(ctx, "Twitch resume history cleared", Toast.LENGTH_SHORT).show()
+                },
+                actionLabel = "Clear",
+            ),
+        )
+        add(
+            SettingItem(
                 title = "Clear search history",
                 subtitle = "Forget the recent-search chips on the Search and YouTube tabs.",
                 action = {
@@ -215,6 +238,17 @@ fun SettingsScreen() {
             SettingItem(
                 title = "Scraper providers",
                 subtitle = app.providerRegistry.all.joinToString(", ") { it.displayName },
+                action = null,
+            ),
+        )
+        add(
+            SettingItem(
+                title = "Remote provider controls",
+                subtitle = if (remoteConfig.providers.isEmpty())
+                    "Using bundled defaults; the remote catalog has not loaded yet."
+                else
+                    "Config v${remoteConfig.schemaVersion} · " +
+                        "${remoteConfig.providers.count { it.value.enabled }} of ${remoteConfig.providers.size} providers enabled.",
                 action = null,
             ),
         )

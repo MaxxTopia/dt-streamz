@@ -16,8 +16,8 @@ android {
         // code path requires API 30+ (no @RequiresApi / SDK_INT branches).
         minSdk = 26
         targetSdk = 35
-        versionCode = 124
-        versionName = "0.4.110"
+        versionCode = 125
+        versionName = "0.4.111"
     }
 
     signingConfigs {
@@ -113,4 +113,6 @@ dependencies {
 
     implementation(libs.coil.compose)
     implementation(libs.coil.network)
+
+    testImplementation("junit:junit:4.13.2")
 }

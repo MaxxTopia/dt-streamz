@@ -113,6 +113,8 @@ fun PlayerScreen(
     // toast+exit (e.g. YouTube native -> drop straight to the embed). Null
     // keeps the default "toast the error and bounce to tabs" behavior.
     onPlaybackError: (() -> Unit)? = null,
+    // Optional manual source picker when every automatic retry has failed.
+    onChangeSource: (() -> Unit)? = null,
     // Some native providers can remain in BUFFERING on a particular TV box
     // without ever emitting a fatal error. Give their same-language fallback
     // a bounded chance to take over instead of leaving a black spinner up.
@@ -130,6 +132,8 @@ fun PlayerScreen(
     // chips, so the old always-on overlay was unreachable by remote.
     var optionsOpen by remember { mutableStateOf(false) }
     var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
+    var retryNonce by remember(url) { mutableStateOf(0) }
+    var playbackError by remember(url) { mutableStateOf<String?>(null) }
 
     // Keep the latest callbacks without restarting the player/effects.
     val onProgressCb by rememberUpdatedState(onProgress)
@@ -180,7 +184,7 @@ fun PlayerScreen(
             exoPlayer.duration != C.TIME_UNSET &&
             exoPlayer.duration > 0
     }
-    val player = remember(url, effectiveAudioUrl) {
+    val player = remember(url, effectiveAudioUrl, retryNonce) {
         // Deep buffers (VOD): YouTube here is a fixed-bitrate progressive stream
         // with no adaptive downshift, and googlevideo throttles the download —
         // so we hold a large cushion (up to 3min, keep ≥30s ahead) to ride out
@@ -240,12 +244,7 @@ fun PlayerScreen(
                         if (fallback != null) {
                             fallback()
                         } else {
-                            Toast.makeText(
-                                context,
-                                "Playback failed: ${error.errorCodeName}",
-                                Toast.LENGTH_LONG,
-                            ).show()
-                            onExitCb()
+                            playbackError = error.errorCodeName
                         }
                     }
 
@@ -274,7 +273,8 @@ fun PlayerScreen(
         if (player.playbackState != Player.STATE_READY &&
             player.playbackState != Player.STATE_ENDED
         ) {
-            onPlaybackErrorCb?.invoke()
+            if (onPlaybackErrorCb != null) onPlaybackErrorCb?.invoke()
+            else playbackError = "startup timeout"
         }
     }
 
@@ -336,7 +336,8 @@ fun PlayerScreen(
         }
     }
 
-    Row(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+        Row(modifier = Modifier.fillMaxSize()) {
         Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
@@ -488,6 +489,47 @@ fun PlayerScreen(
                     .width(380.dp)
                     .fillMaxHeight(),
             )
+        }
+        }
+        playbackError?.let { reason ->
+            val errorFocus = remember { FocusRequester() }
+            LaunchedEffect(reason) { runCatching { errorFocus.requestFocus() } }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.9f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.padding(32.dp),
+                ) {
+                    Text(
+                        text = "Playback could not start",
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = Color.White,
+                    )
+                    Text(
+                        text = "Source error: $reason",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.72f),
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        PlayerChip(
+                            label = "Retry",
+                            modifier = Modifier.focusRequester(errorFocus),
+                        ) {
+                            playbackError = null
+                            retryNonce++
+                        }
+                        if (onChangeSource != null) {
+                            PlayerChip("Change source", onClick = onChangeSource)
+                        }
+                        PlayerChip("Back", onClick = onExitCb)
+                    }
+                }
+            }
         }
     }
 }
