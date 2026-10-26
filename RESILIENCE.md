@@ -885,7 +885,7 @@ never block startup when the document is unavailable. Provider toggles and
 messaging are safe candidates; credentials, signing, and arbitrary code are
 not.
 
-## v0.4.111 release-candidate checkpoint (2026-10-26)
+## v0.4.111 release and live-verification checkpoint (2026-10-26)
 
 - Discovery and recovery: the Home/Movies/TV browse cycle now refreshes every
   five minutes or from `Refresh picks`; TMDb genre rows rotate pages; For You
@@ -907,13 +907,18 @@ not.
   manifest. The API-30 `Television_1080p` emulator installed and launched the
   final debug APK with `com.dt.streamz.debug` resumed and no fatal app-process
   marker in the smoke log.
-- Release state: versionCode 125 / versionName 0.4.111 is ready for the
-  authorized tag, main push, and GitHub Actions release. No tag, push, or
-  publish has happened at this checkpoint. The physical VSeeBox remains the
-  human gate for D-pad feel, DNS, playback, Twitch archive/VOD behavior, and
-  long-session stability. Existing telemetry, photos, `.wrangler/`,
-  `_emutest/`, and recovery-file changes remain outside the intended release
-  scope.
+- Release state: versionCode 125 / versionName 0.4.111 is live. Commit
+  `7829cb1` is on `main`, tag `v0.4.111` is pushed, and GitHub Actions run
+  `40336949397` completed successfully and published the non-draft asset at
+  `https://github.com/MaxxTopia/dt-streamz/releases/tag/v0.4.111`. The hosted
+  APK is 13,163,716 bytes, package `com.dt.streamz`, versionName `0.4.111`,
+  and carries the expected `CN=DT Streamz, O=Personal, L=Local, C=US`
+  certificate. Its hosted digest is
+  `81142EE711FC6217D960753AD85CA6AFED68180CD2B9D63DA988A1C6561781A1`.
+  The physical VSeeBox remains the human gate for D-pad feel, DNS, playback,
+  Twitch archive/VOD behavior, and long-session stability. Existing telemetry,
+  photos, `.wrangler/`, `_emutest/`, and recovery-file changes remain outside
+  the release scope.
 
 ### Remaining risk register entries
 

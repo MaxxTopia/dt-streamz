@@ -17,7 +17,7 @@ editing. Preserve all unrelated and unfinished changes.
 - Do not stage `.wrangler/`, photos, emulator captures, or unrelated telemetry
   work. Do not use broad `git add -A`.
 
-Current checkpoint (2026-10-26, v0.4.111 candidate): based on v0.4.110, the
+Current checkpoint (2026-10-26, v0.4.111 live): based on v0.4.110, the
 Home, Movies, and TV surfaces now refresh their browse cache every five minutes
 or from a D-pad "Refresh picks" action. TMDb category rows rotate across three
 pages, while the per-tab For You recommender interleaves learned-interest
@@ -35,7 +35,8 @@ now expose Retry/Change source recovery, and `scripts/vseebox-smoke.ps1` gives
 an ASCII-safe emulator launch check. `:app:compileDebugKotlin`,
 `:app:testDebugUnitTest` (5 tests), `:app:lintDebug`, debug/release assembly,
 the Twitch GraphQL/PAT/Usher read-only smoke, API-30 emulator install/launch,
-and `git diff --check` pass. Release tag/push/publish is the next gate; the
-physical VSeeBox remote, playback, DNS, Twitch VOD, and long-session checks
-remain Diggy's human-only gate. See RESILIENCE.md and the newest continuity
-snapshot.
+and `git diff --check` pass. Commit `7829cb1` is pushed to `main`, tag
+`v0.4.111` is pushed, and GitHub Actions release run `40336949397` published
+the non-draft `dt-streamz.apk` asset. The physical VSeeBox remote, playback,
+DNS, Twitch VOD, and long-session checks remain Diggy's human-only gate. See
+RESILIENCE.md and the newest continuity snapshot.
