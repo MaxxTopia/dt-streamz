@@ -2,6 +2,11 @@
 
 Scope: Android APK for VSeebox V3 (Android 11 TV, 64-bit ARM). Aggregates movie/anime streams + Twitch live (Twire-style, ad-free) + YouTube ad-free in one sideloaded app. Display name "viewmaxxing"; internal package + keystore + GitHub-update repo still keyed on `dt-streamz` / `com.dt.streamz` (don't rename — would break sign-in-place updates).
 
+> **LATEST RELEASE (2026-10-26) — v0.4.112 is live.** Commit `7b32982` and tag
+> `v0.4.112` are pushed to `main`; GitHub Actions run `40454927838` published
+> the non-draft signed `dt-streamz.apk` asset. SHA-256:
+> `6A6B8A2A526E3538472EBD3810D1E8AA22248E4B57AB8C165C647D6C8EB7624F`.
+
 > **CURRENT (2026-10-26) — v0.4.111 is live, supersedes the dated phase table below.** The working tree is based on v0.4.110 and has versionCode 125 / versionName 0.4.111 in `app/build.gradle.kts`. Home, Movies, and TV browse rows now refresh every five minutes or from the D-pad `Refresh picks` action; TMDb categories rotate across three pages. The per-tab For You recommender interleaves learned-interest buckets, filters titles already in Continue Watching, accepts local More-like-this/Not-interested feedback, and falls back to popular browse data on a cold profile or provider miss. Successful browse responses persist as last-known-good snapshots, and remote provider toggles fail open. Twitch refreshes live state on entry, on demand, and every minute, sorts live channels first, distinguishes unavailable probes from offline channels, searches public channels, filters and paginates recent past broadcasts when Twitch supplies a cursor, and resumes VODs. YouTube native resolution keeps a short Piped/NewPipe backup race and prefers a wrapped DASH source when available; the tab has an account-free local Continue Watching shelf with resume, D-pad activation, and MENU removal. Playback errors expose Retry/Change source recovery. `:app:compileDebugKotlin`, `:app:testDebugUnitTest` (5 tests), `:app:lintDebug`, `:app:assembleDebug`, `:app:assembleRelease`, current Twitch GraphQL/PAT/Usher read-only smoke, API-30 emulator install/launch, and `git diff --check` pass. Commit `7829cb1` is pushed to `main`, tag `v0.4.111` is pushed, and GitHub Actions run `40336949397` published the non-draft `dt-streamz.apk` asset. Real-box playback, remote, DNS, Twitch VOD, and long-session behavior remain human-only checks.
 >
 > ### Build / run
@@ -80,3 +85,14 @@ Twitch Client-ID = Twitch's public web-player ID (`kimne78kx3ncx6brgo4mv6wki5h1k
 - Cloudstream scraper patterns → github.com/recloudstream/cloudstream (read, don't fork)
 - Twire's Twitch HLS fetch → github.com/twireapp/Twire
 - AdblockAndroid integration → github.com/Edsuns/AdblockAndroid (not used — chose simpler HostBlocker)
+
+## Release checkpoint (2026-10-26, v0.4.112 live)
+
+The playback-stability release adds a native VOD/live stall watchdog with
+two prepare-and-resume attempts, preserves the current position through existing
+YouTube/other fallback routes, keeps the native and WebView surfaces awake, and
+intercepts native-player transport keys before the Media3 controller can trap
+D-pad focus. Compile, unit tests, lint, debug/release assembly, and
+`git diff --check` pass. GitHub Actions run `40454927838` built and uploaded the
+signed APK. No emulator is attached; physical VSeeBox playback and remote
+behavior still require Diggy's test.

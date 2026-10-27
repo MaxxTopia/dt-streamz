@@ -928,3 +928,16 @@ not.
 | Persisted browse snapshot becomes stale for a long outage | EVERYONE browsing during the outage | Settings/provider status or stale copy remains visible while refresh retries fail | HOT/REBUILD | Keep the last-known-good row, expose retry/status, and let the remote control disable a bad provider |
 | Local feedback over-suppresses a title | ONE device/profile | For You gets sparse after repeated dismissals | HOT | Clear feedback in Settings and retain the popular fallback |
 | VSeeBox-only DNS, remote focus, or decoder failure | ONE physical box | emulator works but the box cannot resolve, focus, or sustain playback | REBUILD/device | Run the physical smoke checklist and capture the title/channel plus player log before changing provider order |
+
+## 2026-10-26 playback-stability checkpoint (v0.4.112 live)
+
+| Failure | Blast radius | Detection signal | Fix class | Plan B |
+|---|---|---|---|---|
+| Long YouTube VOD stops advancing after it has started | ONE physical box or any affected decoder/network path | Native player position is unchanged for 12 seconds while playback is requested | HOT/recovery | Re-prepare and resume twice; then preserve the position through the existing source fallback and show a recoverable error |
+| Live stream loses its advancing position or the device idles the surface | ONE physical box or live provider path | Live position is unchanged for 10 seconds while playback is requested | HOT/recovery | Re-prepare and seek to the live default position twice; keep the screen awake; then show a recoverable error |
+| Repeated remote RIGHT moves into the Media3 controller rail | ONE TV remote session | Native player receives D-pad transport keys while the controller owns focus | HOT/input boundary | Consume LEFT/RIGHT/OK/media transport keys at Activity scope and return focus to the player surface |
+
+Release `v0.4.112` implements these mitigations. Build, unit-test, lint,
+debug/release assembly, and diff checks pass; GitHub Actions run `40454927838`
+uploaded the signed APK. Emulator/device playback and physical remote behavior
+remain unverified until the VSeeBox is tested.

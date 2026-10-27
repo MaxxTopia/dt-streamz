@@ -17,7 +17,7 @@ editing. Preserve all unrelated and unfinished changes.
 - Do not stage `.wrangler/`, photos, emulator captures, or unrelated telemetry
   work. Do not use broad `git add -A`.
 
-Current checkpoint (2026-10-26, v0.4.111 live): based on v0.4.110, the
+Prior checkpoint (2026-10-26, v0.4.111 live; superseded by v0.4.112 below): based on v0.4.110, the
 Home, Movies, and TV surfaces now refresh their browse cache every five minutes
 or from a D-pad "Refresh picks" action. TMDb category rows rotate across three
 pages, while the per-tab For You recommender interleaves learned-interest
@@ -40,3 +40,21 @@ and `git diff --check` pass. Commit `7829cb1` is pushed to `main`, tag
 the non-draft `dt-streamz.apk` asset. The physical VSeeBox remote, playback,
 DNS, Twitch VOD, and long-session checks remain Diggy's human-only gate. See
 RESILIENCE.md and the newest continuity snapshot.
+
+Current checkpoint (2026-10-26, v0.4.112 live): the native
+PlayerScreen now watches for a previously-ready VOD or live player whose position
+stops advancing, re-prepares the source up to two times, and then hands the current
+position to the existing fallback/error route. Native and WebView player surfaces
+keep the screen awake; native playback also holds the Activity screen-awake flag
+while mounted. The Activity consumes native-player LEFT/RIGHT/OK/media transport
+keys before Media3 can trap remote focus in its controller rail and shows a short
+seek/playback cue. YouTube and other fallback routes preserve the supplied resume
+position. `:app:compileDebugKotlin`, `:app:testDebugUnitTest`, `:app:lintDebug`,
+debug/release assembly, and `git diff --check` pass. No emulator is attached, so
+long-video recovery, live-stream idle behavior, and physical remote feel remain
+Diggy's box-test gate. Commit `7b32982` is pushed to `main`, tag `v0.4.112` is
+pushed, and GitHub Actions release run `40454927838` published the non-draft
+`dt-streamz.apk` asset. The published SHA-256 is
+`6A6B8A2A526E3538472EBD3810D1E8AA22248E4B57AB8C165C647D6C8EB7624F`.
+Best next move: install the published APK on the VSeeBox and exercise one long
+VOD, one live stream, repeated RIGHT/LEFT, CENTER, BACK, and pause/resume.
