@@ -40,12 +40,33 @@ class MainActivity : ComponentActivity() {
      * the Activity, which dispatches first.
      */
     var playerOptionsHandler: (() -> Boolean)? = null
+    /**
+     * Set by the active native PlayerScreen so remote transport keys are
+     * handled as seek/play commands instead of moving focus through Media3's
+     * controller buttons. Returns true when the key should be consumed.
+     */
+    var playerTransportHandler: ((KeyEvent) -> Boolean)? = null
     private var swallowingDpadUp = false
 
     // super.dispatchKeyEvent() is flagged @RestrictTo by lint, but calling it from
     // our own Activity override is the correct, intended usage.
     @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val transportHandler = playerTransportHandler
+        val isTransportKey = when (event.keyCode) {
+            KeyEvent.KEYCODE_DPAD_LEFT,
+            KeyEvent.KEYCODE_DPAD_RIGHT,
+            KeyEvent.KEYCODE_DPAD_CENTER,
+            KeyEvent.KEYCODE_ENTER,
+            KeyEvent.KEYCODE_NUMPAD_ENTER,
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+            KeyEvent.KEYCODE_MEDIA_PLAY,
+            KeyEvent.KEYCODE_MEDIA_PAUSE -> true
+            else -> false
+        }
+        if (transportHandler != null && isTransportKey && transportHandler(event)) {
+            return true
+        }
         val handler = playerOptionsHandler
         if (handler != null && event.keyCode == KeyEvent.KEYCODE_DPAD_UP) {
             when (event.action) {

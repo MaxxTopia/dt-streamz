@@ -16,8 +16,8 @@ android {
         // code path requires API 30+ (no @RequiresApi / SDK_INT branches).
         minSdk = 26
         targetSdk = 35
-        versionCode = 125
-        versionName = "0.4.111"
+        versionCode = 126
+        versionName = "0.4.112"
     }
 
     signingConfigs {

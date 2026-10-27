@@ -637,7 +637,8 @@ fun DtApp() {
                     // a search backend. Only fall into the IFrame/watch page
                     // pair after every native source has failed.
                     onPlaybackError = if (isYouTube) {
-                        {
+                        { resumePositionMs ->
+                            val resume = resumePositionMs.coerceAtLeast(0L)
                             val next = r.fallbacks.firstOrNull()
                             if (next != null) {
                                 val nextLabel = next.serverLabel ?: "YouTube backup"
@@ -655,7 +656,7 @@ fun DtApp() {
                                         providerId = r.providerId,
                                         titleId = r.titleId,
                                         episodeId = r.episodeId,
-                                        startPositionMs = r.startPositionMs,
+                                        startPositionMs = resume,
                                     ),
                                 )
                             } else {
@@ -675,11 +676,13 @@ fun DtApp() {
                                     providerId = "youtube",
                                     titleId = vid,
                                     episodeId = "watch",
+                                    startPositionMs = resume,
                                 ))
                             }
                         }
                     } else if (r.fallbacks.isNotEmpty()) {
-                        {
+                        { resumePositionMs ->
+                            val resume = resumePositionMs.coerceAtLeast(0L)
                             val next = r.fallbacks.first()
                             val nextLabel = next.serverLabel ?: "backup server"
                             val sourceChoices = r.sourceChoices.ifEmpty { r.fallbacks }
@@ -699,7 +702,7 @@ fun DtApp() {
                                     providerId = r.providerId,
                                     titleId = r.titleId,
                                     episodeId = r.episodeId,
-                                    startPositionMs = r.startPositionMs,
+                                    startPositionMs = resume,
                                 ),
                             )
                         }

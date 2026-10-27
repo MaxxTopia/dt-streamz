@@ -5,7 +5,9 @@ package com.dt.streamz.ui.player
 import android.content.Context
 import android.content.ContextWrapper
 import android.net.Uri
+import android.os.SystemClock
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import com.dt.streamz.MainActivity
@@ -66,12 +68,21 @@ import com.dt.streamz.data.StreamKind
 import com.dt.streamz.data.SubtitleTrack
 import com.dt.streamz.ui.twitchchat.TwitchChatOverlay
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 
 /** How often we persist the resume position while a stream is playing. */
 private const val PROGRESS_SAVE_INTERVAL_MS = 10_000L
 
 /** Transport-controller (and overlay-chip) auto-hide delay after last input. */
 private const val CONTROLLER_TIMEOUT_MS = 4_000
+
+/** Poll interval for detecting a decoder/network stall without a fatal error. */
+private const val STALL_POLL_INTERVAL_MS = 2_000L
+
+/** A previously-playing VOD/live source gets two bounded recovery attempts. */
+private const val VOD_STALL_TIMEOUT_MS = 12_000L
+private const val LIVE_STALL_TIMEOUT_MS = 10_000L
+private const val MAX_STALL_RECOVERY_ATTEMPTS = 2
 
 @Composable
 fun PlayerScreen(
@@ -110,9 +121,10 @@ fun PlayerScreen(
     onNext: () -> Unit = {},
     onPrev: () -> Unit = {},
     // Fatal-playback-error hook. When non-null it's called INSTEAD of the
-    // toast+exit (e.g. YouTube native -> drop straight to the embed). Null
-    // keeps the default "toast the error and bounce to tabs" behavior.
-    onPlaybackError: (() -> Unit)? = null,
+    // toast+exit (e.g. YouTube native -> drop straight to the embed). The
+    // current position is supplied so a mid-video recovery can resume there.
+    // Null keeps the default error overlay behavior.
+    onPlaybackError: ((Long) -> Unit)? = null,
     // Optional manual source picker when every automatic retry has failed.
     onChangeSource: (() -> Unit)? = null,
     // Some native providers can remain in BUFFERING on a particular TV box
@@ -134,6 +146,7 @@ fun PlayerScreen(
     var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
     var retryNonce by remember(url) { mutableStateOf(0) }
     var playbackError by remember(url) { mutableStateOf<String?>(null) }
+    var recoveryNotice by remember(url) { mutableStateOf<String?>(null) }
 
     // Keep the latest callbacks without restarting the player/effects.
     val onProgressCb by rememberUpdatedState(onProgress)
@@ -238,11 +251,16 @@ fun PlayerScreen(
                     // screen — the native player has no mirror-walk, so the
                     // useful move is to tell the user and bounce them back.
                     override fun onPlayerError(error: PlaybackException) {
+                        val position = exoPlayer.currentPosition.coerceAtLeast(0L)
+                        val duration = exoPlayer.duration
+                        if (position > 0L) {
+                            onProgressCb(position, if (duration > 0L) duration else 0L)
+                        }
                         // If the host registered a fallback (YouTube -> embed),
                         // hand off immediately — no toast, least delay.
                         val fallback = onPlaybackErrorCb
                         if (fallback != null) {
-                            fallback()
+                            fallback(position)
                         } else {
                             playbackError = error.errorCodeName
                         }
@@ -273,8 +291,80 @@ fun PlayerScreen(
         if (player.playbackState != Player.STATE_READY &&
             player.playbackState != Player.STATE_ENDED
         ) {
-            if (onPlaybackErrorCb != null) onPlaybackErrorCb?.invoke()
+            val position = player.currentPosition.coerceAtLeast(0L)
+            if (onPlaybackErrorCb != null) onPlaybackErrorCb?.invoke(position)
             else playbackError = "startup timeout"
+        }
+    }
+
+    // A segment request can freeze in BUFFERING (or a decoder can stop
+    // advancing) without ExoPlayer emitting onPlayerError. Once playback has
+    // reached READY, retry the current source twice and then hand the current
+    // position to the route fallback. This covers the long-video freeze and
+    // stale-live-playlist cases without interfering with an intentional pause.
+    LaunchedEffect(player, live) {
+        var lastPositionMs = player.currentPosition.coerceAtLeast(0L)
+        var lastProgressAt = SystemClock.elapsedRealtime()
+        var recoveryAttempts = 0
+        var reachedReady = false
+
+        while (isActive) {
+            delay(STALL_POLL_INTERVAL_MS)
+            val state = player.playbackState
+            val position = player.currentPosition.coerceAtLeast(0L)
+            val now = SystemClock.elapsedRealtime()
+
+            if (state == Player.STATE_READY) reachedReady = true
+            if (position > lastPositionMs + 250L) {
+                lastPositionMs = position
+                lastProgressAt = now
+                recoveryAttempts = 0
+            } else if (position != lastPositionMs) {
+                lastPositionMs = position
+            }
+
+            // playWhenReady is false for a real user pause. Reset the clock so
+            // resuming later does not immediately trigger a false recovery.
+            if (!player.playWhenReady || state == Player.STATE_ENDED || !reachedReady) {
+                if (!player.playWhenReady) {
+                    lastProgressAt = now
+                    recoveryAttempts = 0
+                }
+                continue
+            }
+
+            val timeoutMs = if (live) LIVE_STALL_TIMEOUT_MS else VOD_STALL_TIMEOUT_MS
+            if (now - lastProgressAt < timeoutMs) continue
+
+            val resumePosition = position
+            val duration = player.duration
+            if (resumePosition > 0L) {
+                onProgressCb(resumePosition, if (duration > 0L) duration else 0L)
+            }
+
+            if (recoveryAttempts < MAX_STALL_RECOVERY_ATTEMPTS) {
+                recoveryAttempts++
+                recoveryNotice = if (live) "Reconnecting live stream…" else "Reconnecting…"
+                runCatching {
+                    // Re-prepare the existing source. Media3 1.5 does not
+                    // expose a public retry() method; prepare() is the
+                    // supported recovery path and the seek is retained while
+                    // the source loads again.
+                    player.prepare()
+                    if (live) player.seekToDefaultPosition() else player.seekTo(resumePosition)
+                    player.playWhenReady = true
+                }
+                lastProgressAt = now
+                continue
+            }
+
+            val fallback = onPlaybackErrorCb
+            if (fallback != null) {
+                fallback(resumePosition)
+            } else {
+                playbackError = if (live) "live stream stalled" else "playback stalled"
+            }
+            break
         }
     }
 
@@ -302,6 +392,19 @@ fun PlayerScreen(
     // Auto-hide the options hint a few seconds in.
     LaunchedEffect(url) { delay(5_000); hintVisible = false }
 
+    // Keep the recovery message brief and non-blocking. It is useful feedback
+    // on a TV where the native controller may be hidden while a retry runs.
+    LaunchedEffect(recoveryNotice) {
+        if (recoveryNotice != null) {
+            delay(2_000)
+            recoveryNotice = null
+        }
+    }
+
+    val activePlayerState = rememberUpdatedState(player)
+    val optionsOpenState = rememberUpdatedState(optionsOpen)
+    val playbackErrorState = rememberUpdatedState(playbackError)
+
     // Route D-pad UP (while this player is on screen) to the options panel.
     // Intercepted at the Activity because PlayerView eats D-pad keys first.
     // Returns true (consume + open) only when the panel is closed; while it's
@@ -311,7 +414,67 @@ fun PlayerScreen(
         activity?.playerOptionsHandler = {
             if (optionsOpen) false else { optionsOpen = true; true }
         }
-        onDispose { activity?.playerOptionsHandler = null }
+        activity?.playerTransportHandler = { event ->
+            if (optionsOpenState.value || playbackErrorState.value != null) {
+                false
+            } else {
+                val currentPlayer = activePlayerState.value
+                when (event.keyCode) {
+                    android.view.KeyEvent.KEYCODE_DPAD_LEFT,
+                    android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                        if (event.action == android.view.KeyEvent.ACTION_DOWN &&
+                            event.repeatCount == 0
+                        ) {
+                            if (event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_LEFT) {
+                                currentPlayer.seekBack()
+                                recoveryNotice = "−10 seconds"
+                            } else {
+                                currentPlayer.seekForward()
+                                recoveryNotice = "+10 seconds"
+                            }
+                            // Do not let Media3 move focus into its time bar or
+                            // action buttons. The app-level seek feedback keeps
+                            // the remote on the video surface.
+                            playerViewRef?.hideController()
+                            playerViewRef?.requestFocus()
+                        }
+                        true
+                    }
+                    android.view.KeyEvent.KEYCODE_DPAD_CENTER,
+                    android.view.KeyEvent.KEYCODE_ENTER,
+                    android.view.KeyEvent.KEYCODE_NUMPAD_ENTER,
+                    android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
+                        if (event.action == android.view.KeyEvent.ACTION_DOWN &&
+                            event.repeatCount == 0
+                        ) {
+                            val wasPlaying = currentPlayer.isPlaying
+                            if (wasPlaying) currentPlayer.pause() else currentPlayer.play()
+                            recoveryNotice = if (wasPlaying) "Paused" else "Playing"
+                            playerViewRef?.hideController()
+                            playerViewRef?.requestFocus()
+                        }
+                        true
+                    }
+                    android.view.KeyEvent.KEYCODE_MEDIA_PLAY -> {
+                        if (event.action == android.view.KeyEvent.ACTION_DOWN &&
+                            event.repeatCount == 0
+                        ) currentPlayer.play()
+                        true
+                    }
+                    android.view.KeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                        if (event.action == android.view.KeyEvent.ACTION_DOWN &&
+                            event.repeatCount == 0
+                        ) currentPlayer.pause()
+                        true
+                    }
+                    else -> false
+                }
+            }
+        }
+        onDispose {
+            activity?.playerOptionsHandler = null
+            activity?.playerTransportHandler = null
+        }
     }
 
     // Periodically persist resume position while actually playing.
@@ -328,7 +491,10 @@ fun PlayerScreen(
 
     // Final save + release on leaving the screen.
     DisposableEffect(player) {
+        val activity = context.findActivity()
+        activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         onDispose {
+            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             val pos = player.currentPosition
             val dur = player.duration
             if (pos > 0) onProgressCb(pos, if (dur > 0) dur else 0)
@@ -348,6 +514,9 @@ fun PlayerScreen(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                         )
                         this.player = player
+                        // Keep Android TV from launching its screen saver/home
+                        // overlay during a quiet live stream or paused VOD.
+                        keepScreenOn = true
                         useController = true
                         controllerAutoShow = true
                         controllerShowTimeoutMs = CONTROLLER_TIMEOUT_MS
@@ -506,7 +675,7 @@ fun PlayerScreen(
                     modifier = Modifier.padding(32.dp),
                 ) {
                     Text(
-                        text = "Playback could not start",
+                        text = "Playback could not continue",
                         style = MaterialTheme.typography.headlineSmall,
                         color = Color.White,
                     )
@@ -530,6 +699,17 @@ fun PlayerScreen(
                     }
                 }
             }
+        }
+        recoveryNotice?.let { notice ->
+            Text(
+                text = notice,
+                color = Color.White,
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .background(Color.Black.copy(alpha = 0.72f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 16.dp, vertical = 9.dp),
+            )
         }
     }
 }

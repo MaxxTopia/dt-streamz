@@ -885,6 +885,10 @@ fun WebPlayerScreen(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT,
                     )
+                    // A live embed can be visually quiet while still
+                    // playing. Keep Android TV from putting the app behind a
+                    // screen-saver/home overlay until the player is exited.
+                    keepScreenOn = true
                     configureForEmbedPlayback()
                     val cosmeticCss = runCatching {
                         ctx.assets.open("filters/cosmetic_rules.css")
